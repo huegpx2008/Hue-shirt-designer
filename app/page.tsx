@@ -95,7 +95,12 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-8 md:px-8">
-      <h1 className="text-center text-2xl font-semibold tracking-tight md:text-3xl">Hue T-shirt Designer</h1>
+      <header className="text-center">
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Hue Shirt Designer Studio</h1>
+        <p className="mt-2 text-sm text-slate-600 md:text-base">
+          Upload artwork, add text, and create a quick shirt mockup.
+        </p>
+      </header>
 
       <div className="grid gap-6 md:grid-cols-[320px_1fr]">
         <aside className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 md:p-5">
