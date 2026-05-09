@@ -6,8 +6,8 @@ import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 
 type ShirtView = 'front' | 'back';
-
 type FontOption = { label: string; value: string };
+type LayerItem = { id: string; name: string; type: string; isActive: boolean };
 
 const FONT_OPTIONS: FontOption[] = [
   { label: 'Inter', value: 'Inter, Arial, sans-serif' },
@@ -16,7 +16,6 @@ const FONT_OPTIONS: FontOption[] = [
   { label: 'Georgia', value: 'Georgia, serif' },
   { label: 'Courier New', value: 'Courier New, monospace' }
 ];
-
 
 export default function Home() {
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
@@ -34,22 +33,54 @@ export default function Home() {
   const [isItalic, setIsItalic] = useState(false);
   const [textColor, setTextColor] = useState('#111827');
   const [zoom, setZoom] = useState(1);
+  const [layers, setLayers] = useState<LayerItem[]>([]);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
 
   const designArea = useMemo(() => PRINT_AREA_CONFIG[printLocation], [printLocation]);
 
+  const getLabel = (obj: FabricObject, index: number) => {
+    if (obj.type === 'i-text') return `Text ${index}`;
+    if (obj.type === 'image') return `Image ${index}`;
+    return `${obj.type} ${index}`;
+  };
+
+  const refreshLayers = (canvas: Canvas) => {
+    const selected = canvas.getActiveObject();
+    const items = canvas.getObjects().map((obj, idx) => {
+      const layerObj = obj as FabricObject & { data?: { layerId?: string } };
+      if (!layerObj.data) layerObj.data = {};
+      if (!layerObj.data.layerId) layerObj.data.layerId = `layer-${Date.now()}-${idx}`;
+      return {
+        id: layerObj.data.layerId,
+        name: getLabel(obj, idx + 1),
+        type: obj.type,
+        isActive: selected === obj
+      };
+    }).reverse();
+    setLayers(items);
+  };
+
+  const clampToArea = (obj: FabricObject) => {
+    obj.setCoords();
+    const bounds = obj.getBoundingRect();
+    let left = obj.left || 0;
+    let top = obj.top || 0;
+
+    if (bounds.left < 0) left -= bounds.left;
+    if (bounds.top < 0) top -= bounds.top;
+    if (bounds.left + bounds.width > designArea.width) left -= bounds.left + bounds.width - designArea.width;
+    if (bounds.top + bounds.height > designArea.height) top -= bounds.top + bounds.height - designArea.height;
+
+    obj.set({ left, top });
+    obj.setCoords();
+  };
+
   useEffect(() => {
     const nextColor = selectedProduct.availableColors[0]?.value;
-    if (nextColor && !selectedProduct.availableColors.some((color) => color.value === shirtColor)) {
-      setShirtColor(nextColor);
-    }
-
-    if (!selectedProduct.defaultPrintLocations.includes(printLocation)) {
-      setPrintLocation(selectedProduct.defaultPrintLocations[0]);
-    }
+    if (nextColor && !selectedProduct.availableColors.some((color) => color.value === shirtColor)) setShirtColor(nextColor);
+    if (!selectedProduct.defaultPrintLocations.includes(printLocation)) setPrintLocation(selectedProduct.defaultPrintLocations[0]);
   }, [selectedProduct, shirtColor, printLocation]);
-
 
   const captureHistory = (canvas: Canvas) => {
     const json = JSON.stringify(canvas.toJSON());
@@ -65,7 +96,10 @@ export default function Home() {
     const nextIndex = historyIndexRef.current + offset;
     if (nextIndex < 0 || nextIndex >= historyRef.current.length) return;
     historyIndexRef.current = nextIndex;
-    canvas.loadFromJSON(historyRef.current[nextIndex], () => canvas.requestRenderAll());
+    canvas.loadFromJSON(historyRef.current[nextIndex], () => {
+      canvas.requestRenderAll();
+      refreshLayers(canvas);
+    });
   };
 
   const syncTextControls = (obj: FabricObject | null) => {
@@ -82,39 +116,36 @@ export default function Home() {
   useEffect(() => {
     const canvasEl = canvasElRef.current;
     if (!canvasEl) return;
-
-    const fabricCanvas = new Canvas(canvasEl, {
-      width: designArea.width,
-      height: designArea.height,
-      backgroundColor: 'transparent',
-      preserveObjectStacking: true
-    });
+    const fabricCanvas = new Canvas(canvasEl, { width: designArea.width, height: designArea.height, backgroundColor: 'transparent', preserveObjectStacking: true, selectionColor: 'rgba(79,70,229,0.12)', selectionBorderColor: '#4f46e5' });
+    fabricCanvas.forEachObject((obj) => obj.set({ cornerColor: '#4338ca', cornerStrokeColor: '#eef2ff', cornerStyle: 'circle', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', borderScaleFactor: 2, transparentCorners: false }));
 
     const updateSelection = () => {
       const selected = fabricCanvas.getActiveObject();
       setActiveObject(selected || null);
       syncTextControls(selected || null);
+      refreshLayers(fabricCanvas);
     };
-
-    const clearSelection = () => setActiveObject(null);
 
     fabricCanvas.on('selection:created', updateSelection);
     fabricCanvas.on('selection:updated', updateSelection);
-    fabricCanvas.on('selection:cleared', clearSelection);
+    fabricCanvas.on('selection:cleared', () => {
+      setActiveObject(null);
+      refreshLayers(fabricCanvas);
+    });
 
     fabricCanvas.on('object:moving', (event) => {
       const obj = event.target;
       if (!obj) return;
-      const tolerance = 8;
+      const centerPoint = obj.getCenterPoint();
       const centerX = designArea.width / 2;
       const centerY = designArea.height / 2;
-      const centerPoint = obj.getCenterPoint();
-      if (Math.abs(centerPoint.x - centerX) <= tolerance) {
-        obj.left = (obj.left || 0) + (centerX - centerPoint.x);
-      }
-      if (Math.abs(centerPoint.y - centerY) <= tolerance) {
-        obj.top = (obj.top || 0) + (centerY - centerPoint.y);
-      }
+      if (Math.abs(centerPoint.x - centerX) <= 14) obj.left = (obj.left || 0) + (centerX - centerPoint.x);
+      if (Math.abs(centerPoint.y - centerY) <= 14) obj.top = (obj.top || 0) + (centerY - centerPoint.y);
+      clampToArea(obj);
+    });
+    fabricCanvas.on('object:scaling', (event) => {
+      const obj = event.target;
+      if (obj) clampToArea(obj);
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -122,47 +153,24 @@ export default function Home() {
       const command = isMac ? event.metaKey : event.ctrlKey;
       if (command && event.key.toLowerCase() === 'z') {
         event.preventDefault();
-        if (event.shiftKey) {
-          restoreHistory(1);
-        } else {
-          restoreHistory(-1);
-        }
-      }
-      if (event.key === 'Delete' || event.key === 'Backspace') {
-        const selected = fabricCanvas.getActiveObject();
-        if (!selected) return;
-        event.preventDefault();
-        if (selected.type === 'activeSelection') {
-          (selected as ActiveSelection).getObjects().forEach((obj) => fabricCanvas.remove(obj));
-        } else {
-          fabricCanvas.remove(selected);
-        }
-        fabricCanvas.discardActiveObject();
-        fabricCanvas.requestRenderAll();
-        captureHistory(fabricCanvas);
+        restoreHistory(event.shiftKey ? 1 : -1);
       }
     };
-
     window.addEventListener('keydown', onKeyDown);
 
-    fabricCanvas.on('object:added', () => captureHistory(fabricCanvas));
-    fabricCanvas.on('object:modified', () => captureHistory(fabricCanvas));
-    fabricCanvas.on('object:removed', () => captureHistory(fabricCanvas));
+    fabricCanvas.on('object:added', () => { captureHistory(fabricCanvas); refreshLayers(fabricCanvas); });
+    fabricCanvas.on('object:modified', () => { captureHistory(fabricCanvas); refreshLayers(fabricCanvas); });
+    fabricCanvas.on('object:removed', () => { captureHistory(fabricCanvas); refreshLayers(fabricCanvas); });
     captureHistory(fabricCanvas);
+    refreshLayers(fabricCanvas);
 
     fabricCanvasRef.current = fabricCanvas;
-
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      fabricCanvas.dispose();
-      fabricCanvasRef.current = null;
-    };
+    return () => { window.removeEventListener('keydown', onKeyDown); fabricCanvas.dispose(); fabricCanvasRef.current = null; };
   }, []);
 
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-
     canvas.setDimensions({ width: designArea.width, height: designArea.height });
     canvas.requestRenderAll();
   }, [designArea]);
@@ -170,162 +178,38 @@ export default function Home() {
   const addText = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-
-    const text = new IText(textValue.trim() || 'Your text', {
-      left: designArea.width / 2,
-      top: designArea.height / 2,
-      originX: 'center',
-      originY: 'center',
-      fontSize,
-      fontFamily,
-      fontWeight: isBold ? 'bold' : 'normal',
-      fontStyle: isItalic ? 'italic' : 'normal',
-      fill: textColor
-    });
-
-    canvas.add(text);
-    canvas.setActiveObject(text);
-    canvas.renderAll();
+    const text = new IText(textValue.trim() || 'Your text', { left: designArea.width / 2, top: designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+    canvas.add(text); canvas.setActiveObject(text); canvas.renderAll();
   };
 
-  const editSelected = (fn: (obj: FabricObject) => void) => {
-    const canvas = fabricCanvasRef.current;
-    const selected = canvas?.getActiveObject();
-    if (!canvas || !selected) return;
-    fn(selected);
-    canvas.requestRenderAll();
-  };
-
-  const duplicateSelected = () => {
-    editSelected(async (obj) => {
-      const canvas = fabricCanvasRef.current;
-      if (!canvas) return;
-      const clone = await obj.clone();
-      clone.set({ left: (obj.left || 0) + 16, top: (obj.top || 0) + 16 });
-      canvas.add(clone);
-      canvas.setActiveObject(clone);
-    });
-  };
-
-  const deleteSelected = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    const selected = canvas.getActiveObject();
-    if (!selected) return;
-    if (selected.type === 'activeSelection') {
-      (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj));
-    } else {
-      canvas.remove(selected);
-    }
-    canvas.discardActiveObject();
-    canvas.requestRenderAll();
-  };
+  const editSelected = (fn: (obj: FabricObject) => void) => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected) return; fn(selected); clampToArea(selected); canvas.requestRenderAll(); refreshLayers(canvas); };
+  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
 
   const onUploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    const canvas = fabricCanvasRef.current;
-    if (!file || !canvas) return;
-
+    const file = event.target.files?.[0]; const canvas = fabricCanvasRef.current; if (!file || !canvas) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const dataUrl = reader.result as string;
-      const img = await FabricImage.fromURL(dataUrl);
-
-      img.set({
-        left: designArea.width / 2,
-        top: designArea.height / 2,
-        originX: 'center',
-        originY: 'center'
-      });
-
-      const maxWidth = Math.min(150, designArea.width * 0.75);
-      if (img.width && img.width > maxWidth) {
-        img.scale(maxWidth / img.width);
-      }
-
-      canvas.add(img);
-      canvas.setActiveObject(img);
-      canvas.renderAll();
-      event.target.value = '';
+      const img = await FabricImage.fromURL(reader.result as string);
+      img.set({ left: designArea.width / 2, top: designArea.height / 2, originX: 'center', originY: 'center', cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+      const maxWidth = Math.min(150, designArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
+      canvas.add(img); clampToArea(img); canvas.setActiveObject(img); canvas.renderAll(); event.target.value = '';
     };
-
     reader.readAsDataURL(file);
   };
 
+  const alignSelected = (axis: 'horizontal' | 'vertical') => editSelected((obj) => {
+    const center = obj.getCenterPoint();
+    if (axis === 'horizontal') obj.left = (obj.left || 0) + (designArea.width / 2 - center.x);
+    if (axis === 'vertical') obj.top = (obj.top || 0) + (designArea.height / 2 - center.y);
+  });
+
   const exportDesign = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
+    const canvas = fabricCanvasRef.current; if (!canvas) return;
     const dataUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
-    const link = document.createElement('a');
-    link.download = `shirt-design-${shirtView}-${printLocation}.png`;
-    link.href = dataUrl;
-    link.click();
+    const link = document.createElement('a'); link.download = `shirt-design-${shirtView}-${printLocation}.png`; link.href = dataUrl; link.click();
   };
 
-  return (
-    <main className="mx-auto min-h-screen w-full max-w-7xl bg-slate-100 px-3 py-5 md:px-6">
-      <header className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 md:p-5">
-        <h1 className="text-xl font-semibold tracking-tight md:text-2xl">Hue Shirt Design Studio</h1>
-      </header>
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-        <aside className="space-y-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 md:p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Tools</h2>
-          <section>
-            <p className="mb-2 text-sm font-medium">Product Type</p><select value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">{SAMPLE_PRODUCT_CATALOG.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select><p className="mt-2 text-xs text-slate-500">Style #{selectedProduct.styleNumber} · {selectedProduct.category}</p>
-          </section>
-          <section>
-            <p className="mb-2 text-sm font-medium">View</p><div className="grid grid-cols-2 gap-2">{(['front', 'back'] as ShirtView[]).map((view) => <button key={view} onClick={() => setShirtView(view)} className={`rounded-lg border px-3 py-2 text-sm capitalize ${shirtView === view ? 'bg-slate-900 text-white' : ''}`}>{view}</button>)}</div>
-          </section>
-          <section>
-            <p className="mb-2 text-sm font-medium">Print Location</p><select value={printLocation} onChange={(e) => setPrintLocation(e.target.value as PrintLocation)} className="w-full rounded-lg border px-3 py-2 text-sm">{selectedProduct.defaultPrintLocations.map((location) => <option key={location} value={location}>{PRINT_AREA_CONFIG[location].label}</option>)}</select>
-          </section>
-          <section>
-            <p className="mb-2 text-sm font-medium">Text Controls</p>
-            <div className="grid grid-cols-2 gap-2">
-              <select value={fontFamily} onChange={(e) => { setFontFamily(e.target.value); editSelected((obj) => obj.type === 'i-text' && obj.set('fontFamily', e.target.value)); }} className="col-span-2 rounded-lg border px-3 py-2 text-sm">{FONT_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}</select>
-              <input type="number" min={8} max={120} value={fontSize} onChange={(e) => { const value = Number(e.target.value) || 30; setFontSize(value); editSelected((obj) => obj.type === 'i-text' && obj.set('fontSize', value)); }} className="rounded-lg border px-3 py-2 text-sm" />
-              <input type="color" value={textColor} onChange={(e) => { setTextColor(e.target.value); editSelected((obj) => obj.type === 'i-text' && obj.set('fill', e.target.value)); }} className="h-10 rounded-lg border p-1" />
-              <button onClick={() => { const next = !isBold; setIsBold(next); editSelected((obj) => obj.type === 'i-text' && obj.set('fontWeight', next ? 'bold' : 'normal')); }} className={`rounded-lg border px-3 py-2 text-sm ${isBold ? 'bg-slate-900 text-white' : ''}`}>Bold</button>
-              <button onClick={() => { const next = !isItalic; setIsItalic(next); editSelected((obj) => obj.type === 'i-text' && obj.set('fontStyle', next ? 'italic' : 'normal')); }} className={`rounded-lg border px-3 py-2 text-sm ${isItalic ? 'bg-slate-900 text-white' : ''}`}>Italic</button>
-            </div>
-          </section>
-          <section className="space-y-2">
-            <input value={textValue} onChange={(event) => setTextValue(event.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="Type your text" />
-            <button onClick={addText} className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-white">Add Text</button>
-            <label className="block cursor-pointer rounded-lg border border-dashed p-3 text-center text-sm">Choose Image<input onChange={onUploadImage} className="hidden" type="file" accept="image/*" /></label>
-          </section>
-          <section><p className="mb-2 text-sm font-medium">Color</p><div className="flex flex-wrap gap-2">{selectedProduct.availableColors.map((color) => <button key={color.value} type="button" onClick={() => setShirtColor(color.value)} className={`h-8 w-8 rounded-full border-2 ${shirtColor === color.value ? 'border-black' : 'border-slate-300'}`} style={{ background: color.value }} title={color.name} />)}</div></section>
-          <button onClick={exportDesign} className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white">Download PNG</button>
-        </aside>
-
-        <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <div className="mb-3 flex flex-wrap gap-2 border-b pb-3">
-            <button onClick={() => restoreHistory(-1)} className="rounded-lg border px-3 py-1.5 text-sm">Undo</button>
-            <button onClick={() => restoreHistory(1)} className="rounded-lg border px-3 py-1.5 text-sm">Redo</button>
-            <button onClick={deleteSelected} className="rounded-lg border px-3 py-1.5 text-sm">Delete</button>
-            <button onClick={duplicateSelected} className="rounded-lg border px-3 py-1.5 text-sm">Duplicate</button>
-            <button onClick={() => editSelected((obj) => obj.set('selectable', !obj.selectable))} className="rounded-lg border px-3 py-1.5 text-sm">{activeObject?.selectable === false ? 'Unlock' : 'Lock'}</button>
-            <button onClick={() => editSelected((obj) => fabricCanvasRef.current?.bringObjectForward(obj))} className="rounded-lg border px-3 py-1.5 text-sm">Bring forward</button>
-            <button onClick={() => editSelected((obj) => fabricCanvasRef.current?.sendObjectBackwards(obj))} className="rounded-lg border px-3 py-1.5 text-sm">Send backward</button>
-            <button onClick={() => { const next = Math.max(0.5, zoom - 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="rounded-lg border px-3 py-1.5 text-sm">-</button>
-            <span className="inline-flex items-center px-1 text-sm">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="rounded-lg border px-3 py-1.5 text-sm">+</button>
-          </div>
-          <div className="flex items-center justify-center p-2 md:p-6">
-            <div className="relative h-[440px] w-[380px] max-w-full">
-              <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />
-              <div className="pointer-events-none absolute rounded-md border-2 border-dashed border-indigo-500/70 bg-indigo-100/20" style={{ top: designArea.top, left: designArea.left, width: designArea.width, height: designArea.height }}>
-                <span className="absolute -top-6 left-0 rounded bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white">Safe print area</span>
-                <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-indigo-400/70" />
-                <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-indigo-400/70" />
-              </div>
-              <div className="absolute overflow-hidden rounded-md" style={{ top: designArea.top, left: designArea.left, width: designArea.width, height: designArea.height }}>
-                <canvas ref={canvasElRef} className="h-full w-full touch-none" />
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </main>
-  );
+  return <main className="mx-auto min-h-screen w-full max-w-7xl bg-slate-100 px-3 py-4 md:px-6"><header className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 md:p-5"><h1 className="text-xl font-semibold tracking-tight md:text-2xl">Hue Shirt Design Studio</h1></header><div className="grid gap-4 lg:grid-cols-[300px_1fr]"><aside className="space-y-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 md:p-5"><h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Tools</h2><section><p className="mb-2 text-sm font-medium">Product Type</p><select value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">{SAMPLE_PRODUCT_CATALOG.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></section><section><p className="mb-2 text-sm font-medium">View</p><div className="grid grid-cols-2 gap-2">{(['front', 'back'] as ShirtView[]).map((view) => <button key={view} onClick={() => setShirtView(view)} className={`rounded-lg border px-3 py-2 text-sm capitalize ${shirtView === view ? 'bg-slate-900 text-white' : ''}`}>{view}</button>)}</div></section><section><p className="mb-2 text-sm font-medium">Print Location</p><select value={printLocation} onChange={(e) => setPrintLocation(e.target.value as PrintLocation)} className="w-full rounded-lg border px-3 py-2 text-sm">{selectedProduct.defaultPrintLocations.map((location) => <option key={location} value={location}>{PRINT_AREA_CONFIG[location].label}</option>)}</select></section><section className="space-y-2"><input value={textValue} onChange={(event) => setTextValue(event.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="Type your text" /><button onClick={addText} className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-white">Add Text</button><label className="block cursor-pointer rounded-lg border border-dashed p-3 text-center text-sm">Choose Image<input onChange={onUploadImage} className="hidden" type="file" accept="image/*" /></label></section><section><p className="mb-2 text-sm font-medium">Color</p><div className="flex flex-wrap gap-2">{selectedProduct.availableColors.map((color) => <button key={color.value} type="button" onClick={() => setShirtColor(color.value)} className={`h-8 w-8 rounded-full border-2 ${shirtColor === color.value ? 'border-black' : 'border-slate-300'}`} style={{ background: color.value }} title={color.name} />)}</div></section><button onClick={exportDesign} className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white">Download PNG</button></aside>
+<section className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 md:p-4"><div className="mb-3 flex flex-wrap gap-1.5 border-b pb-3 sm:gap-2"><button onClick={() => restoreHistory(-1)} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">Undo</button><button onClick={() => restoreHistory(1)} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">Redo</button><button onClick={deleteSelected} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">Delete</button><button onClick={() => alignSelected('horizontal')} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">Center H</button><button onClick={() => alignSelected('vertical')} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">Center V</button><button onClick={() => { const next = Math.max(0.5, zoom - 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">-</button><span className="inline-flex items-center px-1 text-sm">{Math.round(zoom * 100)}%</span><button onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="rounded-lg border px-3 py-2 text-xs sm:text-sm">+</button></div>
+<div className="grid gap-3 md:grid-cols-[1fr_220px]"><div className="flex items-center justify-center p-1 md:p-4"><div className="relative h-[440px] w-[380px] max-w-full"><TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} /><div className="pointer-events-none absolute rounded-md border-2 border-dashed border-indigo-500/70 bg-indigo-100/20" style={{ top: designArea.top, left: designArea.left, width: designArea.width, height: designArea.height }} /><div className="absolute overflow-hidden rounded-md" style={{ top: designArea.top, left: designArea.left, width: designArea.width, height: designArea.height }}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div></div></div><aside className="rounded-xl border bg-slate-50 p-2"><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Layers</p><div className="space-y-1">{layers.length === 0 ? <p className="text-xs text-slate-500">No objects yet</p> : layers.map((layer) => <button key={layer.id} onClick={() => { const canvas = fabricCanvasRef.current; if (!canvas) return; const target = canvas.getObjects().find((obj) => (obj as FabricObject & { data?: { layerId?: string } }).data?.layerId === layer.id); if (!target) return; canvas.setActiveObject(target); canvas.requestRenderAll(); setActiveObject(target); refreshLayers(canvas); }} className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${layer.isActive ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}><span>{layer.name}</span><span className="opacity-70">{layer.type}</span></button>)}</div></aside></div></section></div></main>;
 }
