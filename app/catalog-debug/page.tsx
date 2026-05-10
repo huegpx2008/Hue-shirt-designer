@@ -5,18 +5,26 @@ type CatalogPreviewItem = {
   styleNumber: string;
   productName: string;
   brand: string;
+  category?: string;
   color: string;
   firstImageUrl: string;
 };
 
-async function getPreviewData(): Promise<CatalogPreviewItem[]> {
+type CatalogPreviewPayload = {
+  sourceColumns: string[];
+  fieldMapping: Record<string, string>;
+  rows: CatalogPreviewItem[];
+};
+
+async function getPreviewData(): Promise<CatalogPreviewPayload> {
   const filePath = path.join(process.cwd(), 'public/data/catalog-preview-25.json');
   const raw = await readFile(filePath, 'utf-8');
-  return JSON.parse(raw) as CatalogPreviewItem[];
+  return JSON.parse(raw) as CatalogPreviewPayload;
 }
 
 export default async function CatalogDebugPage() {
-  const items = await getPreviewData();
+  const payload = await getPreviewData();
+  const items = payload.rows;
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl p-6">
