@@ -15,7 +15,7 @@ type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean };
 type ImageType = 'flat' | 'model';
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
-type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'caps' | 'other' | 'other-part-3';
+type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'caps' | 'other' | 'other-part-3' | 'other-part-4';
 type SizeKey = 'YS' | 'YM' | 'YL' | 'YXL' | 'AS' | 'AM' | 'AL' | 'AXL' | '2XL' | '3XL' | '4XL';
 type CustomerInfo = {
 
@@ -111,10 +111,11 @@ const CHUNKED_CATEGORY_LABELS: Record<CategoryChunkSlug, string> = {
   bags: 'Bags',
   caps: 'Caps',
   other: 'Other',
-  'other-part-3': 'Other (Part 3)'
+  'other-part-3': 'Other (Part 3)',
+  'other-part-4': 'Other (Part 4)'
 };
 const PRODUCTS_PAGE_SIZE = 24;
-const ALL_CATEGORY_SLUGS: CategoryChunkSlug[] = ['t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'caps', 'other', 'other-part-3'];
+const ALL_CATEGORY_SLUGS: CategoryChunkSlug[] = ['t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'caps', 'other', 'other-part-3', 'other-part-4'];
 
 const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
   't-shirts': 'Loading T-Shirts…',
@@ -125,7 +126,8 @@ const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
   bags: 'Loading Bags…',
   caps: 'Loading Caps…',
   other: 'Loading Other…',
-  'other-part-3': 'Loading Other (Part 3)…'
+  'other-part-3': 'Loading Other (Part 3)…',
+  'other-part-4': 'Loading Other (Part 4)…'
 };
 
 const swapImageToken = (url: string, nextType: ImageType, nextView: ShirtView) => {
