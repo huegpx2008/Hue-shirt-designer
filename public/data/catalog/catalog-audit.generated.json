@@ -764,6 +764,7 @@
   },
   "currentlyGeneratedCatalogFilesFound": [
     "bags.generated.json",
+    "caps.generated.json",
     "hoodies.generated.json",
     "long-sleeve.generated.json",
     "other.generated.json",
@@ -775,6 +776,10 @@
     "bags.generated.json": {
       "rows": 500,
       "uniqueStyles": 165
+    },
+    "caps.generated.json": {
+      "rows": 300,
+      "uniqueStyles": 64
     },
     "hoodies.generated.json": {
       "rows": 0,

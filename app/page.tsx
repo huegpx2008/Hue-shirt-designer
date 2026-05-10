@@ -15,7 +15,7 @@ type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean };
 type ImageType = 'flat' | 'model';
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
-type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'other';
+type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'caps' | 'other';
 type SizeKey = 'YS' | 'YM' | 'YL' | 'YXL' | 'AS' | 'AM' | 'AL' | 'AXL' | '2XL' | '3XL' | '4XL';
 type CustomerInfo = {
 
@@ -109,10 +109,11 @@ const CHUNKED_CATEGORY_LABELS: Record<CategoryChunkSlug, string> = {
   sweatshirts: 'Sweatshirts',
   polos: 'Polos',
   bags: 'Bags',
+  caps: 'Caps',
   other: 'Other'
 };
 const PRODUCTS_PAGE_SIZE = 24;
-const ALL_CATEGORY_SLUGS: CategoryChunkSlug[] = ['t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'other'];
+const ALL_CATEGORY_SLUGS: CategoryChunkSlug[] = ['t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'caps', 'other'];
 
 const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
   't-shirts': 'Loading T-Shirts…',
@@ -121,6 +122,7 @@ const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
   sweatshirts: 'Loading Sweatshirts…',
   polos: 'Loading Polos…',
   bags: 'Loading Bags…',
+  caps: 'Loading Caps…',
   other: 'Loading Other…'
 };
 
