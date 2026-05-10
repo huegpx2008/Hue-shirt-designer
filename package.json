@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "generate:catalog": "python scripts/import_catalog_preview.py --max-rows 500 --max-styles 200 --output public/data/sanmar-catalog.sample.generated.json"
+    "generate:catalog": "python scripts/import_catalog_preview.py --max-rows 500 --max-styles 200 --output public/data/sanmar-catalog.sample.generated.json",
+    "audit:catalog": "python scripts/audit_catalog.py"
   },
   "dependencies": {
     "fabric": "^6.5.3",
