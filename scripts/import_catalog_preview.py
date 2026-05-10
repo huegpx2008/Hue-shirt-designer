@@ -16,7 +16,7 @@ NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
 # NOTE: This PR intentionally generates only the t-shirts chunk.
 # We'll add the other category files in follow-up PRs to keep diffs reviewable.
-SUPPORTED_CATEGORY_CHUNKS = ('t-shirts',)
+SUPPORTED_CATEGORY_CHUNKS = ('t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos')
 
 
 def _column_index(column_ref: str) -> int:
@@ -63,9 +63,9 @@ def _category_slug(category_name: str) -> str:
     lowered = category_name.lower()
     if 't-shirt' in lowered or 'tee' in lowered:
         return 't-shirts'
-    if 'hoodie' in lowered:
+    if 'hoodie' in lowered or 'hooded' in lowered:
         return 'hoodies'
-    if 'long sleeve' in lowered:
+    if 'long sleeve' in lowered or 'long-sleeve' in lowered:
         return 'long-sleeve'
     if 'sweatshirt' in lowered or 'crewneck' in lowered:
         return 'sweatshirts'
