@@ -14,9 +14,7 @@ MAX_ROWS_DEFAULT = 500
 MAX_STYLES_DEFAULT = 200
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
-# NOTE: This PR intentionally generates only the t-shirts chunk.
-# We'll add the other category files in follow-up PRs to keep diffs reviewable.
-SUPPORTED_CATEGORY_CHUNKS = ('t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos')
+SUPPORTED_CATEGORY_CHUNKS = ('t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'other')
 
 
 def _column_index(column_ref: str) -> int:

@@ -15,7 +15,7 @@ type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean };
 type ImageType = 'flat' | 'model';
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
-type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos';
+type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'other';
 type SizeKey = 'YS' | 'YM' | 'YL' | 'YXL' | 'AS' | 'AM' | 'AL' | 'AXL' | '2XL' | '3XL' | '4XL';
 type CustomerInfo = {
   name: string;
@@ -42,14 +42,18 @@ const CHUNKED_CATEGORY_LABELS: Record<CategoryChunkSlug, string> = {
   hoodies: 'Hoodies',
   'long-sleeve': 'Long Sleeve',
   sweatshirts: 'Sweatshirts',
-  polos: 'Polos'
+  polos: 'Polos',
+  bags: 'Bags',
+  other: 'Other'
 };
 const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
   't-shirts': 'Loading T-Shirts…',
   hoodies: 'Loading Hoodies…',
   'long-sleeve': 'Loading Long Sleeve…',
   sweatshirts: 'Loading Sweatshirts…',
-  polos: 'Loading Polos…'
+  polos: 'Loading Polos…',
+  bags: 'Loading Bags…',
+  other: 'Loading Other…'
 };
 
 const swapImageToken = (url: string, nextType: ImageType, nextView: ShirtView) => {
@@ -108,7 +112,7 @@ export default function Home() {
   const [brandFilter, setBrandFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [isCategoryCatalogLoading, setIsCategoryCatalogLoading] = useState(false);
-  const [categoryCatalogStatus, setCategoryCatalogStatus] = useState('Loaded T-Shirts');
+  const [categoryCatalogStatus, setCategoryCatalogStatus] = useState('Loaded category file: t-shirts.generated.json');
   const [sortOption, setSortOption] = useState<'style' | 'name' | 'brand'>('style');
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const hasActiveCatalogFilters = searchQuery.trim().length > 0 || brandFilter !== 'all' || categoryFilter !== 'all';
@@ -502,7 +506,7 @@ export default function Home() {
     const slug = categoryFilter as CategoryChunkSlug;
     if (!(slug in CHUNKED_CATEGORY_LABELS)) {
       setPreviewCatalog(fallbackPreviewCatalog);
-      setCategoryCatalogStatus('Loaded all available catalog rows');
+      setCategoryCatalogStatus('Loaded category file: fallback catalog-preview-25.json');
       return;
     }
 
@@ -517,16 +521,16 @@ export default function Home() {
         const nextRows = Array.isArray(rows) ? rows as SanMarPreviewItem[] : [];
         if (nextRows.length > 0) {
           setPreviewCatalog(nextRows);
-          setCategoryCatalogStatus(`Loaded ${CHUNKED_CATEGORY_LABELS[slug]}`);
+          setCategoryCatalogStatus(`Loaded category file: ${slug}.generated.json`);
           return;
         }
         setPreviewCatalog(fallbackPreviewCatalog);
-        setCategoryCatalogStatus(`Using fallback catalog (${CHUNKED_CATEGORY_LABELS[slug]} file is empty)`);
+        setCategoryCatalogStatus(`Loaded category file: fallback catalog-preview-25.json (${slug}.generated.json is empty)`);
       })
       .catch(() => {
         if (canceled) return;
         setPreviewCatalog(fallbackPreviewCatalog);
-        setCategoryCatalogStatus(`Using fallback catalog (${CHUNKED_CATEGORY_LABELS[slug]} file missing)`);
+        setCategoryCatalogStatus(`Loaded category file: fallback catalog-preview-25.json (${slug}.generated.json missing)`);
       })
       .finally(() => {
         if (!canceled) setIsCategoryCatalogLoading(false);
