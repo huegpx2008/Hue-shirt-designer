@@ -97,7 +97,7 @@ export const SAMPLE_PRODUCT_CATALOG: ReadonlyArray<ProductCatalogItem> = [
 // as the mockup scales responsively on both desktop and mobile.
 export const PRINT_AREA_CONFIG: Record<PrintLocation, { label: string; top: number; left: number; width: number; height: number }> = {
   // Centered chest/body placement for common 10"-12" front prints.
-  'full-front': { label: 'Full Front', top: 112, left: 96, width: 188, height: 210 },
+  'full-front': { label: 'Full Front', top: 104, left: 88, width: 204, height: 224 },
   // Wearer's left chest (viewer right), sized for ~3.5" logo placement.
   'left-chest': { label: 'Left Chest', top: 138, left: 205, width: 72, height: 76 },
   // Centered back body placement with a similar footprint to full front.
