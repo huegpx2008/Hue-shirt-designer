@@ -9,9 +9,14 @@ from typing import Dict, Iterable, List
 
 XLSX_PATH = Path('public/data/SanMar_SDL_N_main_downsize.xlsx')
 OUTPUT_PATH = Path('public/data/sanmar-catalog.sample.generated.json')
+CATALOG_DIR = Path('public/data/catalog')
 MAX_ROWS_DEFAULT = 500
 MAX_STYLES_DEFAULT = 200
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+
+# NOTE: This PR intentionally generates only the t-shirts chunk.
+# We'll add the other category files in follow-up PRs to keep diffs reviewable.
+SUPPORTED_CATEGORY_CHUNKS = ('t-shirts',)
 
 
 def _column_index(column_ref: str) -> int:
@@ -54,7 +59,24 @@ def _iter_sheet_rows(archive: zipfile.ZipFile, shared_strings: List[str]) -> Ite
                 yield values
 
 
-def build_preview(max_rows: int, max_styles: int) -> List[Dict[str, object]]:
+def _category_slug(category_name: str) -> str:
+    lowered = category_name.lower()
+    if 't-shirt' in lowered or 'tee' in lowered:
+        return 't-shirts'
+    if 'hoodie' in lowered:
+        return 'hoodies'
+    if 'long sleeve' in lowered:
+        return 'long-sleeve'
+    if 'sweatshirt' in lowered or 'crewneck' in lowered:
+        return 'sweatshirts'
+    if 'polo' in lowered:
+        return 'polos'
+    if 'bag' in lowered:
+        return 'bags'
+    return 'other'
+
+
+def _extract_catalog_rows() -> List[Dict[str, object]]:
     with zipfile.ZipFile(XLSX_PATH) as archive:
         shared_strings = _load_shared_strings(archive)
         row_iter = _iter_sheet_rows(archive, shared_strings)
@@ -69,10 +91,8 @@ def build_preview(max_rows: int, max_styles: int) -> List[Dict[str, object]]:
                     return row.get(col, '')
             return ''
 
-        preview: List[Dict[str, object]] = []
+        rows: List[Dict[str, object]] = []
         seen_style_color = set()
-        seen_styles = set()
-
         for row in row_iter:
             style_number = val(row, 'STYLE#')
             product_name = val(row, 'PRODUCT_TITLE')
@@ -80,23 +100,12 @@ def build_preview(max_rows: int, max_styles: int) -> List[Dict[str, object]]:
             category = val(row, 'CATEGORY_NAME')
             color_name = val(row, 'COLOR_NAME')
             available_sizes = [size.strip() for size in val(row, 'AVAILABLE_SIZES').split('|') if size.strip()]
-            front_model = val(row, 'FRONT_MODEL_IMAGE_URL')
-            back_model = val(row, 'BACK_MODEL_IMAGE_URL')
-            front_flat = val(row, 'FRONT_FLAT_IMAGE_URL')
-            back_flat = val(row, 'BACK_FLAT_IMAGE_URL')
-            product_image = val(row, 'PRODUCT_IMAGE')
-            swatch = val(row, 'SWATCH_IMAGE_URL')
-
             key = (style_number, color_name)
             if not style_number or not product_name or not color_name or key in seen_style_color:
                 continue
 
-            if style_number not in seen_styles and len(seen_styles) >= max_styles:
-                continue
-
             seen_style_color.add(key)
-            seen_styles.add(style_number)
-            preview.append(
+            rows.append(
                 {
                     'styleNumber': style_number,
                     'productName': product_name,
@@ -104,31 +113,71 @@ def build_preview(max_rows: int, max_styles: int) -> List[Dict[str, object]]:
                     'category': category,
                     'colorName': color_name,
                     'availableSizes': available_sizes,
-                    'frontModelImageUrl': front_model,
-                    'backModelImageUrl': back_model,
-                    'frontFlatImageUrl': front_flat,
-                    'backFlatImageUrl': back_flat,
-                    'productImageUrl': product_image,
-                    'colorSwatchImageUrl': swatch,
+                    'frontModelImageUrl': val(row, 'FRONT_MODEL_IMAGE_URL'),
+                    'backModelImageUrl': val(row, 'BACK_MODEL_IMAGE_URL'),
+                    'frontFlatImageUrl': val(row, 'FRONT_FLAT_IMAGE_URL'),
+                    'backFlatImageUrl': val(row, 'BACK_FLAT_IMAGE_URL'),
+                    'productImageUrl': val(row, 'PRODUCT_IMAGE'),
+                    'colorSwatchImageUrl': val(row, 'SWATCH_IMAGE_URL'),
                 }
             )
-            if len(preview) >= max_rows:
-                break
 
-        return preview
+        return rows
+
+
+def build_preview(max_rows: int, max_styles: int) -> List[Dict[str, object]]:
+    preview: List[Dict[str, object]] = []
+    seen_styles = set()
+    for item in _extract_catalog_rows():
+        style_number = str(item['styleNumber'])
+        if style_number not in seen_styles and len(seen_styles) >= max_styles:
+            continue
+        seen_styles.add(style_number)
+        preview.append(item)
+        if len(preview) >= max_rows:
+            break
+    return preview
+
+
+def build_category_chunk(category_slug: str, max_rows: int, max_styles: int) -> List[Dict[str, object]]:
+    chunk: List[Dict[str, object]] = []
+    seen_styles = set()
+    for item in _extract_catalog_rows():
+        item_category_slug = _category_slug(str(item['category']))
+        if item_category_slug != category_slug:
+            continue
+
+        style_number = str(item['styleNumber'])
+        if style_number not in seen_styles and len(seen_styles) >= max_styles:
+            break
+
+        seen_styles.add(style_number)
+        chunk.append(item)
+        if len(chunk) >= max_rows:
+            break
+    return chunk
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Generate a small SanMar sample catalog JSON.')
+    parser = argparse.ArgumentParser(description='Generate SanMar catalog JSON files (sample + chunked).')
     parser.add_argument('--max-rows', type=int, default=MAX_ROWS_DEFAULT)
     parser.add_argument('--max-styles', type=int, default=MAX_STYLES_DEFAULT)
     parser.add_argument('--output', type=Path, default=OUTPUT_PATH)
+    parser.add_argument('--category', choices=SUPPORTED_CATEGORY_CHUNKS, default='t-shirts')
     args = parser.parse_args()
 
     preview = build_preview(max_rows=args.max_rows, max_styles=args.max_styles)
     args.output.write_text(json.dumps(preview, indent=2), encoding='utf-8')
-    unique_styles = len({item['styleNumber'] for item in preview})
-    print(f'Wrote {len(preview)} rows ({unique_styles} unique styles) to {args.output}')
+
+    CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+    category_rows = build_category_chunk(args.category, max_rows=args.max_rows, max_styles=args.max_styles)
+    chunk_path = CATALOG_DIR / f'{args.category}.generated.json'
+    chunk_path.write_text(json.dumps(category_rows, indent=2), encoding='utf-8')
+
+    preview_styles = len({item['styleNumber'] for item in preview})
+    category_styles = len({item['styleNumber'] for item in category_rows})
+    print(f'Wrote {len(preview)} rows ({preview_styles} unique styles) to {args.output}')
+    print(f'Wrote {len(category_rows)} rows ({category_styles} unique styles) to {chunk_path}')
 
 
 if __name__ == '__main__':
