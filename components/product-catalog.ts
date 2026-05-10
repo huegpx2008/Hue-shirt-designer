@@ -92,9 +92,16 @@ export const SAMPLE_PRODUCT_CATALOG: ReadonlyArray<ProductCatalogItem> = [
   }
 ] as const;
 
+// Coordinates are based on the shared SVG mockup viewBox (380x440).
+// They intentionally target realistic printable zones so the overlay remains aligned
+// as the mockup scales responsively on both desktop and mobile.
 export const PRINT_AREA_CONFIG: Record<PrintLocation, { label: string; top: number; left: number; width: number; height: number }> = {
-  'full-front': { label: 'Full Front', top: 132, left: 80, width: 220, height: 240 },
-  'left-chest': { label: 'Left Chest', top: 152, left: 118, width: 110, height: 110 },
-  'full-back': { label: 'Full Back', top: 126, left: 80, width: 220, height: 250 },
-  sleeve: { label: 'Sleeve', top: 170, left: 252, width: 64, height: 150 }
+  // Centered chest/body placement for common 10"-12" front prints.
+  'full-front': { label: 'Full Front', top: 112, left: 96, width: 188, height: 210 },
+  // Wearer's left chest (viewer right), sized for ~3.5" logo placement.
+  'left-chest': { label: 'Left Chest', top: 138, left: 205, width: 72, height: 76 },
+  // Centered back body placement with a similar footprint to full front.
+  'full-back': { label: 'Full Back', top: 110, left: 96, width: 188, height: 214 },
+  // Narrow vertical zone over sleeve panel for sleeve prints.
+  sleeve: { label: 'Sleeve', top: 136, left: 280, width: 44, height: 112 }
 };
