@@ -14,7 +14,7 @@ MAX_ROWS_DEFAULT = 500
 MAX_STYLES_DEFAULT = 200
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
-SUPPORTED_CATEGORY_CHUNKS = ('t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'other')
+SUPPORTED_CATEGORY_CHUNKS = ('t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'caps', 'other')
 
 
 def _column_index(column_ref: str) -> int:
@@ -71,6 +71,8 @@ def _category_slug(category_name: str) -> str:
         return 'polos'
     if 'bag' in lowered:
         return 'bags'
+    if 'cap' in lowered or 'hat' in lowered:
+        return 'caps'
     return 'other'
 
 
