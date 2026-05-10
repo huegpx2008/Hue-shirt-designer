@@ -767,6 +767,7 @@
     "caps.generated.json",
     "hoodies.generated.json",
     "long-sleeve.generated.json",
+    "other-part-2.generated.json",
     "other.generated.json",
     "polos.generated.json",
     "sweatshirts.generated.json",
@@ -788,6 +789,10 @@
     "long-sleeve.generated.json": {
       "rows": 0,
       "uniqueStyles": 0
+    },
+    "other-part-2.generated.json": {
+      "rows": 300,
+      "uniqueStyles": 100
     },
     "other.generated.json": {
       "rows": 500,
