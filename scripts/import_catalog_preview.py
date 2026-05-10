@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import zipfile
 import xml.etree.ElementTree as ET
@@ -7,8 +8,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 XLSX_PATH = Path('public/data/SanMar_SDL_N_main_downsize.xlsx')
-OUTPUT_PATH = Path('public/data/catalog-preview-25.json')
-SAMPLE_SIZE = 25
+OUTPUT_PATH = Path('public/data/sanmar-catalog.sample.generated.json')
+MAX_ROWS_DEFAULT = 500
+MAX_STYLES_DEFAULT = 200
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
 
@@ -52,7 +54,7 @@ def _iter_sheet_rows(archive: zipfile.ZipFile, shared_strings: List[str]) -> Ite
                 yield values
 
 
-def build_preview() -> List[Dict[str, str]]:
+def build_preview(max_rows: int, max_styles: int) -> List[Dict[str, object]]:
     with zipfile.ZipFile(XLSX_PATH) as archive:
         shared_strings = _load_shared_strings(archive)
         row_iter = _iter_sheet_rows(archive, shared_strings)
@@ -67,40 +69,66 @@ def build_preview() -> List[Dict[str, str]]:
                     return row.get(col, '')
             return ''
 
-        preview: List[Dict[str, str]] = []
-        seen = set()
+        preview: List[Dict[str, object]] = []
+        seen_style_color = set()
+        seen_styles = set()
 
         for row in row_iter:
             style_number = val(row, 'STYLE#')
             product_name = val(row, 'PRODUCT_TITLE')
             brand = val(row, 'MILL')
-            color = val(row, 'COLOR_NAME')
-            front_image = val(row, 'FRONT_MODEL_IMAGE_URL') or val(row, 'PRODUCT_IMAGE')
+            category = val(row, 'CATEGORY_NAME')
+            color_name = val(row, 'COLOR_NAME')
+            available_sizes = [size.strip() for size in val(row, 'AVAILABLE_SIZES').split('|') if size.strip()]
+            front_model = val(row, 'FRONT_MODEL_IMAGE_URL')
+            back_model = val(row, 'BACK_MODEL_IMAGE_URL')
+            front_flat = val(row, 'FRONT_FLAT_IMAGE_URL')
+            back_flat = val(row, 'BACK_FLAT_IMAGE_URL')
+            product_image = val(row, 'PRODUCT_IMAGE')
+            swatch = val(row, 'SWATCH_IMAGE_URL')
 
-            key = (style_number, color)
-            if not style_number or not product_name or not color or not front_image or key in seen:
+            key = (style_number, color_name)
+            if not style_number or not product_name or not color_name or key in seen_style_color:
                 continue
-            seen.add(key)
 
+            if style_number not in seen_styles and len(seen_styles) >= max_styles:
+                continue
+
+            seen_style_color.add(key)
+            seen_styles.add(style_number)
             preview.append(
                 {
                     'styleNumber': style_number,
                     'productName': product_name,
                     'brand': brand,
-                    'color': color,
-                    'firstImageUrl': front_image,
+                    'category': category,
+                    'colorName': color_name,
+                    'availableSizes': available_sizes,
+                    'frontModelImageUrl': front_model,
+                    'backModelImageUrl': back_model,
+                    'frontFlatImageUrl': front_flat,
+                    'backFlatImageUrl': back_flat,
+                    'productImageUrl': product_image,
+                    'colorSwatchImageUrl': swatch,
                 }
             )
-            if len(preview) >= SAMPLE_SIZE:
+            if len(preview) >= max_rows:
                 break
 
         return preview
 
 
 def main() -> None:
-    preview = build_preview()
-    OUTPUT_PATH.write_text(json.dumps(preview, indent=2), encoding='utf-8')
-    print(f'Wrote {len(preview)} rows to {OUTPUT_PATH}')
+    parser = argparse.ArgumentParser(description='Generate a small SanMar sample catalog JSON.')
+    parser.add_argument('--max-rows', type=int, default=MAX_ROWS_DEFAULT)
+    parser.add_argument('--max-styles', type=int, default=MAX_STYLES_DEFAULT)
+    parser.add_argument('--output', type=Path, default=OUTPUT_PATH)
+    args = parser.parse_args()
+
+    preview = build_preview(max_rows=args.max_rows, max_styles=args.max_styles)
+    args.output.write_text(json.dumps(preview, indent=2), encoding='utf-8')
+    unique_styles = len({item['styleNumber'] for item in preview})
+    print(f'Wrote {len(preview)} rows ({unique_styles} unique styles) to {args.output}')
 
 
 if __name__ == '__main__':
