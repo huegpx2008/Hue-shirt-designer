@@ -307,16 +307,18 @@ export default function Home() {
     if (printMethod === 'Screen Print' && isFullColorArtwork) return 'Screen Print may be less ideal for full-color/photo artwork; DTF is often preferred.';
     return '';
   }, [isFullColorArtwork, isSimpleArtwork, printMethod, totalQuantity]);
-  const selectedPrintLocationLabel = PRINT_AREA_CONFIG[printLocation].label;
-  const selectedPrintSizeLabel = printSizePreset === 'left-chest-3_5'
+  const formatPrintSizeLabel = (settings: LocationSettings) => settings.printSizePreset === 'left-chest-3_5'
     ? 'Left Chest: 3.5" wide'
-    : printSizePreset === 'standard-front-10'
+    : settings.printSizePreset === 'standard-front-10'
       ? 'Standard Front: 10" wide'
-      : printSizePreset === 'large-front-12'
+      : settings.printSizePreset === 'large-front-12'
         ? 'Large Front: 12" wide'
-        : printSizePreset === 'full-back-12'
+        : settings.printSizePreset === 'full-back-12'
           ? 'Full Back: 12" wide'
-          : `Custom Size: ${customPrintWidthInches || 'N/A'}" W${customPrintHeightInches ? ` × ${customPrintHeightInches}" H` : ''}`;
+          : `Custom Size: ${settings.customPrintWidthInches || 'N/A'}" W${settings.customPrintHeightInches ? ` × ${settings.customPrintHeightInches}" H` : ''}`;
+  const selectedPrintLocationLabel = PRINT_AREA_CONFIG[printLocation].label;
+  const selectedPrintSizeLabel = formatPrintSizeLabel(activeLocationSettings);
+  const selectedLocationDetails = selectedPrintLocations.map((location) => ({ location, label: PRINT_AREA_CONFIG[location].label, sizeLabel: formatPrintSizeLabel(locationSettings[location]), notes: locationSettings[location]?.notes || 'No notes' }));
   const estimatedLocationName = printLocation === 'full-front' ? 'Front' : printLocation === 'full-back' ? 'Back' : printLocation === 'sleeve' ? 'Sleeve' : 'Left Chest';
   const estimatedColorCount: 1 | 2 | 3 | 4 = imageComplexity === 'Simple 1 color' ? 1 : imageComplexity === '2-3 colors' ? 3 : 4;
   const estimatedDtfSize = imageComplexity === 'Simple 1 color' ? { width: 10, height: 10 } : imageComplexity === '2-3 colors' ? { width: 11, height: 11 } : { width: 12, height: 12 };
@@ -439,8 +441,9 @@ export default function Home() {
     `Selected Color: ${selectedColorName}`,
     '',
     'Design Info',
-    `Print Location: ${selectedPrintLocationLabel}`,
-    `Print Size: ${selectedPrintSizeLabel}`,
+    `Active Print Location: ${selectedPrintLocationLabel}`,
+    `Active Print Size: ${selectedPrintSizeLabel}`,
+    `All Print Locations: ${selectedLocationDetails.map((item) => `${item.label} (${item.sizeLabel}) - ${item.notes}`).join(' | ')}`,
     `Shirt View: ${shirtView}`,
     `Image Complexity: ${imageComplexity}`,
     `Design Preview Status: ${designPreviewStatus}`,
@@ -465,7 +468,7 @@ export default function Home() {
     'This is an estimate only. Final pricing may change after artwork review, garment availability, and exact production requirements.',
     'Print size is approximate and may be adjusted during production.',
     selectedPrintLocations.length > 1 ? 'Multiple print locations selected; final pricing may be affected.' : 'Single print location selected.'
-  ].join('\n'), [capturedDesignPreview, customerInfo, customPrintHeightInches, customPrintWidthInches, designPreviewStatus, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, imageComplexity, printLocation, printSizePreset, recommendationByCost.recommendedMethod, selectedColorName, selectedProductName, selectedPrintLocationLabel, selectedPrintSizeLabel, shirtView, sizeBreakdown, totalQuantity]);
+  ].join('\n'), [capturedDesignPreview, customerInfo, customPrintHeightInches, customPrintWidthInches, designPreviewStatus, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, imageComplexity, printLocation, printSizePreset, recommendationByCost.recommendedMethod, selectedColorName, selectedLocationDetails, selectedProductName, selectedPrintLocationLabel, selectedPrintSizeLabel, shirtView, sizeBreakdown, totalQuantity]);
 
   const [emailSummaryText, setEmailSummaryText] = useState('');
 
@@ -488,8 +491,9 @@ export default function Home() {
     `Needed-by Date: ${customerInfo.neededByDate || 'N/A'}`,
     `Selected Product/Style: ${selectedProductName}${selectedPreview?.styleNumber ? ` (${selectedPreview.styleNumber})` : ''}`,
     `Selected Color: ${selectedColorName}`,
-    `Print Placement: ${selectedPrintLocationLabel}`,
-    `Print Size: ${selectedPrintSizeLabel}`,
+    `Active Print Placement: ${selectedPrintLocationLabel}`,
+    `Active Print Size: ${selectedPrintSizeLabel}`,
+    `All Print Locations: ${selectedLocationDetails.map((item) => `${item.label} (${item.sizeLabel}) - ${item.notes}`).join(' | ')}`,
     `Size Breakdown: ${sizeBreakdown}`,
     `Total Quantity: ${totalQuantity}`,
     `Print Method Recommendation: ${recommendationByCost.recommendedMethod === 'dtf' ? 'DTF' : 'Screen Print'}`,
@@ -501,7 +505,7 @@ export default function Home() {
     'This is an estimate-only request and not a final order.',
     'Print size is approximate and may be adjusted during production.',
     selectedPrintLocations.length > 1 ? 'Multiple print locations selected; final pricing may be affected.' : 'Single print location selected.'
-  ].join('\n'), [capturedDesignPreview, customerInfo.email, customerInfo.name, customerInfo.neededByDate, customerInfo.notes, customerInfo.organization, customerInfo.phone, emailSubjectLine, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, recommendationByCost.recommendedMethod, selectedColorName, selectedPrintLocationLabel, selectedPrintSizeLabel, selectedProductName, selectedPreview?.styleNumber, sizeBreakdown, totalQuantity]);
+  ].join('\n'), [capturedDesignPreview, customerInfo.email, customerInfo.name, customerInfo.neededByDate, customerInfo.notes, customerInfo.organization, customerInfo.phone, emailSubjectLine, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, recommendationByCost.recommendedMethod, selectedColorName, selectedLocationDetails, selectedPrintLocationLabel, selectedPrintSizeLabel, selectedProductName, selectedPreview?.styleNumber, sizeBreakdown, totalQuantity]);
 
   const generateEmailSummary = () => {
     setEmailSummaryText(generatedEmailSummary);
@@ -586,7 +590,8 @@ export default function Home() {
         capturedDesignPreview: Boolean(capturedDesignPreview),
         designExportStatus: `Ready (${shirtView} / ${printLocation})`,
         printPlacement: selectedPrintLocationLabel,
-        printSize: selectedPrintSizeLabel
+        printSize: selectedPrintSizeLabel,
+        allPrintLocations: selectedLocationDetails
       }
     };
     const content = format === 'json' ? JSON.stringify(quoteData, null, 2) : quoteSummaryText;
@@ -696,7 +701,10 @@ export default function Home() {
 
   const refreshLayers = (canvas: Canvas) => {
     const selected = canvas.getActiveObject();
-    const items = canvas.getObjects().map((obj, idx) => {
+    const items = canvas.getObjects().filter((obj) => {
+      const objectLocation = (obj as FabricObject & { data?: { printLocation?: PrintLocation } }).data?.printLocation;
+      return !objectLocation || objectLocation === printLocation;
+    }).map((obj, idx) => {
       const layerObj = obj as FabricObject & { data?: { layerId?: string } };
       if (!layerObj.data) layerObj.data = {};
       if (!layerObj.data.layerId) layerObj.data.layerId = `layer-${Date.now()}-${idx}`;
@@ -731,6 +739,19 @@ export default function Home() {
     if (!selectedProduct.defaultPrintLocations.includes(printLocation)) setPrintLocation(selectedProduct.defaultPrintLocations[0]);
     setSelectedPrintLocations((prev) => prev.filter((loc) => selectedProduct.defaultPrintLocations.includes(loc)).length ? prev.filter((loc) => selectedProduct.defaultPrintLocations.includes(loc)) : [selectedProduct.defaultPrintLocations[0]]);
   }, [selectedProduct, shirtColor, printLocation]);
+
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    // TODO: Persist full per-location canvas state snapshots for richer location isolation.
+    canvas.getObjects().forEach((obj) => {
+      const objectLocation = (obj as FabricObject & { data?: { printLocation?: PrintLocation } }).data?.printLocation;
+      obj.visible = !objectLocation || objectLocation === printLocation;
+    });
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    refreshLayers(canvas);
+  }, [printLocation]);
 
   const selectedStyleItems = useMemo(() => selectedPreview ? previewCatalog.filter((item) => item.styleNumber === selectedPreview.styleNumber) : [], [previewCatalog, selectedPreview]);
   const availableStyleColors = useMemo(() => Array.from(new Map(selectedStyleItems.map((item) => [item.colorName, { name: item.colorName, value: COLOR_MAP[item.colorName.toLowerCase()] || '#94a3b8', swatchUrl: item.colorSwatchImageUrl }] )).values()), [selectedStyleItems]);
@@ -867,6 +888,7 @@ export default function Home() {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
     const text = new IText(textValue.trim() || 'Your text', { left: designArea.width / 2, top: designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+    (text as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((text as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
     canvas.add(text); canvas.setActiveObject(text); canvas.renderAll();
   };
 
@@ -880,6 +902,7 @@ export default function Home() {
       const img = await FabricImage.fromURL(reader.result as string);
       img.set({ left: designArea.width / 2, top: designArea.height / 2, originX: 'center', originY: 'center', cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
       const maxWidth = Math.min(150, designArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
+      (img as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
       canvas.add(img); clampToArea(img); canvas.setActiveObject(img); canvas.renderAll(); event.target.value = '';
     };
     reader.readAsDataURL(file);
