@@ -15,6 +15,13 @@ type ShirtView = 'front' | 'back';
 type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean };
 type ImageType = 'flat' | 'model';
+type ProductMode = 'apparel' | 'signage';
+type SignProductId = 'banner' | 'yard-sign';
+type SignFieldType = 'number' | 'select' | 'checkbox';
+type SignFieldOption = { label: string; value: string };
+type SignField = { name: string; label: string; type: SignFieldType; defaultValue: string | boolean; step?: string; options?: SignFieldOption[] };
+type SignProductConfig = { id: SignProductId; name: string; apiSlug: string; description: string; preview: 'banner' | 'yard-sign'; fields: SignField[] };
+type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
 type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'caps' | 'other' | 'other-part-3' | 'other-part-4';
 type SizeKey = 'YS' | 'YM' | 'YL' | 'YXL' | 'AS' | 'AM' | 'AL' | 'AXL' | '2XL' | '3XL' | '4XL';
@@ -26,6 +33,23 @@ type CustomerInfo = {
   phone: string;
   neededByDate: string;
   notes: string;
+};
+
+type ArtworkAnalysis = {
+  fileName: string;
+  width: number;
+  height: number;
+  visibleColorCount: number;
+  sampledPixelCount: number;
+  transparentPixelRatio: number;
+  hasTransparency: boolean;
+  hasOpaqueBackground: boolean;
+  hasGradientLikeDetail: boolean;
+  complexity: 'Simple 1 color' | '2-3 colors' | 'Full color / photo';
+  recommendation: 'Screen Print' | 'DTF' | 'Manual review';
+  confidence: 'High' | 'Medium' | 'Low';
+  warnings: string[];
+  dominantColors: string[];
 };
 
 
@@ -41,6 +65,7 @@ type DraftPayload = {
   sizeQuantities: Record<SizeKey, number>;
   printMethod: string;
   imageComplexity: string;
+  artworkAnalysis?: ArtworkAnalysis | null;
   customerInfo: CustomerInfo;
   printLocation: PrintLocation;
   printSizePreset: string;
@@ -70,6 +95,7 @@ type QuotePackagePayload = {
   totalQuantity: number;
   printMethod: string;
   imageComplexity: string;
+  artworkAnalysis?: ArtworkAnalysis | null;
   pricingEstimate: {
     setupFee: number;
     decorationCost: number;
@@ -120,6 +146,67 @@ const CHUNKED_CATEGORY_LABELS: Record<CategoryChunkSlug, string> = {
 };
 const PRODUCTS_PAGE_SIZE = 24;
 const ALL_CATEGORY_SLUGS: CategoryChunkSlug[] = ['t-shirts', 'hoodies', 'long-sleeve', 'sweatshirts', 'polos', 'bags', 'caps', 'other', 'other-part-3', 'other-part-4'];
+const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
+  {
+    id: 'banner',
+    name: 'Vinyl Banner',
+    apiSlug: 'banner',
+    description: 'Indoor and outdoor vinyl banners with finishing options.',
+    preview: 'banner',
+    fields: [
+      { name: 'width', label: 'Width (inches)', type: 'number', defaultValue: '36', step: '0.25' },
+      { name: 'height', label: 'Height (inches)', type: 'number', defaultValue: '24', step: '0.25' },
+      { name: 'quantity', label: 'Quantity', type: 'number', defaultValue: '1', step: '1' },
+      {
+        name: 'material',
+        label: 'Material',
+        type: 'select',
+        defaultValue: '13-single',
+        options: [
+          { label: '13oz Single-Sided', value: '13-single' },
+          { label: '15oz Single-Sided', value: '15-single' },
+          { label: '18oz Single-Sided', value: '18-single' },
+          { label: '18oz Double-Sided', value: '18-double' }
+        ]
+      },
+      { name: 'polePocket', label: 'Pole Pocket', type: 'checkbox', defaultValue: false },
+      { name: 'rope', label: 'Rope', type: 'checkbox', defaultValue: false },
+      { name: 'windSlits', label: 'Wind Slits', type: 'checkbox', defaultValue: false },
+      { name: 'rush', label: 'Rush', type: 'checkbox', defaultValue: false }
+    ]
+  },
+  {
+    id: 'yard-sign',
+    name: 'Coroplast Yard Sign',
+    apiSlug: 'yard-sign',
+    description: '18 x 24 coroplast yard signs with stake options.',
+    preview: 'yard-sign',
+    fields: [
+      { name: 'quantity', label: 'Quantity', type: 'number', defaultValue: '10', step: '1' },
+      {
+        name: 'sides',
+        label: 'Print Sides',
+        type: 'select',
+        defaultValue: 'single',
+        options: [
+          { label: 'Single-Sided', value: 'single' },
+          { label: 'Double-Sided', value: 'double' }
+        ]
+      },
+      {
+        name: 'stakeType',
+        label: 'Stakes',
+        type: 'select',
+        defaultValue: 'standard',
+        options: [
+          { label: 'No Stakes', value: 'none' },
+          { label: 'Standard Stakes', value: 'standard' },
+          { label: 'Heavy-Duty Stakes', value: 'heavy-duty' }
+        ]
+      }
+    ]
+  }
+];
 
 const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
   't-shirts': 'Loading T-Shirts…',
@@ -207,6 +294,140 @@ const FABRIC_CONTROL_STYLE = {
   transparentCorners: false
 };
 
+const rgbToHex = (r: number, g: number, b: number) => `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+
+const getDefaultSignValues = (product: SignProductConfig) => Object.fromEntries(product.fields.map((field) => [field.name, field.defaultValue])) as Record<string, string | boolean>;
+
+const toSignPricingPayload = (product: SignProductConfig, values: Record<string, string | boolean>) => Object.fromEntries(product.fields.map((field) => {
+  const value = values[field.name];
+  return [field.name, field.type === 'number' ? Number(value) : value];
+}));
+
+const getSignQuantity = (values: Record<string, string | boolean>) => {
+  const quantity = Number(values.quantity);
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+};
+
+const formatSignPrice = (value: number | string | undefined, currency = 'USD') => {
+  if (typeof value === 'number') {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
+  }
+
+  return value || 'Request pricing';
+};
+
+const getSignOptionLabel = (field: SignField, value: string | boolean) => {
+  if (typeof value === 'boolean') return value ? field.label : '';
+  return field.options?.find((option) => option.value === value)?.label || value;
+};
+
+const getSignConfigurationText = (product: SignProductConfig, values: Record<string, string | boolean>) => product.fields.map((field) => {
+  const value = values[field.name];
+  if (field.type === 'checkbox') return value ? field.label : '';
+  return `${field.label}: ${getSignOptionLabel(field, value)}`;
+}).filter(Boolean).join(', ');
+
+const analyzeArtworkImage = (file: File, dataUrl: string): Promise<ArtworkAnalysis> => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => {
+    const maxSampleDimension = 240;
+    const scale = Math.min(1, maxSampleDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+
+    if (!context) {
+      reject(new Error('Could not read artwork pixels.'));
+      return;
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height).data;
+    const colorBuckets = new Map<string, { count: number; r: number; g: number; b: number }>();
+    const detailedBuckets = new Set<string>();
+    let visiblePixels = 0;
+    let transparentPixels = 0;
+    let edgePixels = 0;
+    const quantize = 32;
+    const detailedQuantize = 12;
+
+    for (let index = 0; index < pixels.length; index += 4) {
+      const alpha = pixels[index + 3];
+      if (alpha < 24) {
+        transparentPixels += 1;
+        continue;
+      }
+
+      visiblePixels += 1;
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      const bucketR = Math.min(255, Math.round(r / quantize) * quantize);
+      const bucketG = Math.min(255, Math.round(g / quantize) * quantize);
+      const bucketB = Math.min(255, Math.round(b / quantize) * quantize);
+      const key = `${bucketR},${bucketG},${bucketB}`;
+      const current = colorBuckets.get(key) || { count: 0, r: bucketR, g: bucketG, b: bucketB };
+      current.count += 1;
+      colorBuckets.set(key, current);
+      detailedBuckets.add(`${Math.round(r / detailedQuantize)},${Math.round(g / detailedQuantize)},${Math.round(b / detailedQuantize)}`);
+
+      if (index % (width * 4) < 4 || index % (width * 4) >= (width - 1) * 4 || index < width * 4 || index >= pixels.length - width * 4) {
+        edgePixels += 1;
+      }
+    }
+
+    const significantColors = Array.from(colorBuckets.values())
+      .filter((bucket) => visiblePixels > 0 && bucket.count / visiblePixels >= 0.006)
+      .sort((a, b) => b.count - a.count);
+    const visibleColorCount = Math.max(1, significantColors.length);
+    const transparentPixelRatio = (transparentPixels / Math.max(1, transparentPixels + visiblePixels));
+    const hasTransparency = transparentPixelRatio > 0.03;
+    const edgeFillRatio = edgePixels / Math.max(1, (width * 2) + (height * 2) - 4);
+    const hasOpaqueBackground = !hasTransparency && edgeFillRatio > 0.6;
+    const hasGradientLikeDetail = detailedBuckets.size > Math.max(40, visibleColorCount * 10);
+    const warnings: string[] = [];
+
+    if (image.naturalWidth < 900 || image.naturalHeight < 900) warnings.push('Low resolution may need review before production.');
+    if (hasOpaqueBackground) warnings.push('Artwork appears to have a solid background.');
+    if (visibleColorCount > 4) warnings.push('More than 4 color families makes screen print less predictable.');
+    if (hasGradientLikeDetail) warnings.push('Gradient/photo-like detail detected.');
+
+    const complexity: ArtworkAnalysis['complexity'] = hasGradientLikeDetail || visibleColorCount > 6
+      ? 'Full color / photo'
+      : visibleColorCount <= 2
+        ? 'Simple 1 color'
+        : '2-3 colors';
+    const recommendation: ArtworkAnalysis['recommendation'] = complexity === 'Full color / photo' || hasOpaqueBackground
+      ? 'DTF'
+      : visibleColorCount <= 4
+        ? 'Screen Print'
+        : 'Manual review';
+    const confidence: ArtworkAnalysis['confidence'] = warnings.length >= 2 ? 'Medium' : warnings.length === 1 ? 'Medium' : 'High';
+
+    resolve({
+      fileName: file.name,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      visibleColorCount,
+      sampledPixelCount: visiblePixels,
+      transparentPixelRatio,
+      hasTransparency,
+      hasOpaqueBackground,
+      hasGradientLikeDetail,
+      complexity,
+      recommendation,
+      confidence,
+      warnings,
+      dominantColors: significantColors.slice(0, 6).map((color) => rgbToHex(color.r, color.g, color.b)),
+    });
+  };
+  image.onerror = () => reject(new Error('Could not load artwork for analysis.'));
+  image.src = dataUrl;
+});
+
 const getProductCardImage = (item: SanMarPreviewItem | undefined) => {
   if (!item) return PRODUCT_IMAGE_PLACEHOLDER;
   return item.frontFlatImageUrl || item.productImageUrl || item.frontModelImageUrl || item.colorSwatchImageUrl || PRODUCT_IMAGE_PLACEHOLDER;
@@ -215,6 +436,13 @@ const getProductCardImage = (item: SanMarPreviewItem | undefined) => {
 export default function Home() {
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvasRef = useRef<Canvas | null>(null);
+  const [productMode, setProductMode] = useState<ProductMode>('apparel');
+  const [signProductId, setSignProductId] = useState<SignProductId>('banner');
+  const selectedSignProduct = useMemo(() => SIGN_PRODUCT_CONFIGS.find((product) => product.id === signProductId) || SIGN_PRODUCT_CONFIGS[0], [signProductId]);
+  const [signValues, setSignValues] = useState<Record<string, string | boolean>>(() => getDefaultSignValues(SIGN_PRODUCT_CONFIGS[0]));
+  const [signEstimate, setSignEstimate] = useState<SignEstimate | null>(null);
+  const [signEstimateStatus, setSignEstimateStatus] = useState('');
+  const [isSignEstimateLoading, setIsSignEstimateLoading] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState(SAMPLE_PRODUCT_CATALOG[0].id);
   const selectedProduct = useMemo<ProductCatalogItem>(() => SAMPLE_PRODUCT_CATALOG.find((item) => item.id === selectedProductId) || SAMPLE_PRODUCT_CATALOG[0], [selectedProductId]);
   const [shirtColor, setShirtColor] = useState(selectedProduct.availableColors[0].value);
@@ -262,6 +490,8 @@ export default function Home() {
   });
   const [printMethod, setPrintMethod] = useState('Not sure / Recommend for me');
   const [imageComplexity, setImageComplexity] = useState('Simple 1 color');
+  const [artworkAnalysis, setArtworkAnalysis] = useState<ArtworkAnalysis | null>(null);
+  const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo>({ name: '', organization: '', email: '', phone: '', neededByDate: '', notes: '' });
   const [capturedDesignPreview, setCapturedDesignPreview] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState('');
@@ -269,6 +499,12 @@ export default function Home() {
   const importQuotePackageInputRef = useRef<HTMLInputElement | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
+
+  useEffect(() => {
+    setSignValues(getDefaultSignValues(selectedSignProduct));
+    setSignEstimate(null);
+    setSignEstimateStatus('');
+  }, [selectedSignProduct]);
 
   const activeLocationSettings = locationSettings[printLocation];
   const printSizePreset = activeLocationSettings.printSizePreset;
@@ -448,12 +684,26 @@ export default function Home() {
   const estimatedPerShirt = totalQuantity > 0 ? estimatedDecorationCost / totalQuantity : 0;
   const selectedColorName = selectedPreview?.colorName || selectedProduct.availableColors.find((color) => color.value === shirtColor)?.name || shirtColor;
   const selectedProductName = selectedPreview?.productName || selectedProduct.name;
+  const designerProductName = productMode === 'signage' ? selectedSignProduct.name : selectedProductName;
+  const designerProductDetail = productMode === 'signage'
+    ? getSignConfigurationText(selectedSignProduct, signValues)
+    : `${selectedColorName} / ${selectedPreview?.brand || 'Catalog'}`;
+  const signWidth = Number(signValues.width || (selectedSignProduct.id === 'yard-sign' ? 18 : 36));
+  const signHeight = Number(signValues.height || (selectedSignProduct.id === 'yard-sign' ? 24 : 24));
+  const signPreviewAspect = Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
+  const designerQuantity = productMode === 'signage' ? getSignQuantity(signValues) : totalQuantity;
+  const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
+  const artworkAnalysisSummary = useMemo(() => {
+    if (!artworkAnalysis) return 'No uploaded artwork analysis yet.';
+    const warnings = artworkAnalysis.warnings.length ? artworkAnalysis.warnings.join('; ') : 'No first-pass warnings';
+    return `${artworkAnalysis.visibleColorCount} estimated color families; ${artworkAnalysis.width} x ${artworkAnalysis.height}px; ${artworkAnalysis.hasTransparency ? 'transparent/soft edge' : artworkAnalysis.hasOpaqueBackground ? 'likely solid background' : 'opaque'}; suggested ${artworkAnalysis.recommendation}; ${warnings}.`;
+  }, [artworkAnalysis]);
   const designPreviewStatus = capturedDesignPreview ? 'Captured design preview available' : 'No captured design preview';
   const hasCustomerName = customerInfo.name.trim().length > 0;
   const hasContactMethod = customerInfo.email.trim().length > 0 || customerInfo.phone.trim().length > 0;
-  const hasProductSelection = Boolean(selectedProductName.trim());
-  const hasValidQuantity = totalQuantity > 0;
+  const hasProductSelection = Boolean(designerProductName.trim());
+  const hasValidQuantity = designerQuantity > 0;
   const missingQuoteRequirements = useMemo(() => {
     const missing: string[] = [];
     if (!hasCustomerName) missing.push('customer name');
@@ -497,6 +747,7 @@ export default function Home() {
       sizeQuantities,
       printMethod,
       imageComplexity,
+      artworkAnalysis,
       customerInfo,
       printLocation,
       selectedPrintLocations: selectedPrintLocations as unknown as PrintLocation[],
@@ -526,6 +777,7 @@ export default function Home() {
       if (draft.imageType === 'flat' || draft.imageType === 'model') setImageType(draft.imageType);
       if (draft.printMethod) setPrintMethod(draft.printMethod);
       if (draft.imageComplexity) setImageComplexity(draft.imageComplexity);
+      if (draft.artworkAnalysis !== undefined) setArtworkAnalysis(draft.artworkAnalysis || null);
       if ((draft as any).selectedPrintLocations) setSelectedPrintLocations((draft as any).selectedPrintLocations);
       if ((draft as any).locationSettings) setLocationSettings(normalizeLocationSettings((draft as any).locationSettings));
       if (draft.printLocation) setPrintLocation(draft.printLocation);
@@ -585,6 +837,7 @@ export default function Home() {
     `All Print Locations: ${selectedLocationDetails.map((item) => `${item.label} (${item.sizeLabel}) - ${item.notes} - Artboard x:${Math.round(item.artboard.left)} y:${Math.round(item.artboard.top)} w:${Math.round(item.artboard.width)} h:${Math.round(item.artboard.height)}`).join(' | ')}`,
     `Shirt View: ${shirtView}`,
     `Image Complexity: ${imageComplexity}`,
+    `Artwork Analysis: ${artworkAnalysisSummary}`,
     `Design Preview Status: ${designPreviewStatus}`,
     `Design Preview Captured: ${capturedDesignPreview ? 'Yes' : 'No'}`,
     `Design Export Status: Ready (${shirtView} / ${printLocation})`,
@@ -607,7 +860,7 @@ export default function Home() {
     'This is an estimate only. Final pricing may change after artwork review, garment availability, and exact production requirements.',
     'Print size is approximate and may be adjusted during production.',
     selectedPrintLocations.length > 1 ? 'Multiple print locations selected; final pricing may be affected.' : 'Single print location selected.'
-  ].join('\n'), [capturedDesignPreview, customerInfo, customPrintHeightInches, customPrintWidthInches, designPreviewStatus, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, imageComplexity, printLocation, printSizePreset, recommendationByCost.recommendedMethod, selectedColorName, selectedLocationDetails, selectedProductName, selectedPrintLocationLabel, selectedPrintSizeLabel, shirtView, sizeBreakdown, totalQuantity]);
+  ].join('\n'), [artworkAnalysisSummary, capturedDesignPreview, customerInfo, customPrintHeightInches, customPrintWidthInches, designPreviewStatus, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, imageComplexity, printLocation, printSizePreset, recommendationByCost.recommendedMethod, selectedColorName, selectedLocationDetails, selectedProductName, selectedPrintLocationLabel, selectedPrintSizeLabel, shirtView, sizeBreakdown, totalQuantity]);
 
   const [emailSummaryText, setEmailSummaryText] = useState('');
 
@@ -635,6 +888,7 @@ export default function Home() {
     `All Print Locations: ${selectedLocationDetails.map((item) => `${item.label} (${item.sizeLabel}) - ${item.notes} - Artboard x:${Math.round(item.artboard.left)} y:${Math.round(item.artboard.top)} w:${Math.round(item.artboard.width)} h:${Math.round(item.artboard.height)}`).join(' | ')}`,
     `Size Breakdown: ${sizeBreakdown}`,
     `Total Quantity: ${totalQuantity}`,
+    `Artwork Analysis: ${artworkAnalysisSummary}`,
     `Print Method Recommendation: ${recommendationByCost.recommendedMethod === 'dtf' ? 'DTF' : 'Screen Print'}`,
     `Estimate-Only Pricing: Setup $${estimatedSetupFee.toFixed(2)} | Decoration $${estimatedDecorationCost.toFixed(2)} | Per Shirt $${estimatedPerShirt.toFixed(2)}`,
     `Notes: ${customerInfo.notes || 'N/A'}`,
@@ -644,7 +898,7 @@ export default function Home() {
     'This is an estimate-only request and not a final order.',
     'Print size is approximate and may be adjusted during production.',
     selectedPrintLocations.length > 1 ? 'Multiple print locations selected; final pricing may be affected.' : 'Single print location selected.'
-  ].join('\n'), [capturedDesignPreview, customerInfo.email, customerInfo.name, customerInfo.neededByDate, customerInfo.notes, customerInfo.organization, customerInfo.phone, emailSubjectLine, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, recommendationByCost.recommendedMethod, selectedColorName, selectedLocationDetails, selectedPrintLocationLabel, selectedPrintSizeLabel, selectedProductName, selectedPreview?.styleNumber, sizeBreakdown, totalQuantity]);
+  ].join('\n'), [artworkAnalysisSummary, capturedDesignPreview, customerInfo.email, customerInfo.name, customerInfo.neededByDate, customerInfo.notes, customerInfo.organization, customerInfo.phone, emailSubjectLine, estimatedDecorationCost, estimatedPerShirt, estimatedSetupFee, recommendationByCost.recommendedMethod, selectedColorName, selectedLocationDetails, selectedPrintLocationLabel, selectedPrintSizeLabel, selectedProductName, selectedPreview?.styleNumber, sizeBreakdown, totalQuantity]);
 
   const generateEmailSummary = () => {
     setEmailSummaryText(generatedEmailSummary);
@@ -706,6 +960,7 @@ export default function Home() {
       selectedColor: selectedColorName,
       sizeBreakdown,
       totalQuantity,
+      artworkAnalysis,
       printMethodRecommendation: recommendationByCost.recommendedMethod === 'dtf' ? 'DTF' : 'Screen Print',
       estimateOnlyPricing: {
         setupFee: Number(estimatedSetupFee.toFixed(2)),
@@ -719,6 +974,7 @@ export default function Home() {
         selectedColor: selectedColorName,
         totalQuantity,
         sizeBreakdown,
+        artworkAnalysis,
         printMethodRecommendation: recommendationByCost.recommendedMethod === 'dtf' ? 'DTF' : 'Screen Print',
         estimateOnlyPricing: {
           setupFee: Number(estimatedSetupFee.toFixed(2)),
@@ -762,6 +1018,7 @@ export default function Home() {
       totalQuantity,
       printMethod,
       imageComplexity,
+      artworkAnalysis,
       pricingEstimate: {
         setupFee: Number(estimatedSetupFee.toFixed(2)),
         decorationCost: Number(estimatedDecorationCost.toFixed(2)),
@@ -806,6 +1063,7 @@ export default function Home() {
       if (quotePackage.imageType === 'flat' || quotePackage.imageType === 'model') setImageType(quotePackage.imageType);
       if (quotePackage.printMethod) setPrintMethod(quotePackage.printMethod);
       if (quotePackage.imageComplexity) setImageComplexity(quotePackage.imageComplexity);
+      if (quotePackage.artworkAnalysis !== undefined) setArtworkAnalysis(quotePackage.artworkAnalysis || null);
       if (quotePackage.selectedPrintLocations) setSelectedPrintLocations(quotePackage.selectedPrintLocations);
       if (quotePackage.locationSettings) setLocationSettings(normalizeLocationSettings(quotePackage.locationSettings));
       if (quotePackage.printLocation) setPrintLocation(quotePackage.printLocation);
@@ -1048,7 +1306,18 @@ export default function Home() {
     const file = event.target.files?.[0]; const canvas = fabricCanvasRef.current; if (!file || !canvas) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const img = await FabricImage.fromURL(reader.result as string);
+      const dataUrl = reader.result as string;
+      try {
+        const analysis = await analyzeArtworkImage(file, dataUrl);
+        setArtworkAnalysis(analysis);
+        setArtworkAnalysisStatus(`Analyzed ${analysis.fileName}`);
+        setImageComplexity(analysis.complexity);
+      } catch (error) {
+        setArtworkAnalysis(null);
+        setArtworkAnalysisStatus(error instanceof Error ? error.message : 'Artwork analysis failed.');
+      }
+
+      const img = await FabricImage.fromURL(dataUrl);
       img.set({ left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', ...FABRIC_CONTROL_STYLE });
       const maxWidth = Math.min(150, designArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
       (img as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
@@ -1147,7 +1416,42 @@ export default function Home() {
   const exportDesign = () => {
     const canvas = fabricCanvasRef.current; if (!canvas) return;
     const dataUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
-    const link = document.createElement('a'); link.download = `shirt-design-${shirtView}-${printLocation}.png`; link.href = dataUrl; link.click();
+    const link = document.createElement('a'); link.download = `${productMode}-design-${productMode === 'apparel' ? `${shirtView}-${printLocation}` : selectedSignProduct.id}.png`; link.href = dataUrl; link.click();
+  };
+
+  const requestSignEstimate = async () => {
+    setSignEstimate(null);
+    setSignEstimateStatus('');
+    const payload = toSignPricingPayload(selectedSignProduct, signValues);
+    const missingNumber = selectedSignProduct.fields.some((field) => field.type === 'number' && (!payload[field.name] || Number.isNaN(payload[field.name])));
+
+    if (missingNumber) {
+      setSignEstimateStatus('Please enter valid sign dimensions and quantity.');
+      return;
+    }
+
+    setIsSignEstimateLoading(true);
+    try {
+      const response = await fetch(`/api/pricing/${selectedSignProduct.apiSlug}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json() as SignEstimate;
+
+      if (!response.ok || data.ok === false) {
+        const fieldMessages = data.error?.fields ? Object.entries(data.error.fields).map(([field, message]) => `${field}: ${message}`).join(' ') : '';
+        setSignEstimateStatus([data.error?.message || 'The sign estimate could not be returned.', fieldMessages].filter(Boolean).join(' '));
+        return;
+      }
+
+      setSignEstimate(data);
+      setSignEstimateStatus(`${selectedSignProduct.name} estimate loaded.`);
+    } catch {
+      setSignEstimateStatus('The sign estimate could not be loaded right now.');
+    } finally {
+      setIsSignEstimateLoading(false);
+    }
   };
 
   return (
@@ -1156,7 +1460,7 @@ export default function Home() {
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Hue Graphics</p>
-            <h1 className="truncate text-xl font-semibold tracking-tight md:text-2xl">Shirt Design Studio</h1>
+            <h1 className="truncate text-xl font-semibold tracking-tight md:text-2xl">Custom Design Studio</h1>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button>
@@ -1172,24 +1476,36 @@ export default function Home() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Product</h2>
-                <p className="mt-1 truncate text-sm font-medium">{selectedProductName}</p>
-                <p className="truncate text-xs text-slate-500">{selectedColorName} / {selectedPreview?.brand || 'Catalog'}</p>
+                <p className="mt-1 truncate text-sm font-medium">{designerProductName}</p>
+                <p className="truncate text-xs text-slate-500">{designerProductDetail}</p>
               </div>
-              <img src={getProductCardImage(selectedPreview)} alt={selectedProductName} className="h-14 w-14 rounded-md border border-slate-200 bg-slate-100 object-cover" />
+              {productMode === 'apparel' ? <img src={getProductCardImage(selectedPreview)} alt={selectedProductName} className="h-14 w-14 rounded-md border border-slate-200 bg-slate-100 object-cover" /> : <div className="flex h-14 w-14 items-center justify-center rounded-md border border-slate-200 bg-teal-50 text-xs font-semibold text-teal-800">Sign</div>}
             </div>
           </div>
 
           <div className="space-y-3 p-4">
-            <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search catalog" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100" />
             <div className="grid grid-cols-2 gap-2">
-              <select value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)} className="min-w-0 rounded-md border border-slate-300 px-2 py-2 text-xs"><option value="all">All Brands</option>{brandOptions.map((brand) => <option key={brand} value={brand}>{brand}</option>)}</select>
-              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="min-w-0 rounded-md border border-slate-300 px-2 py-2 text-xs"><option value="all">All Categories</option>{categoryOptions.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}</select>
-              <select value={sortOption} onChange={(event) => setSortOption(event.target.value as 'style' | 'name' | 'brand')} className="col-span-2 rounded-md border border-slate-300 px-2 py-2 text-xs"><option value="style">Style number A-Z</option><option value="name">Product name A-Z</option><option value="brand">Brand A-Z</option></select>
+              {(['apparel', 'signage'] as ProductMode[]).map((mode) => <button key={mode} type="button" onClick={() => setProductMode(mode)} className={`rounded-md border px-3 py-2 text-xs font-semibold ${productMode === mode ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>{mode === 'apparel' ? 'Apparel' : 'Signs'}</button>)}
             </div>
-            {hasActiveCatalogFilters ? <button onClick={clearCatalogFilters} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium hover:bg-slate-50">Clear Filters</button> : null}
+            {productMode === 'apparel' ? <>
+              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search catalog" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100" />
+              <div className="grid grid-cols-2 gap-2">
+                <select value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)} className="min-w-0 rounded-md border border-slate-300 px-2 py-2 text-xs"><option value="all">All Brands</option>{brandOptions.map((brand) => <option key={brand} value={brand}>{brand}</option>)}</select>
+                <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="min-w-0 rounded-md border border-slate-300 px-2 py-2 text-xs"><option value="all">All Categories</option>{categoryOptions.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}</select>
+                <select value={sortOption} onChange={(event) => setSortOption(event.target.value as 'style' | 'name' | 'brand')} className="col-span-2 rounded-md border border-slate-300 px-2 py-2 text-xs"><option value="style">Style number A-Z</option><option value="name">Product name A-Z</option><option value="brand">Brand A-Z</option></select>
+              </div>
+              {hasActiveCatalogFilters ? <button onClick={clearCatalogFilters} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium hover:bg-slate-50">Clear Filters</button> : null}
+            </> : <div className="space-y-3">
+              <div className="grid gap-2">
+                {SIGN_PRODUCT_CONFIGS.map((product) => <button key={product.id} type="button" onClick={() => setSignProductId(product.id)} className={`rounded-md border p-3 text-left ${signProductId === product.id ? 'border-teal-700 bg-teal-50 ring-1 ring-teal-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}><p className="text-sm font-semibold">{product.name}</p><p className="mt-1 text-xs text-slate-500">{product.description}</p></button>)}
+              </div>
+              <div className="grid gap-2">
+                {selectedSignProduct.fields.map((field) => field.type === 'checkbox' ? <label key={field.name} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"><input type="checkbox" checked={Boolean(signValues[field.name])} onChange={(event) => { setSignValues((prev) => ({ ...prev, [field.name]: event.target.checked })); setSignEstimate(null); }} /><span>{field.label}</span></label> : <label key={field.name} className="text-xs font-medium text-slate-600">{field.label}{field.type === 'select' ? <select value={String(signValues[field.name] ?? '')} onChange={(event) => { setSignValues((prev) => ({ ...prev, [field.name]: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950">{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <input type="number" min={field.name === 'quantity' ? 1 : 0.25} step={field.step} value={String(signValues[field.name] ?? '')} onChange={(event) => { setSignValues((prev) => ({ ...prev, [field.name]: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" />}</label>)}
+              </div>
+            </div>}
           </div>
 
-          <div className="border-y border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">{sortedPreviewCatalog.length} results / {totalUniqueStyles} loaded styles</div>
+          {productMode === 'apparel' ? <><div className="border-y border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">{sortedPreviewCatalog.length} results / {totalUniqueStyles} loaded styles</div>
           <div className="max-h-[42vh] space-y-2 overflow-y-auto p-3 xl:max-h-[calc(100vh-25rem)]">
             {sortedPreviewCatalog.length === 0 ? <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p className="font-semibold">No matching products.</p><button onClick={clearCatalogFilters} className="mt-2 rounded-md border border-amber-400 bg-white px-2 py-1 text-xs">Clear Filters</button></div> : null}
             {pagedPreviewCatalog.map((group, index) => {
@@ -1198,7 +1514,7 @@ export default function Home() {
               return <button key={`${group.styleNumber}-${index}`} onClick={() => { if (catalogIndex >= 0) setSelectedPreviewId(catalogIndex); }} className={`w-full rounded-md border p-2 text-left transition ${selected ? 'border-teal-700 bg-teal-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><div className="flex gap-2"><img src={getProductCardImage(group.items[0])} alt={group.name} onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER; }} className="h-14 w-14 shrink-0 rounded-md border border-slate-200 bg-slate-100 object-cover p-1" /><div className="min-w-0"><p className="text-sm font-semibold">{group.styleNumber}</p><p className="truncate text-sm text-slate-700">{group.name}</p><p className="truncate text-xs text-slate-500">{group.brand} / {group.items.length} colors</p></div></div></button>;
             })}
             {hasMoreProducts ? <button onClick={() => setVisibleProductCount((prev) => prev + PRODUCTS_PAGE_SIZE)} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Load More</button> : null}
-          </div>
+          </div></> : <div className="border-t border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">Sign mode uses the same artwork tools with sign-specific sizing and pricing.</div>}
         </aside>
 
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm xl:sticky xl:top-4 xl:min-h-[calc(100vh-8rem)]">
@@ -1215,7 +1531,16 @@ export default function Home() {
           <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_210px]">
             <div className="flex min-h-[520px] items-center justify-center rounded-lg bg-stone-200 p-4">
               <div id="design-canvas" className="relative aspect-[420/520] w-full max-w-[760px]">
-                {hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
+                {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative flex w-[82%] items-center justify-center" style={{ aspectRatio: signPreviewAspect }}>
+                    <div className={`absolute inset-0 border bg-white shadow-[0_18px_45px_rgba(15,23,42,0.18)] ${selectedSignProduct.preview === 'banner' ? 'rounded-sm border-slate-300' : 'rounded border-slate-300'}`}>
+                      <div className="absolute inset-3 border border-dashed border-slate-300" />
+                      {selectedSignProduct.preview === 'banner' ? <div className="absolute inset-x-4 top-3 flex justify-between">{[0, 1, 2, 3].map((dot) => <span key={dot} className="h-2 w-2 rounded-full border border-slate-400 bg-slate-100" />)}</div> : null}
+                    </div>
+                    {selectedSignProduct.preview === 'yard-sign' ? <div className="absolute -bottom-24 left-1/2 h-24 w-16 -translate-x-1/2 border-x-4 border-slate-500" /> : null}
+                    <span className="pointer-events-none relative z-10 rounded bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{selectedSignProduct.name}</span>
+                  </div>
+                </div> : hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
                 {showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-dashed border-teal-700/55 bg-teal-50/10 shadow-[0_0_0_9999px_rgba(255,255,255,0.04)]" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><span className="absolute -top-7 left-0 rounded bg-teal-800 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">{PRINT_AREA_CONFIG[printLocation].label}</span></div> : null}
                 <div className="designer-fabric-layer absolute inset-0"><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
@@ -1272,17 +1597,42 @@ export default function Home() {
       <section id="quote" className="mx-auto max-w-[1800px] px-4 pb-6 md:px-6">
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section id="qty" className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Quantity & Estimate</h2><p className="mt-1 text-sm text-slate-600">Total quantity: <span className="font-semibold text-slate-950">{totalQuantity}</span></p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${recommendationBadgeClass}`}>{printRecommendation.badge}</span></div>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">{SIZE_FIELDS.map((size) => <label key={size} className="text-xs font-medium text-slate-600">{size}<input type="number" min={0} value={sizeQuantities[size]} onChange={(event) => setSizeQuantities((prev) => ({ ...prev, [size]: Math.max(0, Number(event.target.value) || 0) }))} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-950" /></label>)}</div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2"><label className="text-sm font-medium">Print Method<select value={printMethod} onChange={(event) => setPrintMethod(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"><option>Not sure / Recommend for me</option><option>DTF</option><option>Screen Print</option></select></label><label className="text-sm font-medium">Artwork Complexity<select value={imageComplexity} onChange={(event) => setImageComplexity(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"><option>Simple 1 color</option><option>2-3 colors</option><option>Full color / photo</option></select></label></div>
-            <div id="estimate" className="mt-4 rounded-md border border-teal-200 bg-teal-50 p-4 text-sm text-teal-950"><p className="font-semibold">{printMethod === 'Not sure / Recommend for me' ? printRecommendation.method : printMethod}</p><p className="mt-1">{printMethod === 'Not sure / Recommend for me' ? printRecommendation.reason : `You selected ${printMethod}.`}</p>{manualMethodWarning ? <p className="mt-1 text-amber-800">{manualMethodWarning}</p> : null}<p className="mt-3 font-semibold">Setup ${estimatedSetupFee.toFixed(2)} / Decoration ${estimatedDecorationCost.toFixed(2)} / Per Shirt ${estimatedPerShirt.toFixed(2)}</p></div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Quantity & Estimate</h2><p className="mt-1 text-sm text-slate-600">Total quantity: <span className="font-semibold text-slate-950">{designerQuantity}</span></p></div>{productMode === 'apparel' ? <span className={`rounded-full px-3 py-1 text-xs font-semibold ${recommendationBadgeClass}`}>{printRecommendation.badge}</span> : <span className="rounded-full bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-700">Signs & Banners</span>}</div>
+            {productMode === 'apparel' ? <>
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">{SIZE_FIELDS.map((size) => <label key={size} className="text-xs font-medium text-slate-600">{size}<input type="number" min={0} value={sizeQuantities[size]} onChange={(event) => setSizeQuantities((prev) => ({ ...prev, [size]: Math.max(0, Number(event.target.value) || 0) }))} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-950" /></label>)}</div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2"><label className="text-sm font-medium">Print Method<select value={printMethod} onChange={(event) => setPrintMethod(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"><option>Not sure / Recommend for me</option><option>DTF</option><option>Screen Print</option></select></label><label className="text-sm font-medium">Artwork Complexity<select value={imageComplexity} onChange={(event) => setImageComplexity(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"><option>Simple 1 color</option><option>2-3 colors</option><option>Full color / photo</option></select></label></div>
+            </> : <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-950">{selectedSignProduct.name}</p>
+              <p className="mt-1 text-xs leading-5">{getSignConfigurationText(selectedSignProduct, signValues)}</p>
+              <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className="mt-3 w-full rounded-md bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-wait disabled:opacity-70">{isSignEstimateLoading ? 'Loading estimate...' : 'Get Sign Estimate'}</button>
+              {signEstimate ? <div className="mt-3 rounded-md border border-teal-200 bg-white p-3 text-teal-950"><p className="font-semibold">Estimated total: {formatSignPrice(signEstimate.price?.retail, signEstimate.currency)}</p><p className="mt-1">Each: {formatSignPrice(signEstimate.price?.each, signEstimate.currency)}</p>{signEstimate.warnings?.length ? <p className="mt-2 text-xs text-amber-700">{signEstimate.warnings.join(' ')}</p> : null}</div> : null}
+              {signEstimateStatus ? <p className={`mt-3 text-xs ${signEstimate ? 'text-slate-500' : 'text-amber-700'}`}>{signEstimateStatus}</p> : null}
+            </div>}
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-slate-950">Artwork Check</p>
+                {artworkAnalysis ? <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">{artworkAnalysis.confidence} confidence</span> : null}
+              </div>
+              {artworkAnalysis ? <div className="mt-3 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <p><span className="font-medium text-slate-950">Colors:</span> {artworkAnalysis.visibleColorCount} estimated families</p>
+                  <p><span className="font-medium text-slate-950">Best fit:</span> {artworkAnalysis.recommendation}</p>
+                  <p><span className="font-medium text-slate-950">Size:</span> {artworkAnalysis.width} x {artworkAnalysis.height}px</p>
+                  <p><span className="font-medium text-slate-950">Background:</span> {artworkAnalysis.hasTransparency ? 'Transparent/soft edge' : artworkAnalysis.hasOpaqueBackground ? 'Likely solid background' : 'Opaque'}</p>
+                </div>
+                {artworkAnalysis.dominantColors.length > 0 ? <div className="flex flex-wrap gap-1.5">{artworkAnalysis.dominantColors.map((color) => <span key={color} className="h-5 w-5 rounded border border-slate-300" style={{ backgroundColor: color }} title={color} />)}</div> : null}
+                {artworkAnalysis.warnings.length > 0 ? <div className="space-y-1 text-xs text-amber-700">{artworkAnalysis.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : <p className="text-xs text-emerald-700">No production warnings from the first-pass analyzer.</p>}
+              </div> : <p className="mt-2 text-xs text-slate-500">{artworkAnalysisStatus || 'Upload artwork to estimate colors and production fit.'}</p>}
+              {artworkAnalysisStatus && artworkAnalysis ? <p className="mt-2 text-xs text-slate-500">{artworkAnalysisStatus}</p> : null}
+            </div>
+            {productMode === 'apparel' ? <div id="estimate" className="mt-4 rounded-md border border-teal-200 bg-teal-50 p-4 text-sm text-teal-950"><p className="font-semibold">{printMethod === 'Not sure / Recommend for me' ? printRecommendation.method : printMethod}</p><p className="mt-1">{printMethod === 'Not sure / Recommend for me' ? printRecommendation.reason : `You selected ${printMethod}.`}</p>{manualMethodWarning ? <p className="mt-1 text-amber-800">{manualMethodWarning}</p> : null}<p className="mt-3 font-semibold">Setup ${estimatedSetupFee.toFixed(2)} / Decoration ${estimatedDecorationCost.toFixed(2)} / Per Shirt ${estimatedPerShirt.toFixed(2)}</p></div> : null}
           </section>
 
           <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"><h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Quote Request</h2><p className="mt-2 text-sm">Status: <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${quoteReadinessClass}`}>{quoteReadiness}</span></p>{missingQuoteRequirements.length > 0 ? <p className="mt-2 text-xs text-amber-700">Missing: {missingQuoteRequirements.join(', ')}</p> : <p className="mt-2 text-xs text-emerald-700">Ready to request.</p>}<div className="mt-3 space-y-2 text-sm"><input value={customerInfo.name} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, name: event.target.value }))} placeholder="Name" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input value={customerInfo.organization} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, organization: event.target.value }))} placeholder="Business / Organization" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input value={customerInfo.email} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, email: event.target.value }))} placeholder="Email" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input value={customerInfo.phone} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, phone: event.target.value }))} placeholder="Phone" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input type="date" value={customerInfo.neededByDate} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, neededByDate: event.target.value }))} className="w-full rounded-md border border-slate-300 px-3 py-2" /><textarea value={customerInfo.notes} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, notes: event.target.value }))} placeholder="Notes" rows={3} className="w-full rounded-md border border-slate-300 px-3 py-2" /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><button onClick={captureDesignPreview} className="col-span-2 rounded-md border border-teal-700 bg-white px-3 py-2 font-medium text-teal-800 hover:bg-teal-50">Capture Preview</button><button onClick={copyQuoteSummary} className="rounded-md bg-slate-950 px-3 py-2 font-medium text-white hover:bg-slate-800">Copy Summary</button><button onClick={openEmailRequest} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Email</button><button onClick={exportQuotePackage} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Export</button><button onClick={() => importQuotePackageInputRef.current?.click()} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Import</button><input ref={importQuotePackageInputRef} type="file" accept="application/json,.json" className="hidden" onChange={importQuotePackage} /></div>{draftStatus || quotePackageStatus ? <p className="mt-3 text-xs text-slate-600">{draftStatus || quotePackageStatus}</p> : null}</section>
         </div>
       </section>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 px-4 py-3 text-xs md:px-6 md:text-sm"><img src={getProductCardImage(selectedPreview)} alt={selectedProductName} className="h-10 w-10 rounded-md border border-slate-200 bg-slate-100 object-cover" /><div className="min-w-0 flex-1"><p className="truncate font-semibold">{selectedProductName}</p><p className="truncate text-slate-600">Color: {selectedColorName} / Qty: {totalQuantity} / Est: ${estimatedPerShirt.toFixed(2)}/ea</p></div><button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 px-3 py-2 font-medium">Save</button><button onClick={copyQuoteSummary} className="rounded-md bg-slate-950 px-3 py-2 font-medium text-white">Quote Request</button></div></div>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 px-4 py-3 text-xs md:px-6 md:text-sm">{productMode === 'apparel' ? <img src={getProductCardImage(selectedPreview)} alt={selectedProductName} className="h-10 w-10 rounded-md border border-slate-200 bg-slate-100 object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-teal-50 text-[10px] font-semibold uppercase text-teal-800">Sign</div>}<div className="min-w-0 flex-1"><p className="truncate font-semibold">{designerProductName}</p><p className="truncate text-slate-600">{productMode === 'apparel' ? `Color: ${selectedColorName} / Qty: ${totalQuantity} / Est: $${estimatedPerShirt.toFixed(2)}/ea` : `Qty: ${designerQuantity} / Est: ${signEstimate ? formatSignPrice(signEstimate.price?.each, signEstimate.currency) + '/ea' : 'Run sign estimate'}`}</p></div><button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 px-3 py-2 font-medium">Save</button><button onClick={copyQuoteSummary} className="rounded-md bg-slate-950 px-3 py-2 font-medium text-white">Quote Request</button></div></div>
     </main>
   );
 }
