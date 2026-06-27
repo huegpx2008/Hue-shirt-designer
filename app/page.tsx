@@ -523,6 +523,7 @@ export default function Home() {
   const [imageComplexity, setImageComplexity] = useState('Simple 1 color');
   const [artworkAnalysis, setArtworkAnalysis] = useState<ArtworkAnalysis | null>(null);
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
+  const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
   const [apparelEstimate, setApparelEstimate] = useState<ApparelApiEstimate | null>(null);
   const [apparelEstimateMethod, setApparelEstimateMethod] = useState<'dtf' | 'screen_print' | null>(null);
   const [apparelEstimateStatus, setApparelEstimateStatus] = useState('');
@@ -732,6 +733,9 @@ export default function Home() {
   const signWidth = Number(signValues.width || (selectedSignProduct.id === 'yard-sign' ? 24 : 36));
   const signHeight = Number(signValues.height || (selectedSignProduct.id === 'yard-sign' ? 18 : 24));
   const signPreviewAspect = Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
+  const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
+  const signArtworkStatusLabel = !layers.length ? 'Select Image' : signArtworkMatchesSize ? 'OK' : 'Select Fit/Center';
+  const signArtworkStatusOk = layers.length > 0 && signArtworkMatchesSize;
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantity = productMode === 'signage' ? getSignQuantity(signValues) : totalQuantity;
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
@@ -1349,11 +1353,85 @@ export default function Home() {
   };
 
   const editSelected = (fn: (obj: FabricObject) => void) => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected) return; fn(selected); clampToArea(selected); canvas.requestRenderAll(); refreshLayers(canvas); };
-  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
+  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) setSignArtworkSize(null); canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
 
   const duplicateSelected = () => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected || selected.type === 'activeSelection') return; selected.clone().then((cloned) => { const clone = cloned as FabricObject; clone.set({ left: (selected.left || 0) + 14, top: (selected.top || 0) + 14 }); canvas.add(clone); canvas.setActiveObject(clone); clampToArea(clone); canvas.requestRenderAll(); refreshLayers(canvas); }); };
   const moveLayer = (direction: 'forward' | 'backward') => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected) return; if (direction === 'forward') canvas.bringObjectForward(selected); else canvas.sendObjectBackwards(selected); canvas.requestRenderAll(); refreshLayers(canvas); };
   const toggleLockSelected = () => editSelected((obj) => { const next = !obj.selectable; obj.set({ selectable: next, evented: next, lockMovementX: !next, lockMovementY: !next, lockScalingX: !next, lockScalingY: !next, lockRotation: !next, hasControls: next }); });
+
+  const getActiveArtworkArea = () => productMode === 'signage'
+    ? { left: 0, top: 0, width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT }
+    : designArea;
+
+  const calculateContainedSignArtworkSize = (sourceWidth: number, sourceHeight: number) => {
+    const safeSourceWidth = Math.max(1, sourceWidth || 1);
+    const safeSourceHeight = Math.max(1, sourceHeight || 1);
+    const scale = Math.min(signWidth / safeSourceWidth, signHeight / safeSourceHeight);
+    return {
+      width: Number((safeSourceWidth * scale).toFixed(2)),
+      height: Number((safeSourceHeight * scale).toFixed(2))
+    };
+  };
+
+  const fitObjectToArtworkArea = (obj: FabricObject, mode: 'contain' | 'cover' | 'stretch' | 'ratio') => {
+    const area = getActiveArtworkArea();
+    const objectWidth = Math.max(1, obj.width || 1);
+    const objectHeight = Math.max(1, obj.height || 1);
+    const paddedWidth = productMode === 'signage' ? area.width * 0.94 : area.width * 0.78;
+    const paddedHeight = productMode === 'signage' ? area.height * 0.94 : area.height * 0.78;
+    const containScale = Math.min(paddedWidth / objectWidth, paddedHeight / objectHeight);
+    const coverScale = Math.max(area.width / objectWidth, area.height / objectHeight);
+
+    if (mode === 'stretch') {
+      obj.set({ scaleX: area.width / objectWidth, scaleY: area.height / objectHeight });
+    } else if (mode === 'cover') {
+      obj.set({ scaleX: coverScale, scaleY: coverScale });
+    } else if (mode === 'ratio') {
+      const currentScale = Math.min(Number(obj.scaleX) || containScale, Number(obj.scaleY) || containScale);
+      obj.set({ scaleX: currentScale, scaleY: currentScale });
+    } else {
+      obj.set({ scaleX: containScale, scaleY: containScale });
+    }
+
+    obj.set({
+      left: area.left + area.width / 2,
+      top: area.top + area.height / 2,
+      originX: 'center',
+      originY: 'center'
+    });
+    obj.setCoords();
+  };
+
+  const fitSelectedArtwork = (mode: 'contain' | 'cover' | 'stretch' | 'ratio') => {
+    const canvas = fabricCanvasRef.current;
+    const selected = canvas?.getActiveObject();
+    if (!canvas || !selected) return;
+    fitObjectToArtworkArea(selected, mode);
+    if (productMode === 'signage') {
+      const nextSize = mode === 'contain'
+        ? calculateContainedSignArtworkSize(selected.width || 1, selected.height || 1)
+        : { width: signWidth, height: signHeight };
+      setSignArtworkSize(nextSize);
+    }
+    canvas.requestRenderAll();
+    refreshLayers(canvas);
+  };
+
+  const centerSelectedArtwork = () => {
+    const canvas = fabricCanvasRef.current;
+    const selected = canvas?.getActiveObject();
+    if (!canvas || !selected) return;
+    const area = getActiveArtworkArea();
+    selected.set({
+      left: area.left + area.width / 2,
+      top: area.top + area.height / 2,
+      originX: 'center',
+      originY: 'center'
+    });
+    selected.setCoords();
+    canvas.requestRenderAll();
+    refreshLayers(canvas);
+  };
 
   const onUploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; const canvas = fabricCanvasRef.current; if (!file || !canvas) return;
@@ -1371,10 +1449,10 @@ export default function Home() {
       }
 
       const img = await FabricImage.fromURL(dataUrl);
-      const activeArea = productMode === 'signage' ? { left: 0, top: 0, width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT } : designArea;
-      img.set({ left: activeArea.left + activeArea.width / 2, top: activeArea.top + activeArea.height / 2, originX: 'center', originY: 'center', ...FABRIC_CONTROL_STYLE });
-      const maxWidth = productMode === 'signage' ? Math.min(320, activeArea.width * 0.78) : Math.min(150, activeArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
-      (img as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
+      img.set({ ...FABRIC_CONTROL_STYLE });
+      fitObjectToArtworkArea(img, 'contain');
+      (img as FabricObject & { data?: { printLocation?: PrintLocation; originalWidth?: number; originalHeight?: number } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation; originalWidth?: number; originalHeight?: number } }).data || {}), printLocation, originalWidth: img.width || undefined, originalHeight: img.height || undefined };
+      if (productMode === 'signage') setSignArtworkSize(calculateContainedSignArtworkSize(img.width || 1, img.height || 1));
       canvas.add(img); clampToArea(img); canvas.setActiveObject(img); canvas.renderAll(); event.target.value = '';
     };
     reader.readAsDataURL(file);
@@ -1727,15 +1805,15 @@ export default function Home() {
                       {selectedSignProduct.preview === 'banner' ? <div className="absolute inset-1">{[0, 1, 2, 3].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-400 bg-slate-100 ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : 'bottom-0 right-0'}`} />)}</div> : null}
                     </div>
                     {selectedSignProduct.preview === 'yard-sign' ? <div className="absolute -bottom-24 left-1/2 h-24 w-16 -translate-x-1/2 border-x-4 border-slate-500" /> : null}
-                    <span className="pointer-events-none relative z-10 rounded bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{layers.length ? 'Position artwork' : 'Upload artwork or add text'}</span>
+                    {layers.length === 0 ? <span className="pointer-events-none relative z-10 rounded bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload artwork or add text</span> : null}
                   </div>
                 </div> : hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
                 {productMode === 'apparel' && showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-dashed border-[#1678b8]/60 bg-[#1678b8]/10 shadow-[0_0_0_9999px_rgba(255,255,255,0.04)]" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><span className="absolute -top-7 left-0 rounded bg-[#1678b8] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">{PRINT_AREA_CONFIG[printLocation].label}</span></div> : null}
-                <div className="designer-fabric-layer absolute inset-0"><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
+                <div className={`designer-fabric-layer absolute ${productMode === 'signage' ? 'left-1/2 top-1/2 w-[82%] -translate-x-1/2 -translate-y-1/2' : 'inset-0'}`} style={productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
               {productMode === 'signage' ? <div className="absolute inset-x-3 bottom-4 z-10 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold uppercase">
                 {[
-                  ['Images', String(layers.length || 1), true],
+                  ['Images', String(layers.length || 1), signArtworkStatusOk],
                   ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
                   ['Material', String(signValues.material || '15oz'), true],
                   ['Print Sides', String(signValues.sides || 'single'), true],
@@ -1744,7 +1822,11 @@ export default function Home() {
                   ['Grommets', selectedSignProduct.id === 'banner' ? 'Yes' : 'No', selectedSignProduct.id === 'banner'],
                   ['Pole Pockets', signValues.polePocket ? 'Yes' : 'None', Boolean(signValues.polePocket)],
                   ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
-                ].map(([label, value, active]) => <div key={String(label)} className={`flex min-h-12 min-w-36 items-center justify-between gap-4 border-2 px-3 ${active ? 'border-[#1678b8] bg-white text-[#1678b8]' : 'border-slate-300 bg-white/70 text-slate-400'}`}><span>{label}</span><span className={`${active ? 'bg-[#1678b8]' : 'bg-slate-300'} px-3 py-2 text-white`}>{value}</span></div>)}
+                ].map(([label, value, active]) => {
+                  const isImagesTile = String(label) === 'Images';
+                  const needsArtworkFit = isImagesTile && layers.length > 0 && !signArtworkStatusOk;
+                  return <div key={String(label)} className={`flex min-h-12 min-w-36 items-center justify-between gap-4 border-2 px-3 ${needsArtworkFit ? 'border-red-500 bg-white text-red-600' : active ? 'border-green-500 bg-white text-green-600' : 'border-slate-300 bg-white/70 text-slate-400'}`}><span>{label}</span><span className={`${needsArtworkFit ? 'bg-red-500' : active ? 'bg-green-500' : 'bg-slate-300'} px-3 py-2 text-white`}>{value}</span></div>;
+                })}
               </div> : null}
             </div>
 
@@ -1767,20 +1849,26 @@ export default function Home() {
           </section>
 
           {productMode === 'signage' ? <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
-            <div className={`rounded-md p-3 ${layers.length ? 'bg-green-100' : 'bg-rose-100'}`}>
+            <div className={`rounded-md p-3 ${signArtworkStatusOk ? 'bg-green-100' : 'bg-rose-100'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <h2 className="text-sm font-bold uppercase tracking-wide text-slate-700">Item #1 / {layers.length ? 'OK' : 'Select Image'}</h2>
+                  <h2 className={`text-sm font-bold uppercase tracking-wide ${signArtworkStatusOk ? 'text-green-700' : 'text-red-600'}`}>Item #1 / {signArtworkStatusLabel}</h2>
                   <p className="mt-1 text-xs text-slate-600">{signWidth || 0}&quot; x {signHeight || 0}&quot; / Qty {designerQuantity}</p>
                 </div>
                 <button type="button" onClick={deleteSelected} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">delete</button>
               </div>
               <div className="mt-3 flex h-24 items-center justify-center border border-slate-300 bg-white text-center text-[10px] uppercase text-slate-400">
-                {layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
+                {signArtworkSize ? `Actual: ${signArtworkSize.width}" x ${signArtworkSize.height}"` : layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                 <button className="rounded border border-slate-300 bg-white px-2 py-1 text-slate-400">Contour Cut</button>
                 <button className="rounded border border-slate-300 bg-white px-2 py-1">Color Matching</button>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <button type="button" onClick={() => fitSelectedArtwork('contain')} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white disabled:opacity-40" disabled={!activeObject}>Fit Art</button>
+                <button type="button" onClick={centerSelectedArtwork} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] disabled:opacity-40" disabled={!activeObject}>Center</button>
+                <button type="button" onClick={() => fitSelectedArtwork('cover')} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:opacity-40" disabled={!activeObject}>Fill Sign</button>
+                <button type="button" onClick={() => fitSelectedArtwork('stretch')} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:opacity-40" disabled={!activeObject}>Stretch</button>
               </div>
             </div>
             <button type="button" className="mt-3 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50">+ Add Sign</button>
