@@ -92,6 +92,8 @@ type ArtboardRect = { top: number; left: number; width: number; height: number }
 type LocationSettings = { printSizePreset: PrintSizePreset; customPrintWidthInches: string; customPrintHeightInches: string; notes: string; artboard: ArtboardRect };
 
 const LOCAL_DRAFT_KEY = 'hue-shirt-designer:draft';
+const MOCKUP_CANVAS_WIDTH = 420;
+const MOCKUP_CANVAS_HEIGHT = 520;
 
 const FONT_OPTIONS: FontOption[] = [
   { label: 'Inter', value: 'Inter, Arial, sans-serif' },
@@ -263,6 +265,7 @@ export default function Home() {
   const customPrintWidthInches = activeLocationSettings.customPrintWidthInches;
   const customPrintHeightInches = activeLocationSettings.customPrintHeightInches;
   const designArea = useMemo(() => locationSettings[printLocation]?.artboard || PRINT_AREA_CONFIG[printLocation], [locationSettings, printLocation]);
+  const designAreaRef = useRef(designArea);
   const GARMENT_BOUNDS = { left: 0.24, top: 0.16, width: 0.52, height: 0.72 };
   const artboardPercent = {
     top: (designArea.top / 520) * 100,
@@ -452,16 +455,25 @@ export default function Home() {
 
 
   const applyArtboardPreset = (preset: 'standard-full-front' | 'large-full-front' | 'left-chest' | 'full-back' | 'sleeve' | 'reset-default') => {
-    const presets: Record<string, ArtboardRect> = {
-      'standard-full-front': { top: 104, left: 88, width: 204, height: 224 },
-      'large-full-front': { top: 96, left: 78, width: 224, height: 248 },
-      'left-chest': { ...PRINT_AREA_CONFIG['left-chest'] },
-      'full-back': { ...PRINT_AREA_CONFIG['full-back'] },
-      sleeve: { ...PRINT_AREA_CONFIG.sleeve },
-      'reset-default': { ...PRINT_AREA_CONFIG[printLocation] }
+    const presets: Record<string, { location: PrintLocation; printSizePreset: PrintSizePreset; artboard: ArtboardRect }> = {
+      'standard-full-front': { location: 'full-front', printSizePreset: 'standard-front-10', artboard: { top: 104, left: 88, width: 204, height: 224 } },
+      'large-full-front': { location: 'full-front', printSizePreset: 'large-front-12', artboard: { top: 96, left: 78, width: 224, height: 248 } },
+      'left-chest': { location: 'left-chest', printSizePreset: 'left-chest-3_5', artboard: { ...PRINT_AREA_CONFIG['left-chest'] } },
+      'full-back': { location: 'full-back', printSizePreset: 'full-back-12', artboard: { ...PRINT_AREA_CONFIG['full-back'] } },
+      sleeve: { location: 'sleeve', printSizePreset: 'custom', artboard: { ...PRINT_AREA_CONFIG.sleeve } },
+      'reset-default': { location: printLocation, printSizePreset: locationSettings[printLocation].printSizePreset, artboard: { ...PRINT_AREA_CONFIG[printLocation] } }
     };
     const next = presets[preset];
-    setLocationSettings((prev) => ({ ...prev, [printLocation]: { ...prev[printLocation], artboard: next } }));
+    setSelectedPrintLocations((prev) => Array.from(new Set([...prev, next.location])));
+    setPrintLocation(next.location);
+    setLocationSettings((prev) => ({
+      ...prev,
+      [next.location]: {
+        ...prev[next.location],
+        printSizePreset: next.printSizePreset,
+        artboard: next.artboard
+      }
+    }));
   };
   const saveDraftToLocal = () => {
     if (typeof window === 'undefined') return;
@@ -843,8 +855,8 @@ export default function Home() {
 
     if (bounds.left < 0) left -= bounds.left;
     if (bounds.top < 0) top -= bounds.top;
-    if (bounds.left + bounds.width > designArea.width) left -= bounds.left + bounds.width - designArea.width;
-    if (bounds.top + bounds.height > designArea.height) top -= bounds.top + bounds.height - designArea.height;
+    if (bounds.left + bounds.width > MOCKUP_CANVAS_WIDTH) left -= bounds.left + bounds.width - MOCKUP_CANVAS_WIDTH;
+    if (bounds.top + bounds.height > MOCKUP_CANVAS_HEIGHT) top -= bounds.top + bounds.height - MOCKUP_CANVAS_HEIGHT;
 
     obj.set({ left, top });
     obj.setCoords();
@@ -853,9 +865,14 @@ export default function Home() {
   useEffect(() => {
     const nextColor = selectedProduct.availableColors[0]?.value;
     if (nextColor && !selectedProduct.availableColors.some((color) => color.value === shirtColor)) setShirtColor(nextColor);
-    if (!selectedProduct.defaultPrintLocations.includes(printLocation)) setPrintLocation(selectedProduct.defaultPrintLocations[0]);
-    setSelectedPrintLocations((prev) => prev.filter((loc) => selectedProduct.defaultPrintLocations.includes(loc)).length ? prev.filter((loc) => selectedProduct.defaultPrintLocations.includes(loc)) : [selectedProduct.defaultPrintLocations[0]]);
+    const validLocations = Object.keys(PRINT_AREA_CONFIG) as PrintLocation[];
+    if (!validLocations.includes(printLocation)) setPrintLocation('full-front');
+    setSelectedPrintLocations((prev) => prev.filter((loc) => validLocations.includes(loc)).length ? prev.filter((loc) => validLocations.includes(loc)) : ['full-front']);
   }, [selectedProduct, shirtColor, printLocation]);
+
+  useEffect(() => {
+    designAreaRef.current = designArea;
+  }, [designArea]);
 
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
@@ -942,7 +959,7 @@ export default function Home() {
   useEffect(() => {
     const canvasEl = canvasElRef.current;
     if (!canvasEl) return;
-    const fabricCanvas = new Canvas(canvasEl, { width: designArea.width, height: designArea.height, backgroundColor: 'transparent', preserveObjectStacking: true, selectionColor: 'rgba(79,70,229,0.12)', selectionBorderColor: '#4f46e5' });
+    const fabricCanvas = new Canvas(canvasEl, { width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT, backgroundColor: 'transparent', preserveObjectStacking: true, selectionColor: 'rgba(79,70,229,0.12)', selectionBorderColor: '#4f46e5' });
     fabricCanvas.forEachObject((obj) => obj.set({ cornerColor: '#4338ca', cornerStrokeColor: '#eef2ff', cornerStyle: 'circle', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', borderScaleFactor: 2, transparentCorners: false }));
 
     const updateSelection = () => {
@@ -962,9 +979,10 @@ export default function Home() {
     fabricCanvas.on('object:moving', (event) => {
       const obj = event.target;
       if (!obj) return;
+      const activeDesignArea = designAreaRef.current;
       const centerPoint = obj.getCenterPoint();
-      const centerX = designArea.width / 2;
-      const centerY = designArea.height / 2;
+      const centerX = activeDesignArea.left + activeDesignArea.width / 2;
+      const centerY = activeDesignArea.top + activeDesignArea.height / 2;
       if (Math.abs(centerPoint.x - centerX) <= 14) obj.left = (obj.left || 0) + (centerX - centerPoint.x);
       if (Math.abs(centerPoint.y - centerY) <= 14) obj.top = (obj.top || 0) + (centerY - centerPoint.y);
       clampToArea(obj);
@@ -997,14 +1015,14 @@ export default function Home() {
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    canvas.setDimensions({ width: designArea.width, height: designArea.height });
+    canvas.setDimensions({ width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT });
     canvas.requestRenderAll();
   }, [designArea]);
 
   const addText = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const text = new IText(textValue.trim() || 'Your text', { left: designArea.width / 2, top: designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+    const text = new IText(textValue.trim() || 'Your text', { left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
     (text as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((text as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
     canvas.add(text); canvas.setActiveObject(text); canvas.renderAll();
   };
@@ -1021,7 +1039,7 @@ export default function Home() {
     const reader = new FileReader();
     reader.onload = async () => {
       const img = await FabricImage.fromURL(reader.result as string);
-      img.set({ left: designArea.width / 2, top: designArea.height / 2, originX: 'center', originY: 'center', cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+      img.set({ left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
       const maxWidth = Math.min(150, designArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
       (img as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
       canvas.add(img); clampToArea(img); canvas.setActiveObject(img); canvas.renderAll(); event.target.value = '';
@@ -1031,8 +1049,8 @@ export default function Home() {
 
   const alignSelected = (axis: 'horizontal' | 'vertical') => editSelected((obj) => {
     const center = obj.getCenterPoint();
-    if (axis === 'horizontal') obj.left = (obj.left || 0) + (designArea.width / 2 - center.x);
-    if (axis === 'vertical') obj.top = (obj.top || 0) + (designArea.height / 2 - center.y);
+    if (axis === 'horizontal') obj.left = (obj.left || 0) + (designArea.left + designArea.width / 2 - center.x);
+    if (axis === 'vertical') obj.top = (obj.top || 0) + (designArea.top + designArea.height / 2 - center.y);
   });
 
 
@@ -1191,7 +1209,7 @@ export default function Home() {
                 {showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-teal-700/40 bg-teal-100/10" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }} /> : null}
                 <div className="pointer-events-none absolute border border-teal-500/35" style={{ top: designArea.top + designArea.height / 2, left: designArea.left, width: designArea.width }} />
                 <div className="pointer-events-none absolute border border-teal-500/35" style={{ top: designArea.top, left: designArea.left + designArea.width / 2, height: designArea.height }} />
-                <div className="absolute overflow-hidden rounded-md" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
+                <div className="absolute inset-0"><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
             </div>
 
@@ -1226,10 +1244,18 @@ export default function Home() {
           <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Placement</h2>
             <div className="mt-3 space-y-3">
-              <div className="grid grid-cols-2 gap-2">{selectedProduct.defaultPrintLocations.map((location) => <label key={location} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs"><input type="checkbox" checked={selectedPrintLocations.includes(location)} onChange={(event) => { const checked = event.target.checked; setSelectedPrintLocations((prev) => { const next = checked ? Array.from(new Set([...prev, location])) : prev.filter((p) => p !== location); return next.length ? next : [location]; }); if (!selectedPrintLocations.includes(location)) setPrintLocation(location); }} /><span>{PRINT_AREA_CONFIG[location].label}</span></label>)}</div>
+              <div className="grid grid-cols-2 gap-2">{(Object.keys(PRINT_AREA_CONFIG) as PrintLocation[]).map((location) => <label key={location} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs"><input type="checkbox" checked={selectedPrintLocations.includes(location)} onChange={(event) => { const checked = event.target.checked; setSelectedPrintLocations((prev) => { const next = checked ? Array.from(new Set([...prev, location])) : prev.filter((p) => p !== location); return next.length ? next : [location]; }); if (!selectedPrintLocations.includes(location)) setPrintLocation(location); }} /><span>{PRINT_AREA_CONFIG[location].label}</span></label>)}</div>
               <select value={printLocation} onChange={(event) => setPrintLocation(event.target.value as PrintLocation)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">{selectedPrintLocations.map((location) => <option key={location} value={location}>{PRINT_AREA_CONFIG[location].label}</option>)}</select>
               <select value={printSizePreset} onChange={(event) => setLocationSettings((prev) => ({ ...prev, [printLocation]: { ...prev[printLocation], printSizePreset: event.target.value as PrintSizePreset } }))} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"><option value="left-chest-3_5">Left Chest: 3.5&quot;</option><option value="standard-front-10">Standard Front: 10&quot;</option><option value="large-front-12">Large Front: 12&quot;</option><option value="full-back-12">Full Back: 12&quot;</option><option value="custom">Custom Size</option></select>
-              <div className="grid grid-cols-2 gap-2"><button onClick={centerArtboardOnShirt} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Center</button><button onClick={() => setShowPrintArtboard((prev) => !prev)} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">{showPrintArtboard ? 'Hide Guides' : 'Show Guides'}</button></div>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => applyArtboardPreset('standard-full-front')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Full Front</button>
+                <button onClick={() => applyArtboardPreset('large-full-front')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Large Front</button>
+                <button onClick={() => applyArtboardPreset('left-chest')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Left Chest</button>
+                <button onClick={() => applyArtboardPreset('full-back')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Full Back</button>
+                <button onClick={() => applyArtboardPreset('sleeve')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Sleeve</button>
+                <button onClick={() => applyArtboardPreset('reset-default')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Reset</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2"><button onClick={centerArtboardOnShirt} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Center Guide</button><button onClick={() => setShowPrintArtboard((prev) => !prev)} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">{showPrintArtboard ? 'Hide Guides' : 'Show Guides'}</button></div>
             </div>
           </section>
         </aside>
