@@ -985,11 +985,11 @@ export default function Home() {
       const centerY = activeDesignArea.top + activeDesignArea.height / 2;
       if (Math.abs(centerPoint.x - centerX) <= 14) obj.left = (obj.left || 0) + (centerX - centerPoint.x);
       if (Math.abs(centerPoint.y - centerY) <= 14) obj.top = (obj.top || 0) + (centerY - centerPoint.y);
-      clampToArea(obj);
+      obj.setCoords();
     });
     fabricCanvas.on('object:scaling', (event) => {
       const obj = event.target;
-      if (obj) clampToArea(obj);
+      if (obj) obj.setCoords();
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1209,7 +1209,7 @@ export default function Home() {
                 {showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-teal-700/40 bg-teal-100/10" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }} /> : null}
                 <div className="pointer-events-none absolute border border-teal-500/35" style={{ top: designArea.top + designArea.height / 2, left: designArea.left, width: designArea.width }} />
                 <div className="pointer-events-none absolute border border-teal-500/35" style={{ top: designArea.top, left: designArea.left + designArea.width / 2, height: designArea.height }} />
-                <div className="absolute inset-0"><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
+                <div className="designer-fabric-layer absolute inset-0"><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
             </div>
 

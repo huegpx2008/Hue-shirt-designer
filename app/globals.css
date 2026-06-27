@@ -9,3 +9,14 @@
 body {
   @apply bg-slate-100 text-slate-900 antialiased;
 }
+
+.designer-fabric-layer .canvas-container,
+.designer-fabric-layer canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.designer-fabric-layer .canvas-container {
+  position: absolute !important;
+  inset: 0;
+}
