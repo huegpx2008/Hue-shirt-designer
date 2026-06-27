@@ -196,6 +196,16 @@ const normalizeLocationSettings = (raw?: Partial<Record<PrintLocation, Partial<L
 });
 
 const PRODUCT_IMAGE_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="8" fill="#f1f5f9"/><path d="M22 30l10-8h32l10 8 8 12-10 8-6-8v32a4 4 0 0 1-4 4H34a4 4 0 0 1-4-4V42l-6 8-10-8z" fill="#cbd5e1" stroke="#94a3b8" stroke-width="2"/><text x="48" y="88" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" fill="#64748b">No Image</text></svg>');
+const FABRIC_CONTROL_STYLE = {
+  cornerColor: '#0f766e',
+  cornerStrokeColor: '#ecfeff',
+  cornerStyle: 'circle' as const,
+  cornerSize: 12,
+  touchCornerSize: 26,
+  borderColor: '#0f766e',
+  borderScaleFactor: 1.5,
+  transparentCorners: false
+};
 
 const getProductCardImage = (item: SanMarPreviewItem | undefined) => {
   if (!item) return PRODUCT_IMAGE_PLACEHOLDER;
@@ -959,8 +969,8 @@ export default function Home() {
   useEffect(() => {
     const canvasEl = canvasElRef.current;
     if (!canvasEl) return;
-    const fabricCanvas = new Canvas(canvasEl, { width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT, backgroundColor: 'transparent', preserveObjectStacking: true, selectionColor: 'rgba(79,70,229,0.12)', selectionBorderColor: '#4f46e5' });
-    fabricCanvas.forEachObject((obj) => obj.set({ cornerColor: '#4338ca', cornerStrokeColor: '#eef2ff', cornerStyle: 'circle', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', borderScaleFactor: 2, transparentCorners: false }));
+    const fabricCanvas = new Canvas(canvasEl, { width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT, backgroundColor: 'transparent', preserveObjectStacking: true, selectionColor: 'rgba(15,118,110,0.08)', selectionBorderColor: '#0f766e' });
+    fabricCanvas.forEachObject((obj) => obj.set(FABRIC_CONTROL_STYLE));
 
     const updateSelection = () => {
       const selected = fabricCanvas.getActiveObject();
@@ -1022,7 +1032,7 @@ export default function Home() {
   const addText = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const text = new IText(textValue.trim() || 'Your text', { left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+    const text = new IText(textValue.trim() || 'Your text', { left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, ...FABRIC_CONTROL_STYLE });
     (text as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((text as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
     canvas.add(text); canvas.setActiveObject(text); canvas.renderAll();
   };
@@ -1039,7 +1049,7 @@ export default function Home() {
     const reader = new FileReader();
     reader.onload = async () => {
       const img = await FabricImage.fromURL(reader.result as string);
-      img.set({ left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', cornerColor: '#4338ca', cornerSize: 14, touchCornerSize: 24, borderColor: '#4338ca', transparentCorners: false });
+      img.set({ left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', ...FABRIC_CONTROL_STYLE });
       const maxWidth = Math.min(150, designArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
       (img as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
       canvas.add(img); clampToArea(img); canvas.setActiveObject(img); canvas.renderAll(); event.target.value = '';
@@ -1206,9 +1216,7 @@ export default function Home() {
             <div className="flex min-h-[520px] items-center justify-center rounded-lg bg-stone-200 p-4">
               <div id="design-canvas" className="relative aspect-[420/520] w-full max-w-[760px]">
                 {hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
-                {showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-teal-700/40 bg-teal-100/10" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }} /> : null}
-                <div className="pointer-events-none absolute border border-teal-500/35" style={{ top: designArea.top + designArea.height / 2, left: designArea.left, width: designArea.width }} />
-                <div className="pointer-events-none absolute border border-teal-500/35" style={{ top: designArea.top, left: designArea.left + designArea.width / 2, height: designArea.height }} />
+                {showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-dashed border-teal-700/55 bg-teal-50/10 shadow-[0_0_0_9999px_rgba(255,255,255,0.04)]" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><span className="absolute -top-7 left-0 rounded bg-teal-800 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">{PRINT_AREA_CONFIG[printLocation].label}</span></div> : null}
                 <div className="designer-fabric-layer absolute inset-0"><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
             </div>
