@@ -548,6 +548,7 @@ export default function Home() {
   const customPrintHeightInches = activeLocationSettings.customPrintHeightInches;
   const designArea = useMemo(() => locationSettings[printLocation]?.artboard || PRINT_AREA_CONFIG[printLocation], [locationSettings, printLocation]);
   const designAreaRef = useRef(designArea);
+  const productModeRef = useRef(productMode);
   const GARMENT_BOUNDS = { left: 0.24, top: 0.16, width: 0.52, height: 0.72 };
   const artboardPercent = {
     top: (designArea.top / 520) * 100,
@@ -728,8 +729,8 @@ export default function Home() {
   const designerProductDetail = productMode === 'signage'
     ? getSignConfigurationText(selectedSignProduct, signValues)
     : `${selectedColorName} / ${selectedPreview?.brand || 'Catalog'}`;
-  const signWidth = Number(signValues.width || (selectedSignProduct.id === 'yard-sign' ? 18 : 36));
-  const signHeight = Number(signValues.height || (selectedSignProduct.id === 'yard-sign' ? 24 : 24));
+  const signWidth = Number(signValues.width || (selectedSignProduct.id === 'yard-sign' ? 24 : 36));
+  const signHeight = Number(signValues.height || (selectedSignProduct.id === 'yard-sign' ? 18 : 24));
   const signPreviewAspect = Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantity = productMode === 'signage' ? getSignQuantity(signValues) : totalQuantity;
@@ -1189,6 +1190,10 @@ export default function Home() {
   }, [designArea]);
 
   useEffect(() => {
+    productModeRef.current = productMode;
+  }, [productMode]);
+
+  useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
     // TODO: Persist full per-location canvas state snapshots for richer location isolation.
@@ -1294,9 +1299,10 @@ export default function Home() {
       const obj = event.target;
       if (!obj) return;
       const activeDesignArea = designAreaRef.current;
+      const snapArea = productModeRef.current === 'signage' ? { left: 0, top: 0, width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT } : activeDesignArea;
       const centerPoint = obj.getCenterPoint();
-      const centerX = activeDesignArea.left + activeDesignArea.width / 2;
-      const centerY = activeDesignArea.top + activeDesignArea.height / 2;
+      const centerX = snapArea.left + snapArea.width / 2;
+      const centerY = snapArea.top + snapArea.height / 2;
       if (Math.abs(centerPoint.x - centerX) <= 14) obj.left = (obj.left || 0) + (centerX - centerPoint.x);
       if (Math.abs(centerPoint.y - centerY) <= 14) obj.top = (obj.top || 0) + (centerY - centerPoint.y);
       obj.setCoords();
@@ -1336,7 +1342,8 @@ export default function Home() {
   const addText = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const text = new IText(textValue.trim() || 'Your text', { left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, ...FABRIC_CONTROL_STYLE });
+    const activeArea = productMode === 'signage' ? { left: 0, top: 0, width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT } : designArea;
+    const text = new IText(textValue.trim() || 'Your text', { left: activeArea.left + activeArea.width / 2, top: activeArea.top + activeArea.height / 2, originX: 'center', originY: 'center', fontSize, fontFamily, fontWeight: isBold ? 'bold' : 'normal', fontStyle: isItalic ? 'italic' : 'normal', fill: textColor, ...FABRIC_CONTROL_STYLE });
     (text as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((text as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
     canvas.add(text); canvas.setActiveObject(text); canvas.renderAll();
   };
@@ -1364,8 +1371,9 @@ export default function Home() {
       }
 
       const img = await FabricImage.fromURL(dataUrl);
-      img.set({ left: designArea.left + designArea.width / 2, top: designArea.top + designArea.height / 2, originX: 'center', originY: 'center', ...FABRIC_CONTROL_STYLE });
-      const maxWidth = Math.min(150, designArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
+      const activeArea = productMode === 'signage' ? { left: 0, top: 0, width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT } : designArea;
+      img.set({ left: activeArea.left + activeArea.width / 2, top: activeArea.top + activeArea.height / 2, originX: 'center', originY: 'center', ...FABRIC_CONTROL_STYLE });
+      const maxWidth = productMode === 'signage' ? Math.min(320, activeArea.width * 0.78) : Math.min(150, activeArea.width * 0.75); if (img.width && img.width > maxWidth) img.scale(maxWidth / img.width);
       (img as FabricObject & { data?: { printLocation?: PrintLocation } }).data = { ...((img as FabricObject & { data?: { printLocation?: PrintLocation } }).data || {}), printLocation };
       canvas.add(img); clampToArea(img); canvas.setActiveObject(img); canvas.renderAll(); event.target.value = '';
     };
@@ -1374,8 +1382,9 @@ export default function Home() {
 
   const alignSelected = (axis: 'horizontal' | 'vertical') => editSelected((obj) => {
     const center = obj.getCenterPoint();
-    if (axis === 'horizontal') obj.left = (obj.left || 0) + (designArea.left + designArea.width / 2 - center.x);
-    if (axis === 'vertical') obj.top = (obj.top || 0) + (designArea.top + designArea.height / 2 - center.y);
+    const activeArea = productMode === 'signage' ? { left: 0, top: 0, width: MOCKUP_CANVAS_WIDTH, height: MOCKUP_CANVAS_HEIGHT } : designArea;
+    if (axis === 'horizontal') obj.left = (obj.left || 0) + (activeArea.left + activeArea.width / 2 - center.x);
+    if (axis === 'vertical') obj.top = (obj.top || 0) + (activeArea.top + activeArea.height / 2 - center.y);
   });
 
 
@@ -1652,8 +1661,8 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_210px]">
-            <div className={`relative flex min-h-[520px] items-center justify-center rounded-lg p-4 ${productMode === 'signage' ? 'overflow-hidden bg-[linear-gradient(#e5e7eb_1px,transparent_1px),linear-gradient(90deg,#e5e7eb_1px,transparent_1px)] bg-[size:24px_24px]' : 'overflow-hidden bg-[#e2e7ed]'}`}>
+          <div className={`grid gap-3 p-3 ${productMode === 'signage' ? '' : 'lg:grid-cols-[minmax(0,1fr)_210px]'}`}>
+            <div className={`relative flex items-center justify-center rounded-lg p-4 ${productMode === 'signage' ? 'min-h-[660px] overflow-hidden bg-[linear-gradient(#e5e7eb_1px,transparent_1px),linear-gradient(90deg,#e5e7eb_1px,transparent_1px)] bg-[size:24px_24px]' : 'min-h-[520px] overflow-hidden bg-[#e2e7ed]'}`}>
               {productMode === 'apparel' ? <div className="absolute bottom-4 left-4 top-4 z-20 hidden w-20 overflow-hidden rounded-lg border border-white/35 bg-[#07111f]/88 text-white shadow-[0_18px_45px_rgba(7,17,31,0.22)] backdrop-blur md:block">
                 <div className="flex h-full flex-col items-stretch py-3 text-center text-[11px]">
                   <button type="button" className="px-2 py-3 text-[#1678b8] hover:bg-white/10" title="AI Design"><span className="block text-xl">AI</span><span>Design</span></button>
@@ -1686,24 +1695,6 @@ export default function Home() {
                 </div>
                 <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className="min-h-14 bg-green-500 px-4 text-sm font-bold uppercase text-white hover:bg-green-600 disabled:cursor-wait disabled:opacity-70">{isSignEstimateLoading ? 'Pricing...' : signEstimate ? 'Update Price' : 'Price It'}</button>
               </div> : null}
-              {productMode === 'signage' ? <aside className="absolute bottom-24 left-4 top-24 z-10 hidden w-72 border border-slate-200 bg-white/92 p-2 shadow-sm xl:block">
-                <div className={`p-3 ${layers.length ? 'bg-green-100' : 'bg-rose-100'}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-bold uppercase">Item #1 / {layers.length ? 'OK' : 'Select Front Image'}</p>
-                    <button type="button" onClick={deleteSelected} className="border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">delete</button>
-                  </div>
-                  <div className="mt-3 flex items-center gap-3 text-xs">
-                    <span>width: {signWidth || 0}&quot;</span>
-                    <span>height: {signHeight || 0}&quot;</span>
-                    <span>qty: {designerQuantity}</span>
-                  </div>
-                  <div className="mt-3 flex h-24 items-center justify-center border border-slate-300 bg-white text-center text-[10px] uppercase text-slate-400">
-                    {layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Click upload artwork'}
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><button className="border border-slate-300 bg-white px-2 py-1 text-slate-400">contour cut</button><button className="border border-slate-300 bg-white px-2 py-1">color matching</button></div>
-                </div>
-                <button type="button" className="mt-2 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 text-sm">+ Add Sign</button>
-              </aside> : null}
               {productMode === 'apparel' && layers.length === 0 ? <div className="absolute bottom-20 left-24 top-6 z-10 hidden w-[min(540px,42vw)] rounded-lg bg-white p-8 shadow-sm lg:block">
                 <h2 className="text-center text-2xl font-black text-[#05090b]">What&apos;s next for you?</h2>
                 <div className="mx-auto mt-10 grid max-w-xs grid-cols-2 gap-8 text-center text-sm text-slate-700">
@@ -1724,7 +1715,7 @@ export default function Home() {
                 <button type="button" onClick={() => setPrintLocation('sleeve')} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">Sleeve<br />Design</button>
                 <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">+<br />Zoom</button>
               </div> : null}
-              <div id="design-canvas" className={`relative aspect-[420/520] w-full max-w-[760px] ${productMode === 'signage' ? 'mt-16' : productMode === 'apparel' ? 'max-w-[860px]' : ''}`}>
+              <div id="design-canvas" className={`relative w-full ${productMode === 'signage' ? 'mt-24 aspect-[4/3] max-w-[1040px]' : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
                 {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
                   <div className="relative flex w-[82%] items-center justify-center" style={{ aspectRatio: signPreviewAspect }}>
                     <div className="absolute -top-7 left-0 right-0 border-t border-slate-300 text-center text-xs text-slate-500"><span className="bg-white/80 px-2">{signWidth || 0}&quot;</span></div>
@@ -1757,10 +1748,10 @@ export default function Home() {
               </div> : null}
             </div>
 
-            <aside className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            {productMode === 'apparel' ? <aside className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-center justify-between gap-2"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Layers</p><span className="rounded-full bg-white px-2 py-0.5 text-xs text-slate-500">{layers.length}</span></div>
               <div className="mt-3 space-y-1">{layers.length === 0 ? <p className="rounded-md border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">No objects yet</p> : layers.map((layer) => <button key={layer.id} onClick={() => { const canvas = fabricCanvasRef.current; if (!canvas) return; const target = canvas.getObjects().find((obj) => (obj as FabricObject & { data?: { layerId?: string } }).data?.layerId === layer.id); if (!target) return; canvas.setActiveObject(target); canvas.requestRenderAll(); setActiveObject(target); refreshLayers(canvas); }} className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-xs ${layer.isActive ? 'bg-[#1678b8] text-white' : 'bg-white text-slate-700 hover:bg-slate-100'}`}><span className="truncate">{layer.name}</span><span className="ml-2 shrink-0 opacity-70">{layer.type}</span></button>)}</div>
-            </aside>
+            </aside> : null}
           </div>
         </section>
 
@@ -1772,10 +1763,39 @@ export default function Home() {
 
           <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Edit</h2>
-            {activeObject ? <div className="mt-3 grid grid-cols-2 gap-2"><button onClick={deleteSelected} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Delete</button><button onClick={duplicateSelected} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Duplicate</button><button onClick={() => moveLayer('forward')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Forward</button><button onClick={() => moveLayer('backward')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Backward</button><button onClick={() => alignSelected('horizontal')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Center X</button><button onClick={() => alignSelected('vertical')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Center Y</button><button onClick={toggleLockSelected} className="col-span-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">{activeObject.selectable ? 'Lock Object' : 'Unlock Object'}</button></div> : <p className="mt-3 rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-500">Select artwork on the shirt to edit it.</p>}
+            {activeObject ? <div className="mt-3 grid grid-cols-2 gap-2"><button onClick={deleteSelected} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Delete</button><button onClick={duplicateSelected} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Duplicate</button><button onClick={() => moveLayer('forward')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Forward</button><button onClick={() => moveLayer('backward')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Backward</button><button onClick={() => alignSelected('horizontal')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Center X</button><button onClick={() => alignSelected('vertical')} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">Center Y</button><button onClick={toggleLockSelected} className="col-span-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50">{activeObject.selectable ? 'Lock Object' : 'Unlock Object'}</button></div> : <p className="mt-3 rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-500">Select artwork on the design to edit it.</p>}
           </section>
 
-          <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
+          {productMode === 'signage' ? <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
+            <div className={`rounded-md p-3 ${layers.length ? 'bg-green-100' : 'bg-rose-100'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wide text-slate-700">Item #1 / {layers.length ? 'OK' : 'Select Image'}</h2>
+                  <p className="mt-1 text-xs text-slate-600">{signWidth || 0}&quot; x {signHeight || 0}&quot; / Qty {designerQuantity}</p>
+                </div>
+                <button type="button" onClick={deleteSelected} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">delete</button>
+              </div>
+              <div className="mt-3 flex h-24 items-center justify-center border border-slate-300 bg-white text-center text-[10px] uppercase text-slate-400">
+                {layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <button className="rounded border border-slate-300 bg-white px-2 py-1 text-slate-400">Contour Cut</button>
+                <button className="rounded border border-slate-300 bg-white px-2 py-1">Color Matching</button>
+              </div>
+            </div>
+            <button type="button" className="mt-3 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50">+ Add Sign</button>
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-2"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Layers</p><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{layers.length}</span></div>
+              <div className="mt-2 space-y-1">{layers.length === 0 ? <p className="rounded-md border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">No objects yet</p> : layers.map((layer) => <button key={layer.id} onClick={() => { const canvas = fabricCanvasRef.current; if (!canvas) return; const target = canvas.getObjects().find((obj) => (obj as FabricObject & { data?: { layerId?: string } }).data?.layerId === layer.id); if (!target) return; canvas.setActiveObject(target); canvas.requestRenderAll(); setActiveObject(target); refreshLayers(canvas); }} className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-xs ${layer.isActive ? 'bg-[#1678b8] text-white' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'}`}><span className="truncate">{layer.name}</span><span className="ml-2 shrink-0 opacity-70">{layer.type}</span></button>)}</div>
+            </div>
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-950">{selectedSignProduct.name}</p>
+              <p className="mt-1 leading-5">{getSignConfigurationText(selectedSignProduct, signValues)}</p>
+              {signEstimateStatus ? <p className={`mt-2 ${signEstimate ? 'text-slate-500' : 'text-amber-700'}`}>{signEstimateStatus}</p> : null}
+            </div>
+          </section> : null}
+
+          <section style={{ display: productMode === 'signage' ? 'none' : undefined }} className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Shirt</h2>
             <div className="mt-3 space-y-4">
               <div className="grid grid-cols-2 gap-2">{(['front', 'back'] as ShirtView[]).map((view) => <button key={view} onClick={() => setShirtView(view)} className={`rounded-md border px-3 py-2 text-sm font-medium capitalize ${shirtView === view ? 'border-[#1f73be] bg-[#1f73be] text-white' : 'border-slate-300 bg-white hover:bg-slate-50'}`}>{view}</button>)}</div>
@@ -1785,7 +1805,7 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
+          <section style={{ display: productMode === 'signage' ? 'none' : undefined }} className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Placement</h2>
             <div className="mt-3 space-y-3">
               <div className="grid grid-cols-2 gap-2">{(Object.keys(PRINT_AREA_CONFIG) as PrintLocation[]).map((location) => <label key={location} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs"><input type="checkbox" checked={selectedPrintLocations.includes(location)} onChange={(event) => { const checked = event.target.checked; setSelectedPrintLocations((prev) => { const next = checked ? Array.from(new Set([...prev, location])) : prev.filter((p) => p !== location); return next.length ? next : [location]; }); if (!selectedPrintLocations.includes(location)) setPrintLocation(location); }} /><span>{PRINT_AREA_CONFIG[location].label}</span></label>)}</div>
