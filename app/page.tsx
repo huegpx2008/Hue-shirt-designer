@@ -692,6 +692,7 @@ export default function Home() {
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
+  const [coroSheetArtworkItems, setCoroSheetArtworkItems] = useState<ImageZoneItem[]>([]);
   const [coroMultipleImages, setCoroMultipleImages] = useState(false);
   const [showImageZone, setShowImageZone] = useState(false);
   const [imageZoneItems, setImageZoneItems] = useState<ImageZoneItem[]>([]);
@@ -972,9 +973,10 @@ export default function Home() {
   const coroSheetLayout = getCoroSheetLayout(signWidth, signHeight, designerQuantity);
   const isCoroBuilder = productMode === 'signage' && selectedSignProduct.id === 'yard-sign';
   const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
+  const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
   const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
-  const signArtworkStatusLabel = !layers.length ? 'Select Image' : signArtworkMatchesSize ? 'OK' : 'Select Fit/Center';
-  const signArtworkStatusOk = layers.length > 0 && signArtworkMatchesSize;
+  const signArtworkStatusLabel = !layers.length && !hasCoroSheetArtwork ? 'Select Image' : signArtworkMatchesSize || hasCoroSheetArtwork ? 'OK' : 'Select Fit/Center';
+  const signArtworkStatusOk = hasCoroSheetArtwork || (layers.length > 0 && signArtworkMatchesSize);
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
   const signRetailTotal = numericPrice(signEstimate?.price?.retail);
@@ -1606,6 +1608,7 @@ export default function Home() {
     setLayers([]);
     setSignArtworkSize(null);
     setSignArtworkPreviewUrl(null);
+    setCoroSheetArtworkItems([]);
     setArtworkAnalysis(null);
     setArtworkAnalysisStatus('');
   };
@@ -1721,12 +1724,24 @@ export default function Home() {
 
   const canPlaceImageZoneItem = (item: ImageZoneItem) => item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/');
 
+  const placeCoroArtworkOnSheet = (item: ImageZoneItem) => {
+    setCoroSheetArtworkItems((prev) => {
+      const withoutDuplicate = prev.filter((entry) => entry.id !== item.id);
+      return coroMultipleImages ? [...withoutDuplicate, item] : [item];
+    });
+    setSignArtworkPreviewUrl(item.dataUrl);
+    setSignArtworkSize({ width: signWidth, height: signHeight });
+    setActiveCoroOptionPanel('images');
+    setImageLibraryStatus(`${item.name} placed on the CORO sheet.`);
+  };
+
   const useImageZoneItem = async (item: ImageZoneItem) => {
     setSelectedImageZoneId(item.id);
     if (!canPlaceImageZoneItem(item)) {
       setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
       return;
     }
+    if (isCoroBuilder || productMode === 'signage') placeCoroArtworkOnSheet(item);
     if (!fabricCanvasRef.current) {
       setProductMode('signage');
       setSignProductId('yard-sign');
@@ -1734,7 +1749,6 @@ export default function Home() {
       setStoreView('builder');
       setShowImageZone(false);
       setActiveCoroOptionPanel('images');
-      setImageLibraryStatus(`${item.name} is selected. Open the Images panel again after the sheet loads to place it.`);
       return;
     }
     await placeImageOnDesign(item.dataUrl, item.name);
@@ -1782,6 +1796,7 @@ export default function Home() {
       };
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(item.id);
+      if (isImageFile && isCoroBuilder) placeCoroArtworkOnSheet(item);
       if (canPlaceOnCanvas) await placeImageOnDesign(dataUrl, file.name);
       event.target.value = '';
 
@@ -1790,6 +1805,13 @@ export default function Home() {
         try {
           const storageInfo = await uploadArtworkFileToSupabase(file);
           setImageZoneItems((prev) => prev.map((entry) => entry.id === localItemId ? {
+            ...entry,
+            id: storageInfo.storagePath,
+            storagePath: storageInfo.storagePath,
+            storageUrl: storageInfo.storageUrl,
+            source: 'supabase'
+          } : entry));
+          setCoroSheetArtworkItems((prev) => prev.map((entry) => entry.id === localItemId ? {
             ...entry,
             id: storageInfo.storagePath,
             storagePath: storageInfo.storagePath,
@@ -2350,12 +2372,16 @@ export default function Home() {
                     <div className="absolute -bottom-8 left-0 right-0 text-center text-xs text-slate-300">Sheet #1 / 48&quot; x 96&quot; / Front Side</div>
                     <div className="absolute -left-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute left-[-10px] top-1/2 -translate-y-1/2 -rotate-90 bg-[#202224]/80 px-2">Left</span></div>
                     <div className="absolute -right-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 bg-[#202224]/80 px-2">Right</span></div>
-                    <button type="button" onClick={() => { if (!signArtworkPreviewUrl) setShowImageZone(true); }} className="absolute inset-0 border border-slate-500 bg-white text-left shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
+                    <button type="button" onClick={() => { if (!hasCoroSheetArtwork) setShowImageZone(true); }} className="absolute inset-0 border border-slate-500 bg-white text-left shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
                       <div className="grid h-full w-full gap-[2px] p-1" style={{ gridTemplateColumns: `repeat(${coroSheetLayout.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${coroSheetLayout.rows}, minmax(0, 1fr))` }}>
-                        {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#64748b] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{signArtworkPreviewUrl ? <img src={signArtworkPreviewUrl} alt="" className="h-full w-full object-cover" /> : <span className="px-1 text-center text-[8px] font-bold uppercase leading-tight text-slate-400">add art</span>}</div>)}
+                        {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => {
+                          const sheetItem = coroSheetArtworkItems.length ? coroSheetArtworkItems[coroMultipleImages ? index % coroSheetArtworkItems.length : 0] : null;
+                          const cellImage = sheetItem?.dataUrl || signArtworkPreviewUrl;
+                          return <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#64748b] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{cellImage ? <img src={cellImage} alt="" className="h-full w-full object-cover" /> : <span className="px-1 text-center text-[8px] font-bold uppercase leading-tight text-slate-400">add art</span>}</div>;
+                        })}
                       </div>
                     </button>
-                    {layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
+                    {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
                   </div> : <div className="relative flex w-[82%] items-center justify-center" style={{ aspectRatio: signPreviewAspect }}>
                     <div className="absolute -top-7 left-0 right-0 border-t border-slate-300 text-center text-xs text-slate-500"><span className="bg-white/80 px-2">{signWidth || 0}&quot;</span></div>
                     <div className="absolute -bottom-7 left-0 right-0 text-center text-xs text-slate-500">Top of Image</div>
@@ -2489,7 +2515,7 @@ export default function Home() {
               </div> : null}
               {productMode === 'signage' ? <div className={`absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${isCoroBuilder ? 'inset-x-0 bottom-8 justify-center' : 'inset-x-3 bottom-4 justify-center'}`}>
                 {[
-                  ['Images', String(layers.length || 1), signArtworkStatusOk],
+                  ['Images', String(coroSheetArtworkItems.length || layers.length || 1), signArtworkStatusOk],
                   ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
                   ['Material', String(signValues.material || (selectedSignProduct.id === 'yard-sign' ? '4mm' : '15oz')), true],
                   ['Print Sides', String(signValues.sides || 'single'), true],
@@ -2508,7 +2534,7 @@ export default function Home() {
                       ] as [string, string, boolean][])
                 ].map(([label, value, active]) => {
                   const isImagesTile = String(label) === 'Images';
-                  const needsArtworkFit = isImagesTile && layers.length > 0 && !signArtworkStatusOk;
+                  const needsArtworkFit = isImagesTile && (layers.length > 0 || coroSheetArtworkItems.length > 0) && !signArtworkStatusOk;
                   return <button type="button" onClick={() => handleCoroTileClick(String(label))} key={String(label)} className={`flex min-h-12 min-w-36 items-center justify-between gap-4 border-2 bg-white px-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_14px_34px_rgba(0,0,0,0.22)] ${needsArtworkFit ? 'border-red-500 text-red-600' : active ? 'border-[#1678b8] text-[#1678b8]' : 'border-slate-300 text-slate-400'}`}><span>{label}</span><span className={`${needsArtworkFit ? 'bg-red-500' : active ? 'bg-[#1678b8]' : 'bg-slate-300'} px-3 py-2 text-white`}>{value}</span></button>;
                 })}
               </div> : null}
