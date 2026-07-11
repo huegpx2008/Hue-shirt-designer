@@ -1721,16 +1721,33 @@ export default function Home() {
 
   const canPlaceImageZoneItem = (item: ImageZoneItem) => item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/');
 
+  const useImageZoneItem = async (item: ImageZoneItem) => {
+    setSelectedImageZoneId(item.id);
+    if (!canPlaceImageZoneItem(item)) {
+      setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
+      return;
+    }
+    if (!fabricCanvasRef.current) {
+      setProductMode('signage');
+      setSignProductId('yard-sign');
+      setStoreCategory('coro');
+      setStoreView('builder');
+      setShowImageZone(false);
+      setActiveCoroOptionPanel('images');
+      setImageLibraryStatus(`${item.name} is selected. Open the Images panel again after the sheet loads to place it.`);
+      return;
+    }
+    await placeImageOnDesign(item.dataUrl, item.name);
+    setShowImageZone(false);
+  };
+
   const onUploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const canvas = fabricCanvasRef.current;
     const isImageFile = isPreviewableImageFile(file);
-    if (isImageFile && !canvas) {
-      setImageLibraryStatus('The designer canvas is still loading. Try the upload again in a moment.');
-      event.target.value = '';
-      return;
-    }
+    const canPlaceOnCanvas = Boolean(isImageFile && canvas);
+    if (isImageFile && !canPlaceOnCanvas) setImageLibraryStatus('Adding file to the library. Open the CORO sheet to place it on the design.');
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result as string;
@@ -1765,11 +1782,11 @@ export default function Home() {
       };
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(item.id);
-      if (isImageFile) await placeImageOnDesign(dataUrl, file.name);
+      if (canPlaceOnCanvas) await placeImageOnDesign(dataUrl, file.name);
       event.target.value = '';
 
       if (isSupabaseStorageConfigured) {
-        setImageLibraryStatus(`Preview ready. Saving original file to ${SUPABASE_STORAGE_BUCKET}...`);
+        setImageLibraryStatus(`${canPlaceOnCanvas ? 'Preview ready' : 'Library file ready'}. Saving original file to ${SUPABASE_STORAGE_BUCKET}...`);
         try {
           const storageInfo = await uploadArtworkFileToSupabase(file);
           setImageZoneItems((prev) => prev.map((entry) => entry.id === localItemId ? {
@@ -2421,7 +2438,7 @@ export default function Home() {
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">
                     {imageZoneItems.length === 0 ? <p className="rounded border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">Uploaded art will show here for this session.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
-                      return <button key={item.id} type="button" onClick={async () => { setSelectedImageZoneId(item.id); if (canPlaceImageZoneItem(item)) await placeImageOnDesign(item.dataUrl, item.name); else setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
+                      return <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
                         {item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
@@ -2679,7 +2696,7 @@ export default function Home() {
                     <p className="text-xs text-slate-500">{item.source === 'supabase' ? 'Stored in Supabase' : 'Browser preview'}</p>
                     <p className="mt-2 text-xs text-slate-400">{item.uploadedAt}</p>
                     <span className={`mt-3 inline-flex rounded px-3 py-1 text-xs font-bold uppercase ${selected ? 'bg-[#1678b8] text-white' : 'bg-slate-100 text-slate-600'}`}>{selected ? 'Selected' : 'Select'}</span>
-                    <span onClick={async (event) => { event.stopPropagation(); setSelectedImageZoneId(item.id); if (canPlaceImageZoneItem(item)) { await placeImageOnDesign(item.dataUrl, item.name); setShowImageZone(false); } else setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`); }} className="ml-2 mt-3 inline-flex rounded bg-green-500 px-3 py-1 text-xs font-bold uppercase text-white">Use Image</span>
+                    <span onClick={async (event) => { event.stopPropagation(); await useImageZoneItem(item); }} className="ml-2 mt-3 inline-flex rounded bg-green-500 px-3 py-1 text-xs font-bold uppercase text-white">Use Image</span>
                   </div>
                 </button>;
               })}
@@ -2692,12 +2709,7 @@ export default function Home() {
               <button type="button" disabled={!selectedImageZoneId} onClick={async () => {
                 const item = imageZoneItems.find((entry) => entry.id === selectedImageZoneId);
                 if (!item) return;
-                if (canPlaceImageZoneItem(item)) {
-                  await placeImageOnDesign(item.dataUrl, item.name);
-                  setShowImageZone(false);
-                } else {
-                  setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
-                }
+                await useImageZoneItem(item);
               }} className="rounded bg-[#1678b8] px-5 py-2 text-sm font-black uppercase text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Use Selected Image</button>
             </div>
           </div>
