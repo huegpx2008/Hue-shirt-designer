@@ -1849,7 +1849,20 @@ export default function Home() {
     artworkUploadInputRef.current?.click();
   };
 
-  const canPlaceImageZoneItem = (item: ImageZoneItem) => item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/');
+  const isLikelyImagePath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg)(\?.*)?$/i.test(value);
+  const canPlaceImageZoneItem = (item: ImageZoneItem) => Boolean(item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') || isLikelyImagePath(item.name) || isLikelyImagePath(item.dataUrl));
+
+  const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
+    if (item.width > 0 && item.height > 0) return item;
+    try {
+      const size = await getImageNaturalSize(item.dataUrl);
+      const sizedItem = { ...item, width: size.width, height: size.height };
+      setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
+      return sizedItem;
+    } catch {
+      return item;
+    }
+  };
 
   const applyBannerSizeFromPixels = (width: number, height: number) => {
     if (!width || !height) return;
@@ -1961,8 +1974,9 @@ export default function Home() {
       setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
       return;
     }
-    if (isCoroBuilder) placeCoroArtworkOnSheet(item);
-    if (isBannerBuilder) applyBannerSizeFromPixels(item.width, item.height);
+    const imageItem = await hydrateImageZoneItemSize(item);
+    if (isCoroBuilder) placeCoroArtworkOnSheet(imageItem);
+    if (isBannerBuilder) applyBannerSizeFromPixels(imageItem.width, imageItem.height);
     if (!fabricCanvasRef.current) {
       const targetProductId = selectedSignProduct.id;
       setProductMode('signage');
@@ -1973,8 +1987,16 @@ export default function Home() {
       setActiveCoroOptionPanel('images');
       return;
     }
-    await placeImageOnDesign(item.dataUrl, item.name);
-    if (isBannerBuilder) applyBannerSizeFromPixels(item.width, item.height);
+    try {
+      await placeImageOnDesign(imageItem.dataUrl, imageItem.name);
+    } catch (error) {
+      setImageLibraryStatus(`Could not place ${imageItem.name}: ${error instanceof Error ? error.message : 'image failed to load'}. Try uploading the original file again.`);
+      return;
+    }
+    if (isBannerBuilder) {
+      applyBannerSizeFromPixels(imageItem.width, imageItem.height);
+      setImageLibraryStatus(`${imageItem.name} placed on the banner.`);
+    }
     setShowImageZone(false);
   };
 
