@@ -14,13 +14,15 @@ import catalogAuditData from '@/public/data/catalog/catalog-audit.generated.json
 type ShirtView = 'front' | 'back';
 type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean };
+type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState };
+type BannerOrderItem = { id: string; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState };
 type CoroArtworkQuantityMap = Record<string, number>;
 type CoroArtworkSide = 'front' | 'back';
 type CoroPlacementTarget = { itemId: string | null; side: CoroArtworkSide };
 type ImageType = 'flat' | 'model';
 type ProductMode = 'apparel' | 'signage';
-type SignProductId = 'banner' | 'yard-sign';
+type SignProductId = 'banner' | 'mesh-banner' | 'yard-sign' | 'acm' | 'poster' | 'acrylic' | 'foamcore' | 'pvc' | 'polystyrene' | 'aluminum' | 'vinyl' | 'custom-cut-coroplast' | 'vehicle-magnet' | 'business-card' | 'handheld-paper' | 'carbonless' | 'door-hanger';
 type StoreView = 'store' | 'builder';
 type StoreCategoryId = 'banners' | 'coro' | 'rigid' | 'decals' | 'magnets' | 'apparel' | 'misc';
 type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | 'webbing' | null;
@@ -223,12 +225,22 @@ const STORE_CATEGORIES: { id: StoreCategoryId; label: string; description: strin
 ];
 const STORE_PRODUCTS: StoreProductCard[] = [
   { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Indoor / outdoor banner', description: 'Upload finished banner art, check fit, and price online.', mode: 'signage', signProductId: 'banner', badge: 'Online order', initialSignValues: { material: '15-single', sides: 'single' } },
-  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: 'Air-flow perforated banner', description: 'Use the banner layout tool for finished mesh banner artwork.', mode: 'signage', signProductId: 'banner', badge: 'Mesh', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
+  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: 'Air-flow perforated banner', description: 'Use the banner layout tool for finished mesh banner artwork.', mode: 'signage', signProductId: 'mesh-banner', badge: 'Mesh', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
   { id: 'coro-sheet', category: 'coro', title: 'CORO', subtitle: '48 x 96 sheet-based signs', description: 'Choose a cut size, upload finished art, and see sheet usage before ordering.', mode: 'signage', signProductId: 'yard-sign', badge: 'Sheet price' },
-  { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: 'Printed rigid panels', description: 'Rigid sign ordering is coming into this store flow next.', mode: 'signage', disabled: true, badge: 'Soon' },
-  { id: 'rigid-pvc', category: 'rigid', title: 'PVC / Foam Board', subtitle: 'Indoor displays and panels', description: 'A ready-art upload flow for rigid signage.', mode: 'signage', disabled: true, badge: 'Soon' },
-  { id: 'decals-vinyl', category: 'decals', title: 'Adhesive Vinyl', subtitle: 'Decals and window graphics', description: 'Upload-ready decal ordering will use the same fit checks.', mode: 'signage', disabled: true, badge: 'Soon' },
-  { id: 'magnets-vehicle', category: 'magnets', title: 'Vehicle Magnets', subtitle: 'Car and truck magnets', description: 'Self-serve magnet orders will be added after signs.', mode: 'signage', disabled: true, badge: 'Soon' },
+  { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: 'Printed rigid panels', description: 'Upload finished acrylic art, set size, and pull Hue API pricing.', mode: 'signage', signProductId: 'acrylic', badge: 'Online order' },
+  { id: 'rigid-acm', category: 'rigid', title: 'ACM / Aluminum Composite', subtitle: 'Outdoor panel signs', description: 'Finished art upload flow for ACM sign panels.', mode: 'signage', signProductId: 'acm', badge: 'Online order' },
+  { id: 'rigid-pvc', category: 'rigid', title: 'PVC Signs', subtitle: 'Smooth rigid plastic', description: 'Upload-ready PVC signage with size and pricing checks.', mode: 'signage', signProductId: 'pvc', badge: 'Online order' },
+  { id: 'rigid-foamcore', category: 'rigid', title: 'Foamcore', subtitle: 'Indoor display boards', description: 'Ready-art upload flow for foam board signage.', mode: 'signage', signProductId: 'foamcore', badge: 'Online order' },
+  { id: 'rigid-polystyrene', category: 'rigid', title: 'Polystyrene', subtitle: 'Lightweight rigid signs', description: 'Upload finished art and price polystyrene panels.', mode: 'signage', signProductId: 'polystyrene', badge: 'Online order' },
+  { id: 'rigid-aluminum', category: 'rigid', title: 'Aluminum', subtitle: 'Durable metal signage', description: 'Upload finished art and price aluminum signs.', mode: 'signage', signProductId: 'aluminum', badge: 'Online order' },
+  { id: 'decals-vinyl', category: 'decals', title: 'Adhesive Vinyl', subtitle: 'Decals and window graphics', description: 'Upload-ready decal ordering with fit checks.', mode: 'signage', signProductId: 'vinyl', badge: 'Online order' },
+  { id: 'decals-custom-cut-coro', category: 'decals', title: 'Custom Cut Coroplast', subtitle: 'Cut-shape coroplast signs', description: 'Upload finished custom-cut art and price through Hue API.', mode: 'signage', signProductId: 'custom-cut-coroplast', badge: 'Online order' },
+  { id: 'magnets-vehicle', category: 'magnets', title: 'Vehicle Magnets', subtitle: 'Car and truck magnets', description: 'Self-serve magnet orders with size and artwork checks.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Online order' },
+  { id: 'misc-poster', category: 'misc', title: 'Poster', subtitle: 'Printed posters', description: 'Upload finished poster art, set size, and price online.', mode: 'signage', signProductId: 'poster', badge: 'Online order' },
+  { id: 'misc-business-card', category: 'misc', title: 'Business Cards', subtitle: 'Print-ready cards', description: 'Upload finished card art and price through Hue API.', mode: 'signage', signProductId: 'business-card', badge: 'Online order', initialSignValues: { width: '3.5', height: '2', quantity: '250' } },
+  { id: 'misc-handheld-paper', category: 'misc', title: 'Handheld Paper', subtitle: 'Flyers and handouts', description: 'Upload finished paper artwork and price online.', mode: 'signage', signProductId: 'handheld-paper', badge: 'Online order' },
+  { id: 'misc-carbonless', category: 'misc', title: 'Carbonless Forms', subtitle: 'NCR form printing', description: 'Print-ready carbonless form pricing.', mode: 'signage', signProductId: 'carbonless', badge: 'Online order' },
+  { id: 'misc-door-hanger', category: 'misc', title: 'Door Hangers', subtitle: 'Print-ready door hangers', description: 'Upload finished door hanger art and price online.', mode: 'signage', signProductId: 'door-hanger', badge: 'Online order' },
   { id: 'apparel-shirts', category: 'apparel', title: 'Custom Apparel', subtitle: 'Shirts and garments', description: 'Open the apparel designer and SanMar catalog.', mode: 'apparel', badge: 'Designer' }
 ];
 const CORO_SHEET = { width: 48, height: 96 };
@@ -239,6 +251,12 @@ const BANNER_MATERIAL_OPTIONS = [
   { value: '18-single', label: '18oz Vinyl', note: 'Required for double-sided banners' }
 ];
 const MESH_BANNER_MATERIAL = { value: 'mesh-single', label: 'Mesh Banner', note: 'Air-flow perforated banner' };
+const BASIC_SIGN_MATERIAL_OPTIONS = [
+  { value: 'standard', label: 'Standard', note: 'Default material from Hue pricing API' }
+];
+const RIGID_PANEL_MATERIAL_OPTIONS = [
+  { value: 'standard', label: 'Standard', note: 'Default rigid panel option' }
+];
 const CORO_SIZE_OPTIONS = [
   { label: '6" x 6" (128 per sheet)', value: '6x6' },
   { label: '6" x 12" (64 per sheet)', value: '6x12' },
@@ -306,6 +324,26 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
     ]
   },
   {
+    id: 'mesh-banner',
+    name: 'Mesh Banner',
+    apiSlug: 'mesh-banner',
+    description: 'Air-flow mesh banners with finished artwork upload.',
+    preview: 'banner',
+    fields: [
+      { name: 'width', label: 'Width (inches)', type: 'number', defaultValue: '36', step: '0.25' },
+      { name: 'height', label: 'Height (inches)', type: 'number', defaultValue: '24', step: '0.25' },
+      { name: 'quantity', label: 'Quantity', type: 'number', defaultValue: '1', step: '1' },
+      { name: 'material', label: 'Material', type: 'select', defaultValue: 'mesh-single', options: [MESH_BANNER_MATERIAL] },
+      { name: 'sides', label: 'Print Sides', type: 'select', defaultValue: 'single', options: [{ label: 'Single-Sided', value: 'single' }] },
+      { name: 'grommets', label: 'Grommets', type: 'checkbox', defaultValue: true },
+      { name: 'welding', label: 'Welding', type: 'checkbox', defaultValue: true },
+      { name: 'webbing', label: 'Webbing', type: 'checkbox', defaultValue: false },
+      { name: 'rope', label: 'Rope', type: 'checkbox', defaultValue: false },
+      { name: 'polePocket', label: 'Pole Pocket', type: 'checkbox', defaultValue: false },
+      { name: 'rush', label: 'Rush', type: 'checkbox', defaultValue: false }
+    ]
+  },
+  {
     id: 'yard-sign',
     name: 'CORO',
     apiSlug: 'yard-sign',
@@ -355,7 +393,47 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
         ]
       }
     ]
-  }
+  },
+  ...([
+    ['acrylic', 'Acrylic Signs', 'Printed rigid acrylic panels.', RIGID_PANEL_MATERIAL_OPTIONS],
+    ['acm', 'ACM / Aluminum Composite', 'Outdoor aluminum composite panel signs.', RIGID_PANEL_MATERIAL_OPTIONS],
+    ['pvc', 'PVC Signs', 'Durable smooth PVC material.', RIGID_PANEL_MATERIAL_OPTIONS],
+    ['foamcore', 'Foamcore', 'Indoor foam board display signs.', RIGID_PANEL_MATERIAL_OPTIONS],
+    ['polystyrene', 'Polystyrene', 'Lightweight rigid polystyrene signs.', RIGID_PANEL_MATERIAL_OPTIONS],
+    ['aluminum', 'Aluminum', 'Durable printed aluminum signage.', RIGID_PANEL_MATERIAL_OPTIONS],
+    ['vinyl', 'Adhesive Vinyl', 'Adhesive vinyl decals and window graphics.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['custom-cut-coroplast', 'Custom Cut Coroplast', 'Custom-cut coroplast sign shapes.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['vehicle-magnet', 'Vehicle Magnet', 'Vehicle and display magnets.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['poster', 'Poster', 'Printed poster products.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['business-card', 'Business Cards', 'Print-ready business cards.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['handheld-paper', 'Handheld Paper', 'Flyers and handout printing.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['carbonless', 'Carbonless Forms', 'Carbonless NCR form printing.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['door-hanger', 'Door Hanger', 'Print-ready door hanger products.', BASIC_SIGN_MATERIAL_OPTIONS]
+  ] as [SignProductId, string, string, SignFieldOption[]][]).map(([id, name, description, materialOptions]) => ({
+    id,
+    name,
+    apiSlug: id,
+    description,
+    preview: 'banner' as const,
+    fields: [
+      { name: 'width', label: 'Width (inches)', type: 'number' as const, defaultValue: id === 'business-card' ? '3.5' : '24', step: '0.25' },
+      { name: 'height', label: 'Height (inches)', type: 'number' as const, defaultValue: id === 'business-card' ? '2' : '18', step: '0.25' },
+      { name: 'quantity', label: 'Quantity', type: 'number' as const, defaultValue: id === 'business-card' ? '250' : '1', step: '1' },
+      { name: 'material', label: 'Material', type: 'select' as const, defaultValue: materialOptions[0]?.value || 'standard', options: materialOptions },
+      {
+        name: 'sides',
+        label: 'Print Sides',
+        type: 'select' as const,
+        defaultValue: 'single',
+        options: [
+          { label: 'Single-Sided', value: 'single' },
+          { label: 'Double-Sided', value: 'double' }
+        ]
+      },
+      { name: 'grommets', label: 'Grommets', type: 'checkbox' as const, defaultValue: false },
+      { name: 'rush', label: 'Rush', type: 'checkbox' as const, defaultValue: false }
+    ]
+  }))
 ];
 
 const CHUNKED_CATEGORY_LOAD_MESSAGES: Record<CategoryChunkSlug, string> = {
@@ -464,7 +542,7 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
     };
   }
 
-  if (product.id === 'banner') {
+  if (product.preview === 'banner') {
     const sides = String(values.sides || 'single');
     const isDoubleSided = sides === 'double';
     const material = String(values.material || '15-single');
@@ -472,14 +550,14 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
       width: Number(values.width),
       height: Number(values.height),
       quantity: Number(values.quantity),
-      material: isDoubleSided ? '18-single' : material,
+      material: product.id === 'banner' && isDoubleSided ? '18-single' : material,
       sides,
       printSides: sides,
       sideCount: isDoubleSided ? 2 : 1,
       doubleSided: isDoubleSided,
       isDoubleSided,
-      grommets: material === 'mesh-single' ? Boolean(values.grommets) : true,
-      welding: material === 'mesh-single' ? Boolean(values.welding) : true,
+      grommets: product.id === 'banner' && material !== 'mesh-single' ? true : Boolean(values.grommets),
+      welding: product.id === 'banner' && material !== 'mesh-single' ? true : Boolean(values.welding),
       rope: Boolean(values.rope),
       webbing: Boolean(values.webbing),
       polePocket: Boolean(values.polePocket),
@@ -762,6 +840,9 @@ export default function Home() {
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
+  const [bannerArtworkName, setBannerArtworkName] = useState('');
+  const [bannerArtworkFitState, setBannerArtworkFitState] = useState<ArtworkFitState>('unresolved');
+  const [bannerOrderItems, setBannerOrderItems] = useState<BannerOrderItem[]>([]);
   const [pendingBannerPlacement, setPendingBannerPlacement] = useState<{ dataUrl: string; name: string; width: number; height: number } | null>(null);
   const [coroSheetArtworkItems, setCoroSheetArtworkItems] = useState<ImageZoneItem[]>([]);
   const [coroArtworkQuantities, setCoroArtworkQuantities] = useState<CoroArtworkQuantityMap>({});
@@ -1055,8 +1136,8 @@ export default function Home() {
   const hasCoroUnusedSheetSpace = selectedSignProduct.id === 'yard-sign' && coroSheetLayout.sheetCount > 1 && coroUnusedSheetSpaces > 0;
   const hasCoroDoubleSided = selectedSignProduct.id === 'yard-sign' && String(signValues.sides || 'single') === 'double';
   const hasCoroAspectMismatch = selectedSignProduct.id === 'yard-sign' && coroSheetArtworkItems.some((item) => {
-    const frontMismatch = aspectRatioMismatch(item.width, item.height, signWidth, signHeight);
-    const backMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, signWidth, signHeight) : false;
+    const frontMismatch = aspectRatioMismatch(item.width, item.height, signWidth, signHeight) && item.frontFitState !== 'fit' && item.frontFitState !== 'stretch';
+    const backMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, signWidth, signHeight) && item.backFitState !== 'fit' && item.backFitState !== 'stretch' : false;
     return frontMismatch || backMismatch;
   });
   const hasCoroSheetWarning = hasCoroUnusedSheetSpace || hasCoroAspectMismatch;
@@ -1070,25 +1151,29 @@ export default function Home() {
     };
   });
   const isCoroBuilder = productMode === 'signage' && selectedSignProduct.id === 'yard-sign';
-  const isBannerBuilder = productMode === 'signage' && selectedSignProduct.id === 'banner';
+  const isBannerBuilder = productMode === 'signage' && selectedSignProduct.preview === 'banner';
   const isProductionBuilder = isCoroBuilder || isBannerBuilder;
   const bannerArtworkActualSize = signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
-  const bannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
-  const isMeshBanner = isBannerBuilder && String(signValues.material || '') === 'mesh-single';
-  const bannerMaterialOptions = String(signValues.sides || 'single') === 'double'
-    ? BANNER_MATERIAL_OPTIONS.filter((option) => option.value === '18-single')
-    : isMeshBanner
-      ? [MESH_BANNER_MATERIAL]
-      : BANNER_MATERIAL_OPTIONS;
-  const selectedBannerMaterial = bannerMaterialOptions.find((option) => option.value === String(signValues.material || '15-single')) || bannerMaterialOptions[0];
-  const bannerDisplayName = isBannerBuilder && selectedBannerMaterial.value === 'mesh-single' ? 'Mesh Banner' : selectedSignProduct.name;
+  const rawBannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
+  const bannerFitResolved = isBannerBuilder && Boolean(signArtworkPreviewUrl) && (bannerArtworkFitState === 'fit' || bannerArtworkFitState === 'stretch');
+  const bannerAspectMismatch = rawBannerAspectMismatch && !bannerFitResolved;
+  const isMeshBanner = isBannerBuilder && (selectedSignProduct.id === 'mesh-banner' || String(signValues.material || '') === 'mesh-single');
+  const productMaterialOptions = selectedSignProduct.fields.find((field) => field.name === 'material')?.options || BASIC_SIGN_MATERIAL_OPTIONS;
+  const bannerMaterialOptions = selectedSignProduct.id === 'banner'
+    ? String(signValues.sides || 'single') === 'double'
+      ? BANNER_MATERIAL_OPTIONS.filter((option) => option.value === '18-single')
+      : BANNER_MATERIAL_OPTIONS
+    : productMaterialOptions;
+  const selectedBannerMaterial = bannerMaterialOptions.find((option) => option.value === String(signValues.material || productMaterialOptions[0]?.value || 'standard')) || bannerMaterialOptions[0] || productMaterialOptions[0];
+  const bannerDisplayName = isMeshBanner ? 'Mesh Banner' : selectedSignProduct.name;
   const bannerLocalOptionTotal = isBannerBuilder && Boolean(signValues.windSlits) ? 10 : 0;
   const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
   const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
   const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
+  const hasBannerArtwork = isBannerBuilder && Boolean(signArtworkPreviewUrl);
   const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
-  const signArtworkStatusLabel = !layers.length && !hasCoroSheetArtwork ? 'Select Image' : signArtworkMatchesSize || hasCoroSheetArtwork ? 'OK' : 'Select Fit/Center';
-  const signArtworkStatusOk = hasCoroSheetArtwork || (layers.length > 0 && signArtworkMatchesSize);
+  const signArtworkStatusOk = hasCoroSheetArtwork || (hasBannerArtwork ? (!rawBannerAspectMismatch || bannerFitResolved) : (layers.length > 0 && signArtworkMatchesSize));
+  const signArtworkStatusLabel = !layers.length && !hasCoroSheetArtwork && !hasBannerArtwork ? 'Select Image' : signArtworkStatusOk ? 'OK' : 'Select Fit/Center';
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
   const signRetailBase = numericPrice(signEstimate?.price?.retail);
@@ -1722,7 +1807,7 @@ export default function Home() {
   };
 
   const editSelected = (fn: (obj: FabricObject) => void) => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected) return; fn(selected); clampToArea(selected); canvas.requestRenderAll(); refreshLayers(canvas); };
-  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) { setSignArtworkSize(null); setSignArtworkPreviewUrl(null); } canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
+  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) { setSignArtworkSize(null); setSignArtworkPreviewUrl(null); setBannerArtworkName(''); setBannerArtworkFitState('unresolved'); } canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
   const clearSignArtwork = () => {
     const canvas = fabricCanvasRef.current;
     if (canvas) {
@@ -1735,6 +1820,8 @@ export default function Home() {
     setLayers([]);
     setSignArtworkSize(null);
     setSignArtworkPreviewUrl(null);
+    setBannerArtworkName('');
+    setBannerArtworkFitState('unresolved');
     setCoroSheetArtworkItems([]);
     setCoroArtworkQuantities({});
     setArtworkAnalysis(null);
@@ -1791,13 +1878,21 @@ export default function Home() {
   const fitSelectedArtwork = (mode: 'contain' | 'cover' | 'stretch' | 'ratio') => {
     const canvas = fabricCanvasRef.current;
     const selected = canvas?.getActiveObject();
-    if (!canvas || !selected) return;
+    if (!canvas || !selected) {
+      if (isBannerBuilder && signArtworkPreviewUrl && (mode === 'contain' || mode === 'stretch')) {
+        setBannerArtworkFitState(mode === 'stretch' ? 'stretch' : 'fit');
+      }
+      return;
+    }
     fitObjectToArtworkArea(selected, mode);
     if (productMode === 'signage') {
       const nextSize = mode === 'contain'
         ? calculateContainedSignArtworkSize(selected.width || 1, selected.height || 1)
         : { width: signWidth, height: signHeight };
       setSignArtworkSize(nextSize);
+      if (isBannerBuilder && (mode === 'contain' || mode === 'stretch')) {
+        setBannerArtworkFitState(mode === 'stretch' ? 'stretch' : 'fit');
+      }
     }
     canvas.requestRenderAll();
     refreshLayers(canvas);
@@ -1871,7 +1966,65 @@ export default function Home() {
     const nextHeight = Math.max(1, Number((height / BANNER_PREVIEW_DPI).toFixed(2)));
     setSignValues((prev) => ({ ...prev, width: String(nextWidth), height: String(nextHeight) }));
     setSignArtworkSize({ width: nextWidth, height: nextHeight });
+    setBannerArtworkFitState('unresolved');
     setSignEstimate(null);
+  };
+
+  const clearCurrentBannerArtwork = () => {
+    const canvas = fabricCanvasRef.current;
+    if (canvas) {
+      canvas.getObjects().forEach((obj) => canvas.remove(obj));
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+      refreshLayers(canvas);
+    }
+    setActiveObject(null);
+    setLayers([]);
+    setSignArtworkSize(null);
+    setSignArtworkPreviewUrl(null);
+    setBannerArtworkName('');
+    setBannerArtworkFitState('unresolved');
+  };
+
+  const makeCurrentBannerOrderItem = (): BannerOrderItem => ({
+    id: `banner-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+    name: bannerArtworkName || 'Banner artwork',
+    dataUrl: signArtworkPreviewUrl,
+    width: signWidth,
+    height: signHeight,
+    quantity: designerQuantity,
+    artworkSize: signArtworkSize,
+    fitState: bannerArtworkFitState
+  });
+
+  const startAddBannerItem = () => {
+    setBannerOrderItems((prev) => {
+      const hasCurrentItem = Boolean(signArtworkPreviewUrl || signArtworkSize);
+      return hasCurrentItem ? [...prev, makeCurrentBannerOrderItem()] : prev;
+    });
+    clearCurrentBannerArtwork();
+    setActiveCoroOptionPanel('images');
+    setImageLibraryStatus('Choose artwork for the next banner.');
+  };
+
+  const loadBannerOrderItem = async (item: BannerOrderItem) => {
+    setBannerOrderItems((prev) => prev.filter((entry) => entry.id !== item.id));
+    setSignValues((prev) => ({ ...prev, width: String(item.width), height: String(item.height), quantity: String(item.quantity) }));
+    setSignArtworkSize(item.artworkSize);
+    setSignArtworkPreviewUrl(item.dataUrl);
+    setBannerArtworkName(item.name);
+    setBannerArtworkFitState(item.fitState);
+    setActiveCoroOptionPanel('images');
+    if (item.dataUrl) {
+      await placeImageOnDesign(item.dataUrl, item.name);
+    } else {
+      clearCurrentBannerArtwork();
+    }
+    setImageLibraryStatus(`${item.name} loaded for editing.`);
+  };
+
+  const removeBannerOrderItem = (itemId: string) => {
+    setBannerOrderItems((prev) => prev.filter((item) => item.id !== itemId));
   };
 
   const placeCoroArtworkOnSheet = (item: ImageZoneItem) => {
@@ -1882,7 +2035,8 @@ export default function Home() {
         backName: item.name,
         backWidth: item.width,
         backHeight: item.height,
-        backCopiedFromFront: false
+        backCopiedFromFront: false,
+        backFitState: 'unresolved'
       } : entry));
       setActiveCoroOptionPanel('images');
       setImageLibraryStatus(`${item.name} placed on the back side.`);
@@ -1894,6 +2048,7 @@ export default function Home() {
       setCoroSheetArtworkItems((prev) => prev.map((entry) => entry.id === coroPlacementTarget.itemId ? {
         ...entry,
         ...item,
+        frontFitState: 'unresolved',
         backDataUrl: entry.backDataUrl,
         backName: entry.backName,
         backWidth: entry.backWidth,
@@ -1910,7 +2065,8 @@ export default function Home() {
     const shouldAppend = isAddingCoroSign || coroSheetArtworkItems.length > 0;
     setCoroSheetArtworkItems((prev) => {
       const withoutDuplicate = prev.filter((entry) => entry.id !== item.id);
-      return shouldAppend ? [...withoutDuplicate, item] : [item];
+      const newItem = { ...item, frontFitState: 'unresolved' as ArtworkFitState, backFitState: 'unresolved' as ArtworkFitState };
+      return shouldAppend ? [...withoutDuplicate, newItem] : [newItem];
     });
     setCoroArtworkQuantities((prev) => shouldAppend ? { ...prev, [item.id]: prev[item.id] || 1 } : { [item.id]: designerQuantity });
     if (isAddingCoroSign) {
@@ -1964,9 +2120,19 @@ export default function Home() {
       backName: item.name,
       backWidth: item.width,
       backHeight: item.height,
-      backCopiedFromFront: true
+      backCopiedFromFront: true,
+      backFitState: item.frontFitState || 'unresolved'
     } : item));
     setImageLibraryStatus('Front artwork copied to the back side.');
+  };
+
+  const resolveCoroArtworkFit = (itemId: string, fitState: Exclude<ArtworkFitState, 'unresolved'>) => {
+    setCoroSheetArtworkItems((prev) => prev.map((item) => item.id === itemId ? {
+      ...item,
+      frontFitState: fitState,
+      backFitState: item.backDataUrl ? fitState : item.backFitState
+    } : item));
+    setImageLibraryStatus(fitState === 'fit' ? 'Artwork fit accepted for this sign.' : 'Artwork stretch accepted for this sign.');
   };
 
   const useImageZoneItem = async (item: ImageZoneItem) => {
@@ -1979,6 +2145,7 @@ export default function Home() {
     if (isCoroBuilder) placeCoroArtworkOnSheet(imageItem);
     if (isBannerBuilder) {
       setSignArtworkPreviewUrl(imageItem.dataUrl);
+      setBannerArtworkName(imageItem.name);
       applyBannerSizeFromPixels(imageItem.width, imageItem.height);
       setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height });
       setImageLibraryStatus(`${imageItem.name} selected for the banner.`);
@@ -2049,6 +2216,7 @@ export default function Home() {
       if (isImageFile && isCoroBuilder) placeCoroArtworkOnSheet(item);
       if (isImageFile && isBannerBuilder) {
         setSignArtworkPreviewUrl(dataUrl);
+        setBannerArtworkName(file.name);
         applyBannerSizeFromPixels(imagePixels.width, imagePixels.height);
         setPendingBannerPlacement({ dataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height });
         setImageLibraryStatus(`${file.name} selected for the banner.`);
@@ -2101,6 +2269,7 @@ export default function Home() {
           await placeImageOnDesign(placement.dataUrl, placement.name);
           if (canceled) return;
           setSignArtworkPreviewUrl(placement.dataUrl);
+          setBannerArtworkName(placement.name);
           setSignArtworkSize(calculateContainedSignArtworkSize(placement.width || 1, placement.height || 1));
           setImageLibraryStatus(`${placement.name} placed on the banner.`);
           setPendingBannerPlacement(null);
@@ -2413,18 +2582,30 @@ export default function Home() {
       setSignProductId(product.signProductId);
       if (nextProduct) setSignValues({ ...getDefaultSignValues(nextProduct), ...(product.initialSignValues || {}) } as Record<string, string | boolean>);
       setSignEstimate(null);
+      setBannerOrderItems([]);
+      setBannerArtworkName('');
+      setBannerArtworkFitState('unresolved');
     }
     setStoreView('builder');
-    if (product.signProductId === 'banner' || product.signProductId === 'yard-sign') setActiveCoroOptionPanel('images');
+    if (product.signProductId) setActiveCoroOptionPanel('images');
   };
 
   const updateSignOption = (name: string, value: string | boolean) => {
+    if (isProductionBuilder && (name === 'width' || name === 'height' || name === 'size')) {
+      setBannerArtworkFitState('unresolved');
+      setCoroSheetArtworkItems((prev) => prev.map((item) => ({
+        ...item,
+        frontFitState: 'unresolved',
+        backFitState: item.backDataUrl ? 'unresolved' : item.backFitState
+      })));
+    }
     setSignValues((prev) => ({ ...prev, [name]: value }));
     setSignEstimate(null);
   };
 
   const updatePrintSides = (value: string) => {
     if (isBannerBuilder) {
+      setBannerArtworkFitState('unresolved');
       setSignValues((prev) => ({
         ...prev,
         sides: value,
@@ -2703,7 +2884,7 @@ export default function Home() {
                   <div>
                     <p className={`${isProductionBuilder ? 'hidden' : 'text-[10px] font-black uppercase tracking-[0.22em] text-[#1678b8]'}`}>Hue Production Builder</p>
                     <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{isBannerBuilder ? bannerDisplayName : selectedSignProduct.name}</p>
-                    <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {selectedSignProduct.id === 'banner' ? selectedBannerMaterial.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
+                    <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {isBannerBuilder ? selectedBannerMaterial?.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
                   </div>
                 </div>
                 <div className={`text-xs ${isProductionBuilder ? 'rounded border border-white/16 bg-[#070b10]/78 px-7 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.18)] backdrop-blur' : ''}`}>
@@ -2723,7 +2904,7 @@ export default function Home() {
                       <span />
                       <span className="font-bold text-slate-100">Banner Price</span>
                       <span className="font-bold text-slate-100">Single Banner</span>
-                      <span>{selectedBannerMaterial.label}</span>
+                      <span>{selectedBannerMaterial?.label || String(signValues.material || 'standard')}</span>
                       <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{bannerSquareFeet.toFixed(1)} sqft</span>
@@ -2731,7 +2912,7 @@ export default function Home() {
                       <span>{signValues.windSlits ? '+ $10 wind slits' : 'Standard finishing'}</span>
                     </> : <>
                       <span>Single-Sided</span><span>Double-Sided</span>
-                      <span>{selectedSignProduct.id === 'banner' ? '13oz / 15oz / 18oz' : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
+                      <span>{isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
                     </>}
                   </div>
                   {isProductionBuilder ? <p className="mt-3 text-center text-[11px] text-slate-400">Pricing is powered by your current Hue API pricing rules.</p> : null}
@@ -2789,7 +2970,8 @@ export default function Home() {
                             const shouldFillCell = index < sheetPreview.quantity;
                             const sheetItem = shouldFillCell ? sheetPreview.cells[index] : null;
                             const cellImage = coroSheetViewSide === 'back' ? sheetItem?.backDataUrl || null : sheetItem?.dataUrl || signArtworkPreviewUrl;
-                            return <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className="h-full w-full object-fill" /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">{shouldFillCell ? 'add art' : ''}</span>}</div>;
+                            const cellFitState = coroSheetViewSide === 'back' ? sheetItem?.backFitState : sheetItem?.frontFitState;
+                            return <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' ? 'object-contain' : 'object-fill'}`} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">{shouldFillCell ? 'add art' : ''}</span>}</div>;
                           })}
                         </div>
                       </button>
@@ -2805,7 +2987,7 @@ export default function Home() {
                     <div className={`absolute -right-9 bottom-0 top-0 border-r text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
                     <div className="absolute inset-0 rounded-sm border border-slate-300 bg-white shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]">
                       <div className="absolute inset-3 border border-dashed border-slate-300" />
-                      {signArtworkPreviewUrl ? <img src={signArtworkPreviewUrl} alt="" className="absolute inset-0 h-full w-full object-fill" /> : null}
+                      {signArtworkPreviewUrl ? <img src={signArtworkPreviewUrl} alt="" className={`absolute inset-0 h-full w-full ${bannerArtworkFitState === 'fit' ? 'object-contain' : 'object-fill'}`} /> : null}
                       <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div>
                     </div>
                     {layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
@@ -2826,17 +3008,37 @@ export default function Home() {
                 </div>
               </div> : null}
               {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-md border border-slate-500 bg-[#f8fafc] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+                {bannerOrderItems.length > 0 ? <div className="mb-3 space-y-3">
+                  {bannerOrderItems.map((item, index) => {
+                    const itemMismatch = item.dataUrl ? aspectRatioMismatch(item.artworkSize?.width, item.artworkSize?.height, item.width, item.height) && item.fitState === 'unresolved' : true;
+                    return <button key={item.id} type="button" onClick={async () => { await loadBannerOrderItem(item); }} className={`w-full rounded p-3 text-left ${itemMismatch ? 'bg-red-100' : 'bg-green-100'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className={`text-base font-black uppercase leading-tight ${itemMismatch ? 'text-red-600' : 'text-green-700'}`}>Item #{index + 1} / {itemMismatch ? 'Check Fit' : 'OK'}</h3>
+                          <p className="mt-1 text-xs text-slate-700">width: <span className="font-bold">{item.width}</span>&quot; &nbsp; height: <span className="font-bold">{item.height}</span>&quot; &nbsp; qty: <span className="font-bold">{item.quantity}</span></p>
+                        </div>
+                        <span onClick={(event) => { event.stopPropagation(); removeBannerOrderItem(item.id); }} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50">delete</span>
+                      </div>
+                      <div className="mt-3 flex min-h-24 items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400">
+                        {item.dataUrl ? <span className="w-full">
+                          <img src={item.dataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.fitState === 'stretch' ? 'object-fill' : 'object-contain'}`} />
+                          <span className="mt-2 block font-bold text-slate-600">{item.name}</span>
+                        </span> : <span>No image selected</span>}
+                      </div>
+                    </button>;
+                  })}
+                </div> : null}
                 <div className={`rounded p-3 ${signArtworkStatusOk && !bannerAspectMismatch ? 'bg-green-100' : 'bg-red-100'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-green-700' : 'text-red-600'}`}>Item #1 / {signArtworkPreviewUrl ? bannerAspectMismatch ? 'Check Fit' : 'OK' : 'Select Image'}</h3>
+                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-green-700' : 'text-red-600'}`}>Item #{bannerOrderItems.length + 1} / {signArtworkPreviewUrl ? bannerAspectMismatch ? 'Check Fit' : 'OK' : 'Select Image'}</h3>
                       <div className="mt-2 grid grid-cols-[1fr_1fr_64px] gap-2 text-xs text-slate-700">
                         <label>width<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>height<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>qty<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                       </div>
                     </div>
-                    <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
+                    <button type="button" onClick={clearCurrentBannerArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
                   </div>
                   <button type="button" onClick={() => setShowImageZone(true)} className="mt-3 flex min-h-28 w-full items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
                     {signArtworkPreviewUrl ? <span className="w-full">
@@ -2847,13 +3049,13 @@ export default function Home() {
                   </button>
                   {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve proportion or Stretch to force {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <button type="button" onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
+                    <button type="button" onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject && !signArtworkPreviewUrl} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
                     <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
-                    <button type="button" onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40">Stretch</button>
+                    <button type="button" onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject && !signArtworkPreviewUrl} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40">Stretch</button>
                     <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                   </div>
                 </div>
-                <button type="button" onClick={() => setShowImageZone(true)} className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add / Replace Banner Art</button>
+                <button type="button" onClick={startAddBannerItem} className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add Banner</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose finished banner artwork.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
                   <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
@@ -2867,8 +3069,10 @@ export default function Home() {
                     const itemQuantity = Math.max(1, Number(coroArtworkQuantities[item.id] || 1));
                     const frontActualSize = getFittedArtworkSize(item.width, item.height, signWidth, signHeight);
                     const backActualSize = getFittedArtworkSize(item.backWidth, item.backHeight, signWidth, signHeight);
-                    const frontMismatch = aspectRatioMismatch(item.width, item.height, signWidth, signHeight);
-                    const backMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, signWidth, signHeight) : false;
+                    const rawFrontMismatch = aspectRatioMismatch(item.width, item.height, signWidth, signHeight);
+                    const rawBackMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, signWidth, signHeight) : false;
+                    const frontMismatch = rawFrontMismatch && item.frontFitState !== 'fit' && item.frontFitState !== 'stretch';
+                    const backMismatch = rawBackMismatch && item.backFitState !== 'fit' && item.backFitState !== 'stretch';
                     const itemNeedsCheck = frontMismatch || backMismatch || (hasCoroDoubleSided && !item.backDataUrl);
                     const itemFirstCellIndex = coroSheetCells.findIndex((cell) => cell.id === item.id);
                     const itemSheetIndex = itemFirstCellIndex >= 0 ? Math.floor(itemFirstCellIndex / coroSheetLayout.signsPerSheet) : 0;
@@ -2889,14 +3093,14 @@ export default function Home() {
                       <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
                         <button type="button" onClick={() => chooseCoroSideImage(item.id, 'front')} className={`flex min-h-28 w-full items-center justify-center border bg-white p-2 text-center text-[10px] uppercase hover:border-[#1678b8] hover:text-[#1678b8] ${frontMismatch ? 'border-red-500 text-red-500' : 'border-slate-300 text-slate-400'}`}>
                           <span className="w-full">
-                            <img src={item.dataUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" />
+                            <img src={item.dataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.frontFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} />
                             <span className="mt-2 block font-bold text-slate-600">Front image</span>
                             <span className="mt-1 block text-slate-500">Actual: {frontActualSize.width.toFixed(0)}&quot; x {frontActualSize.height.toFixed(0)}&quot;</span>
                           </span>
                         </button>
                         {hasCoroDoubleSided ? <button type="button" onClick={() => chooseCoroSideImage(item.id, 'back')} className={`flex min-h-28 w-full items-center justify-center border bg-white p-2 text-center text-[10px] uppercase hover:border-[#1678b8] hover:text-[#1678b8] ${!item.backDataUrl || backMismatch ? 'border-red-500 text-red-500' : 'border-slate-300 text-slate-400'}`}>
                           <span className="w-full">
-                            {item.backDataUrl ? <img src={item.backDataUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" /> : <span className="mx-auto flex h-20 max-w-full items-center justify-center bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] px-2 text-slate-400">Click here to select back image</span>}
+                            {item.backDataUrl ? <img src={item.backDataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.backFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} /> : <span className="mx-auto flex h-20 max-w-full items-center justify-center bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] px-2 text-slate-400">Click here to select back image</span>}
                             <span className="mt-2 block font-bold text-slate-600">Back image</span>
                             <span className="mt-1 block text-slate-500">{item.backDataUrl ? `Actual: ${backActualSize.width.toFixed(0)}" x ${backActualSize.height.toFixed(0)}"` : 'No image selected'}</span>
                           </span>
@@ -2904,15 +3108,15 @@ export default function Home() {
                       </div>
                       {hasCoroDoubleSided ? <button type="button" onClick={() => copyCoroFrontToBack(item.id)} className="mt-2 w-full rounded border border-[#1678b8]/30 bg-white px-2 py-2 text-xs font-bold text-[#1678b8] hover:bg-[#eaf5fb]">Copy Front Image To Back</button> : null}
                       <p className="mt-2 text-center text-[10px] font-bold text-slate-600">Starts on sheet #{itemSheetIndex + 1}</p>
-                      {frontMismatch || backMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Aspect ratio mismatch. Image will stretch to fit {signWidth}&quot; x {signHeight}&quot;.</p> : null}
+                      {frontMismatch || backMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Aspect ratio mismatch. Use Fit to preserve proportion or Stretch to force {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
                         <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2">Color Matching</button>
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <button type="button" onClick={() => fitSelectedArtwork('cover')} disabled={!activeObject} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
+                        <button type="button" onClick={() => resolveCoroArtworkFit(item.id, 'fit')} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94]">Fit</button>
                         <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
-                        <button type="button" onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40">Stretch</button>
+                        <button type="button" onClick={() => resolveCoroArtworkFit(item.id, 'stretch')} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Stretch</button>
                         <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                       </div>
                     </div>;
@@ -2991,7 +3195,7 @@ export default function Home() {
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'material' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {(isBannerBuilder ? bannerMaterialOptions.map((option) => ({ ...option, price: option.note })) : [{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }]).map((option) => {
+                  {(isBannerBuilder ? bannerMaterialOptions.map((option) => ({ value: option.value, label: option.label, price: String('note' in option ? option.note : 'Priced by Hue API') })) : [{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }]).map((option) => {
                     const selected = String(signValues.material || '4mm') === option.value;
                     return <button key={option.value} type="button" onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.price}</span></button>;
                   })}
@@ -3031,9 +3235,9 @@ export default function Home() {
               </div> : null}
               {productMode === 'signage' ? <div className={`absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${isProductionBuilder ? 'bottom-6 left-60 right-8 max-h-11 justify-end overflow-hidden' : 'inset-x-3 bottom-4 justify-center'}`}>
                 {[
-                  ['Images', String(coroSheetArtworkItems.length || layers.length || 1), signArtworkStatusOk],
+                  ['Images', String(isBannerBuilder ? bannerOrderItems.length + 1 : coroSheetArtworkItems.length || layers.length || 1), signArtworkStatusOk],
                   ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
-                  ['Material', isBannerBuilder ? selectedBannerMaterial.label : String(signValues.material || '4mm'), true],
+                  ['Material', isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : String(signValues.material || '4mm'), true],
                   ['Print Sides', String(signValues.sides || 'single'), true],
                   ...(selectedSignProduct.id === 'yard-sign'
                     ? [
@@ -3050,9 +3254,11 @@ export default function Home() {
                               ['Grommets', signValues.grommets ? 'Yes' : 'No', Boolean(signValues.grommets)],
                               ['Pole Pockets', signValues.polePocket ? 'Yes' : 'None', Boolean(signValues.polePocket)]
                             ]
-                          : [
+                          : selectedSignProduct.id === 'banner' ? [
                               ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
                               ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
+                            ] : [
+                              ['Rush', signValues.rush ? 'Yes' : 'No', Boolean(signValues.rush)]
                             ]) as [string, string, boolean][]
                       ] as [string, string, boolean][])
                 ].map(([label, value, active]) => {
