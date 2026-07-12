@@ -20,3 +20,47 @@ body {
   position: absolute !important;
   inset: 0;
 }
+
+.coro-hex-bg {
+  background-color: #050b12;
+  background-image:
+    radial-gradient(circle at 18% 42%, rgba(0, 150, 255, 0.34) 0, rgba(0, 150, 255, 0.12) 1.5px, transparent 3px),
+    radial-gradient(circle at 79% 54%, rgba(0, 150, 255, 0.32) 0, rgba(0, 150, 255, 0.11) 1.5px, transparent 3px),
+    radial-gradient(circle at 52% 34%, rgba(22, 120, 184, 0.24), rgba(22, 120, 184, 0.08) 24%, transparent 50%),
+    linear-gradient(30deg, rgba(21, 33, 48, 0.72) 12%, transparent 12.5%, transparent 87%, rgba(21, 33, 48, 0.72) 87.5%, rgba(21, 33, 48, 0.72)),
+    linear-gradient(150deg, rgba(21, 33, 48, 0.72) 12%, transparent 12.5%, transparent 87%, rgba(21, 33, 48, 0.72) 87.5%, rgba(21, 33, 48, 0.72)),
+    linear-gradient(30deg, rgba(21, 33, 48, 0.72) 12%, transparent 12.5%, transparent 87%, rgba(21, 33, 48, 0.72) 87.5%, rgba(21, 33, 48, 0.72)),
+    linear-gradient(150deg, rgba(21, 33, 48, 0.72) 12%, transparent 12.5%, transparent 87%, rgba(21, 33, 48, 0.72) 87.5%, rgba(21, 33, 48, 0.72)),
+    linear-gradient(60deg, rgba(0, 150, 255, 0.12) 25%, transparent 25.5%, transparent 75%, rgba(0, 150, 255, 0.12) 75%, rgba(0, 150, 255, 0.12)),
+    linear-gradient(60deg, rgba(0, 150, 255, 0.12) 25%, transparent 25.5%, transparent 75%, rgba(0, 150, 255, 0.12) 75%, rgba(0, 150, 255, 0.12));
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    0 0,
+    0 0,
+    32px 56px,
+    32px 56px,
+    0 0,
+    32px 56px;
+  background-size:
+    auto,
+    auto,
+    auto,
+    64px 112px,
+    64px 112px,
+    64px 112px,
+    64px 112px,
+    64px 112px,
+    64px 112px;
+}
+
+.coro-hex-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(3, 7, 12, 0.15), rgba(3, 7, 12, 0.42)),
+    radial-gradient(circle at 50% 52%, transparent 0, rgba(0, 0, 0, 0.28) 72%);
+}

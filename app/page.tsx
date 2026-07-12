@@ -14,13 +14,16 @@ import catalogAuditData from '@/public/data/catalog/catalog-audit.generated.json
 type ShirtView = 'front' | 'back';
 type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean };
+type CoroArtworkQuantityMap = Record<string, number>;
+type CoroArtworkSide = 'front' | 'back';
+type CoroPlacementTarget = { itemId: string | null; side: CoroArtworkSide };
 type ImageType = 'flat' | 'model';
 type ProductMode = 'apparel' | 'signage';
 type SignProductId = 'banner' | 'yard-sign';
 type StoreView = 'store' | 'builder';
 type StoreCategoryId = 'banners' | 'coro' | 'rigid' | 'decals' | 'magnets' | 'apparel' | 'misc';
-type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | null;
+type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | null;
 type SignFieldType = 'number' | 'select' | 'checkbox';
 type SignFieldOption = { label: string; value: string };
 type SignField = { name: string; label: string; type: SignFieldType; defaultValue: string | boolean; step?: string; options?: SignFieldOption[] };
@@ -79,6 +82,13 @@ const getSafeStorageFileName = (name: string) => {
 };
 
 const isPreviewableImageFile = (file: File) => file.type.startsWith('image/');
+
+const getImageNaturalSize = (dataUrl: string): Promise<{ width: number; height: number }> => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve({ width: image.naturalWidth || image.width, height: image.naturalHeight || image.height });
+  image.onerror = () => reject(new Error('Could not read image size.'));
+  image.src = dataUrl;
+});
 
 const getErrorMessage = async (response: Response) => {
   try {
@@ -221,6 +231,14 @@ const STORE_PRODUCTS: StoreProductCard[] = [
   { id: 'apparel-shirts', category: 'apparel', title: 'Custom Apparel', subtitle: 'Shirts and garments', description: 'Open the apparel designer and SanMar catalog.', mode: 'apparel', badge: 'Designer' }
 ];
 const CORO_SHEET = { width: 48, height: 96 };
+const BANNER_PREVIEW_DPI = 150;
+const BANNER_MATERIAL_OPTIONS = [
+  { value: '13-single', label: '13oz Vinyl', note: 'Single-sided everyday banner' },
+  { value: '15-single', label: '15oz Vinyl', note: 'Heavier indoor/outdoor vinyl' },
+  { value: '18-single', label: '18oz Vinyl', note: 'Heavy-duty single-sided vinyl' },
+  { value: '18-double', label: '18oz Blockout Vinyl', note: 'Double-sided banner material' },
+  { value: 'mesh-single', label: 'Mesh Banner', note: 'Air-flow perforated banner' }
+];
 const CORO_SIZE_OPTIONS = [
   { label: '6" x 6" (128 per sheet)', value: '6x6' },
   { label: '6" x 12" (64 per sheet)', value: '6x12' },
@@ -266,14 +284,11 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
         label: 'Material',
         type: 'select',
         defaultValue: '13-single',
-        options: [
-          { label: '13oz Single-Sided', value: '13-single' },
-          { label: '15oz Single-Sided', value: '15-single' },
-          { label: '18oz Single-Sided', value: '18-single' },
-          { label: '18oz Double-Sided', value: '18-double' }
-        ]
+        options: BANNER_MATERIAL_OPTIONS
       },
+      { name: 'grommets', label: 'Grommets', type: 'checkbox', defaultValue: true },
       { name: 'polePocket', label: 'Pole Pocket', type: 'checkbox', defaultValue: false },
+      { name: 'welding', label: 'Welding', type: 'checkbox', defaultValue: true },
       { name: 'rope', label: 'Rope', type: 'checkbox', defaultValue: false },
       { name: 'windSlits', label: 'Wind Slits', type: 'checkbox', defaultValue: false },
       { name: 'rush', label: 'Rush', type: 'checkbox', defaultValue: false }
@@ -424,10 +439,17 @@ const getDefaultSignValues = (product: SignProductConfig) => Object.fromEntries(
 
 const toSignPricingPayload = (product: SignProductConfig, values: Record<string, string | boolean>): Record<string, string | number | boolean> => {
   if (product.id === 'yard-sign') {
+    const stepStakes = Number(values.stepStakes || 0);
+    const isDoubleSided = String(values.sides || 'single') === 'double';
     return {
       quantity: Number(values.quantity),
       sides: values.sides || 'single',
-      stakeType: Number(values.stepStakes || 0) > 0 ? 'standard' : values.stakeType || 'none'
+      printSides: values.sides || 'single',
+      sideCount: isDoubleSided ? 2 : 1,
+      doubleSided: isDoubleSided,
+      isDoubleSided,
+      stakeType: stepStakes > 0 ? 'standard' : 'none',
+      stepStakes
     };
   }
 
@@ -488,6 +510,19 @@ const numericPrice = (value: number | string | undefined) => {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+};
+
+const aspectRatioMismatch = (imageWidth: number | undefined, imageHeight: number | undefined, targetWidth: number, targetHeight: number) => {
+  if (!imageWidth || !imageHeight || !targetWidth || !targetHeight) return false;
+  const imageRatio = imageWidth / imageHeight;
+  const targetRatio = targetWidth / targetHeight;
+  return Math.abs(imageRatio - targetRatio) / targetRatio > 0.03;
+};
+
+const getFittedArtworkSize = (imageWidth: number | undefined, imageHeight: number | undefined, targetWidth: number, targetHeight: number) => {
+  if (!imageWidth || !imageHeight || !targetWidth || !targetHeight) return { width: targetWidth, height: targetHeight };
+  const imageRatio = imageWidth / imageHeight;
+  return { width: targetWidth, height: targetWidth / imageRatio };
 };
 
 const getSignOptionLabel = (field: SignField, value: string | boolean) => {
@@ -693,13 +728,18 @@ export default function Home() {
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
   const [coroSheetArtworkItems, setCoroSheetArtworkItems] = useState<ImageZoneItem[]>([]);
-  const [coroMultipleImages, setCoroMultipleImages] = useState(false);
+  const [coroArtworkQuantities, setCoroArtworkQuantities] = useState<CoroArtworkQuantityMap>({});
   const [showImageZone, setShowImageZone] = useState(false);
   const [imageZoneItems, setImageZoneItems] = useState<ImageZoneItem[]>([]);
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
   const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>(null);
+  const [isAddingCoroSign, setIsAddingCoroSign] = useState(false);
+  const [showCoroSheetWarning, setShowCoroSheetWarning] = useState(false);
+  const [coroPlacementTarget, setCoroPlacementTarget] = useState<CoroPlacementTarget>({ itemId: null, side: 'front' });
+  const [coroSheetViewSide, setCoroSheetViewSide] = useState<CoroArtworkSide>('front');
+  const [activeCoroSheetIndex, setActiveCoroSheetIndex] = useState(0);
   const [apparelEstimate, setApparelEstimate] = useState<ApparelApiEstimate | null>(null);
   const [apparelEstimateMethod, setApparelEstimateMethod] = useState<'dtf' | 'screen_print' | null>(null);
   const [apparelEstimateStatus, setApparelEstimateStatus] = useState('');
@@ -970,8 +1010,35 @@ export default function Home() {
   const signWidth = selectedSignProduct.id === 'yard-sign' ? selectedCoroSize.width : Number(signValues.width || 36);
   const signHeight = selectedSignProduct.id === 'yard-sign' ? selectedCoroSize.height : Number(signValues.height || 24);
   const designerQuantity = productMode === 'signage' ? getSignQuantity(signValues) : totalQuantity;
-  const coroSheetLayout = getCoroSheetLayout(signWidth, signHeight, designerQuantity);
+  const coroSheetArtworkQuantity = coroSheetArtworkItems.reduce((total, item) => total + Math.max(1, Number(coroArtworkQuantities[item.id] || 1)), 0);
+  const effectiveCoroQuantity = selectedSignProduct.id === 'yard-sign' && coroSheetArtworkItems.length > 0 ? coroSheetArtworkQuantity : designerQuantity;
+  const coroSheetLayout = getCoroSheetLayout(signWidth, signHeight, effectiveCoroQuantity);
+  const coroSheetCells = coroSheetArtworkItems.flatMap((item) => Array.from({ length: Math.max(1, Number(coroArtworkQuantities[item.id] || 1)) }, () => item));
+  const coroUnusedSheetSpaces = Math.max(0, (coroSheetLayout.sheetCount * coroSheetLayout.signsPerSheet) - effectiveCoroQuantity);
+  const hasCoroUnusedSheetSpace = selectedSignProduct.id === 'yard-sign' && coroSheetLayout.sheetCount > 1 && coroUnusedSheetSpaces > 0;
+  const hasCoroDoubleSided = selectedSignProduct.id === 'yard-sign' && String(signValues.sides || 'single') === 'double';
+  const hasCoroAspectMismatch = selectedSignProduct.id === 'yard-sign' && coroSheetArtworkItems.some((item) => {
+    const frontMismatch = aspectRatioMismatch(item.width, item.height, signWidth, signHeight);
+    const backMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, signWidth, signHeight) : false;
+    return frontMismatch || backMismatch;
+  });
+  const hasCoroSheetWarning = hasCoroUnusedSheetSpace || hasCoroAspectMismatch;
+  const coroSheetPreviews = Array.from({ length: coroSheetLayout.sheetCount }, (_, sheetIndex) => {
+    const start = sheetIndex * coroSheetLayout.signsPerSheet;
+    const end = start + coroSheetLayout.signsPerSheet;
+    return {
+      sheetNumber: sheetIndex + 1,
+      quantity: Math.min(coroSheetLayout.signsPerSheet, Math.max(0, effectiveCoroQuantity - start)),
+      cells: coroSheetCells.slice(start, end)
+    };
+  });
   const isCoroBuilder = productMode === 'signage' && selectedSignProduct.id === 'yard-sign';
+  const isBannerBuilder = productMode === 'signage' && selectedSignProduct.id === 'banner';
+  const isProductionBuilder = isCoroBuilder || isBannerBuilder;
+  const bannerArtworkActualSize = signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
+  const bannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
+  const selectedBannerMaterial = BANNER_MATERIAL_OPTIONS.find((option) => option.value === String(signValues.material || '13-single')) || BANNER_MATERIAL_OPTIONS[0];
+  const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
   const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
   const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
   const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
@@ -980,7 +1047,12 @@ export default function Home() {
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
   const signRetailTotal = numericPrice(signEstimate?.price?.retail);
+  const signEachTotal = numericPrice(signEstimate?.price?.each);
   const signPricePerSheet = signRetailTotal !== null ? signRetailTotal / coroSheetLayout.sheetCount : null;
+  const coroPricePerSign = signEachTotal ?? (signRetailTotal !== null ? signRetailTotal / Math.max(1, effectiveCoroQuantity) : null);
+  const coroPricePerFullSheet = coroPricePerSign !== null ? coroPricePerSign * coroSheetLayout.signsPerSheet : null;
+  const coroPricingCurrency = signEstimate?.currency || 'USD';
+  const coroPricingIsLoaded = isCoroBuilder && signEstimate && signRetailTotal !== null;
   const artworkAnalysisSummary = useMemo(() => {
     if (!artworkAnalysis) return 'No uploaded artwork analysis yet.';
     const warnings = artworkAnalysis.warnings.length ? artworkAnalysis.warnings.join('; ') : 'No first-pass warnings';
@@ -1005,6 +1077,14 @@ export default function Home() {
     setApparelEstimateMethod(null);
     setApparelEstimateStatus('');
   }, [estimatedColorCount, estimatedMethod, printLocation, selectedColorName, selectedPreview?.styleNumber, selectedPrintLocations, sizeQuantities]);
+
+  useEffect(() => {
+    if (!hasCoroDoubleSided) setCoroSheetViewSide('front');
+  }, [hasCoroDoubleSided]);
+
+  useEffect(() => {
+    setActiveCoroSheetIndex((current) => Math.min(current, Math.max(0, coroSheetPreviews.length - 1)));
+  }, [coroSheetPreviews.length]);
 
 
   const applyArtboardPreset = (preset: 'standard-full-front' | 'large-full-front' | 'left-chest' | 'full-back' | 'sleeve' | 'reset-default') => {
@@ -1609,6 +1689,7 @@ export default function Home() {
     setSignArtworkSize(null);
     setSignArtworkPreviewUrl(null);
     setCoroSheetArtworkItems([]);
+    setCoroArtworkQuantities({});
     setArtworkAnalysis(null);
     setArtworkAnalysisStatus('');
   };
@@ -1724,15 +1805,108 @@ export default function Home() {
 
   const canPlaceImageZoneItem = (item: ImageZoneItem) => item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/');
 
+  const applyBannerSizeFromPixels = (width: number, height: number) => {
+    if (!width || !height) return;
+    const nextWidth = Math.max(1, Number((width / BANNER_PREVIEW_DPI).toFixed(2)));
+    const nextHeight = Math.max(1, Number((height / BANNER_PREVIEW_DPI).toFixed(2)));
+    setSignValues((prev) => ({ ...prev, width: String(nextWidth), height: String(nextHeight) }));
+    setSignArtworkSize({ width: nextWidth, height: nextHeight });
+    setSignEstimate(null);
+  };
+
   const placeCoroArtworkOnSheet = (item: ImageZoneItem) => {
+    if (coroPlacementTarget.itemId && coroPlacementTarget.side === 'back') {
+      setCoroSheetArtworkItems((prev) => prev.map((entry) => entry.id === coroPlacementTarget.itemId ? {
+        ...entry,
+        backDataUrl: item.dataUrl,
+        backName: item.name,
+        backWidth: item.width,
+        backHeight: item.height,
+        backCopiedFromFront: false
+      } : entry));
+      setActiveCoroOptionPanel('images');
+      setImageLibraryStatus(`${item.name} placed on the back side.`);
+      setCoroPlacementTarget({ itemId: null, side: 'front' });
+      return;
+    }
+
+    if (coroPlacementTarget.itemId && coroPlacementTarget.side === 'front') {
+      setCoroSheetArtworkItems((prev) => prev.map((entry) => entry.id === coroPlacementTarget.itemId ? {
+        ...entry,
+        ...item,
+        backDataUrl: entry.backDataUrl,
+        backName: entry.backName,
+        backWidth: entry.backWidth,
+        backHeight: entry.backHeight,
+        backCopiedFromFront: entry.backCopiedFromFront
+      } : entry));
+      setSignArtworkPreviewUrl(item.dataUrl);
+      setActiveCoroOptionPanel('images');
+      setImageLibraryStatus(`${item.name} replaced the front side.`);
+      setCoroPlacementTarget({ itemId: null, side: 'front' });
+      return;
+    }
+
+    const shouldAppend = isAddingCoroSign || coroSheetArtworkItems.length > 0;
     setCoroSheetArtworkItems((prev) => {
       const withoutDuplicate = prev.filter((entry) => entry.id !== item.id);
-      return coroMultipleImages ? [...withoutDuplicate, item] : [item];
+      return shouldAppend ? [...withoutDuplicate, item] : [item];
     });
+    setCoroArtworkQuantities((prev) => shouldAppend ? { ...prev, [item.id]: prev[item.id] || 1 } : { [item.id]: designerQuantity });
+    if (isAddingCoroSign) {
+      setIsAddingCoroSign(false);
+    }
     setSignArtworkPreviewUrl(item.dataUrl);
     setSignArtworkSize({ width: signWidth, height: signHeight });
     setActiveCoroOptionPanel('images');
     setImageLibraryStatus(`${item.name} placed on the CORO sheet.`);
+    setCoroPlacementTarget({ itemId: null, side: 'front' });
+  };
+
+  const updateCoroArtworkQuantity = (itemId: string, value: string) => {
+    const quantity = Math.max(1, Math.floor(Number(value) || 1));
+    setCoroArtworkQuantities((prev) => ({ ...prev, [itemId]: quantity }));
+    if (coroSheetArtworkItems[0]?.id === itemId) updateSignOption('quantity', String(quantity));
+  };
+
+  const removeCoroArtworkItem = (itemId: string) => {
+    setCoroSheetArtworkItems((prev) => {
+      const next = prev.filter((item) => item.id !== itemId);
+      setSignArtworkPreviewUrl(next[0]?.dataUrl || null);
+      if (next.length === 0) setSignArtworkSize(null);
+      return next;
+    });
+    setCoroArtworkQuantities((prev) => {
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+  };
+
+  const startAddCoroSign = () => {
+    setIsAddingCoroSign(true);
+    setCoroPlacementTarget({ itemId: null, side: 'front' });
+    setShowImageZone(true);
+    setImageLibraryStatus('Choose another artwork file to add to this sheet.');
+  };
+
+  const chooseCoroSideImage = (itemId: string, side: CoroArtworkSide) => {
+    setCoroPlacementTarget({ itemId, side });
+    setShowImageZone(true);
+    setActiveCoroOptionPanel('images');
+    setImageLibraryStatus(`Choose artwork for the ${side} side.`);
+  };
+
+  const copyCoroFrontToBack = (itemId: string) => {
+    setCoroSheetArtworkItems((prev) => prev.map((item) => item.id === itemId ? {
+      ...item,
+      backDataUrl: item.dataUrl,
+      backName: item.name,
+      backWidth: item.width,
+      backHeight: item.height,
+      backCopiedFromFront: true
+    } : item));
+    setImageLibraryStatus('Front artwork copied to the back side.');
   };
 
   const useImageZoneItem = async (item: ImageZoneItem) => {
@@ -1741,7 +1915,8 @@ export default function Home() {
       setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
       return;
     }
-    if (isCoroBuilder || productMode === 'signage') placeCoroArtworkOnSheet(item);
+    if (isCoroBuilder) placeCoroArtworkOnSheet(item);
+    if (isBannerBuilder) applyBannerSizeFromPixels(item.width, item.height);
     if (!fabricCanvasRef.current) {
       setProductMode('signage');
       setSignProductId('yard-sign');
@@ -1752,6 +1927,7 @@ export default function Home() {
       return;
     }
     await placeImageOnDesign(item.dataUrl, item.name);
+    if (isBannerBuilder) applyBannerSizeFromPixels(item.width, item.height);
     setShowImageZone(false);
   };
 
@@ -1768,8 +1944,8 @@ export default function Home() {
       let imagePixels = { width: 0, height: 0 };
       if (isImageFile) {
         try {
+          imagePixels = await getImageNaturalSize(dataUrl);
           const analysis = await analyzeArtworkImage(file, dataUrl);
-          imagePixels = { width: analysis.width, height: analysis.height };
           setArtworkAnalysis(analysis);
           setArtworkAnalysisStatus(`Analyzed ${analysis.fileName}`);
           setImageComplexity(analysis.complexity);
@@ -1797,7 +1973,9 @@ export default function Home() {
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(item.id);
       if (isImageFile && isCoroBuilder) placeCoroArtworkOnSheet(item);
+      if (isImageFile && isBannerBuilder) applyBannerSizeFromPixels(imagePixels.width, imagePixels.height);
       if (canPlaceOnCanvas) await placeImageOnDesign(dataUrl, file.name);
+      if (isImageFile && isBannerBuilder) applyBannerSizeFromPixels(imagePixels.width, imagePixels.height);
       event.target.value = '';
 
       if (isSupabaseStorageConfigured) {
@@ -2005,6 +2183,12 @@ export default function Home() {
     setSignEstimate(null);
     setSignEstimateStatus('');
     const payload = toSignPricingPayload(selectedSignProduct, signValues);
+    if (selectedSignProduct.id === 'yard-sign') {
+      payload.quantity = effectiveCoroQuantity;
+      payload.width = signWidth;
+      payload.height = signHeight;
+      payload.material = signValues.material || '4mm';
+    }
     const missingNumber = selectedSignProduct.id === 'yard-sign'
       ? !payload.quantity || Number.isNaN(payload.quantity)
       : selectedSignProduct.fields.some((field) => field.type === 'number' && (!payload[field.name] || Number.isNaN(payload[field.name])));
@@ -2038,6 +2222,59 @@ export default function Home() {
     }
   };
 
+  useEffect(() => {
+    if (!isProductionBuilder) return;
+    const pricingQuantity = isCoroBuilder ? effectiveCoroQuantity : designerQuantity;
+    if (pricingQuantity <= 0) return;
+
+    let canceled = false;
+    const payload = toSignPricingPayload(selectedSignProduct, signValues);
+    payload.quantity = pricingQuantity;
+    if (selectedSignProduct.id === 'yard-sign') {
+      payload.width = signWidth;
+      payload.height = signHeight;
+      payload.material = signValues.material || '4mm';
+    }
+
+    setIsSignEstimateLoading(true);
+    setSignEstimateStatus(`Loading ${selectedSignProduct.name} pricing...`);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/pricing/${selectedSignProduct.apiSlug}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json() as SignEstimate;
+
+        if (canceled) return;
+
+        if (!response.ok || data.ok === false) {
+          const fieldMessages = data.error?.fields ? Object.entries(data.error.fields).map(([field, message]) => `${field}: ${message}`).join(' ') : '';
+          setSignEstimate(null);
+          setSignEstimateStatus([data.error?.message || `The ${selectedSignProduct.name} estimate could not be returned.`, fieldMessages].filter(Boolean).join(' '));
+          return;
+        }
+
+        setSignEstimate(data);
+        setSignEstimateStatus(`${selectedSignProduct.name} pricing loaded from Hue pricing API.`);
+      } catch {
+        if (!canceled) {
+          setSignEstimate(null);
+          setSignEstimateStatus(`The ${selectedSignProduct.name} estimate could not be loaded right now.`);
+        }
+      } finally {
+        if (!canceled) setIsSignEstimateLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(timer);
+    };
+  }, [designerQuantity, effectiveCoroQuantity, isCoroBuilder, isProductionBuilder, selectedSignProduct, signHeight, signValues, signWidth]);
+
   const visibleStoreProducts = STORE_PRODUCTS.filter((product) => product.category === storeCategory);
   const filteredCoroSizeOptions = CORO_SIZE_OPTIONS.filter((option) => {
     const query = coroSizeSearch.trim().toLowerCase();
@@ -2047,10 +2284,18 @@ export default function Home() {
 
   const openStoreCategory = (categoryId: StoreCategoryId) => {
     setStoreCategory(categoryId);
+    if (categoryId === 'banners') {
+      setProductMode('signage');
+      setSignProductId('banner');
+      setStoreView('builder');
+      setActiveCoroOptionPanel('images');
+      return;
+    }
     if (categoryId === 'coro') {
       setProductMode('signage');
       setSignProductId('yard-sign');
       setStoreView('builder');
+      setActiveCoroOptionPanel('images');
       return;
     }
     if (categoryId === 'apparel') {
@@ -2066,6 +2311,7 @@ export default function Home() {
     setProductMode(product.mode);
     if (product.signProductId) setSignProductId(product.signProductId);
     setStoreView('builder');
+    if (product.signProductId === 'banner' || product.signProductId === 'yard-sign') setActiveCoroOptionPanel('images');
   };
 
   const updateSignOption = (name: string, value: string | boolean) => {
@@ -2098,6 +2344,22 @@ export default function Home() {
       updateSignOption('grommets', !Boolean(signValues.grommets));
       return;
     }
+    if (label === 'Welding') {
+      updateSignOption('welding', !Boolean(signValues.welding));
+      return;
+    }
+    if (label === 'Rope') {
+      updateSignOption('rope', !Boolean(signValues.rope));
+      return;
+    }
+    if (label === 'Pole Pockets') {
+      updateSignOption('polePocket', !Boolean(signValues.polePocket));
+      return;
+    }
+    if (label === 'Wind Slits') {
+      updateSignOption('windSlits', !Boolean(signValues.windSlits));
+      return;
+    }
     if (label === 'Step Stakes') {
       openCoroOptionPanel('stakes');
       return;
@@ -2108,36 +2370,36 @@ export default function Home() {
   };
 
   return (
-    <main className={`min-h-screen ${isCoroBuilder ? 'bg-[#202224] pb-0 text-slate-100' : 'bg-[#f4f8fc] pb-24 text-slate-950'}`}>
+    <main className={`${isProductionBuilder ? 'flex h-screen flex-col overflow-hidden bg-[#050b12] pb-0 text-slate-100' : 'min-h-screen bg-[#f4f8fc] pb-24 text-slate-950'}`}>
       <input id="artwork-upload-input" ref={artworkUploadInputRef} onChange={onUploadImage} className="fixed -left-96 top-0 h-px w-px opacity-0" type="file" accept="image/*,application/pdf,.pdf" />
-      <header className={`${isCoroBuilder ? 'border-b border-slate-200 bg-white px-4 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.18)] md:px-5' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
-        <div className={`mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isCoroBuilder ? 'justify-between' : ''}`}>
+      <header className={`${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
+        <div className={`mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className={`${isCoroBuilder ? 'h-12 w-12 rounded-md border-2' : 'h-14 w-14 rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
+            <div className={`${isProductionBuilder ? 'h-12 w-12 rounded-md border border-white/35 shadow-[0_0_28px_rgba(22,120,184,0.20)]' : 'h-14 w-14 rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
               <img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" />
             </div>
-            <div className={`min-w-0 ${isCoroBuilder ? 'hidden xl:block' : ''}`}>
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-[#1f73be]">Hue Graphics / Est. 2008</p>
-              <h1 className="truncate text-xl font-black tracking-tight text-[#05090b] md:text-2xl">Print-Ready Store</h1>
+            <div className={`min-w-0 ${isProductionBuilder ? 'hidden xl:block' : ''}`}>
+              <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
+              <h1 className={`truncate text-xl font-black tracking-tight md:text-2xl ${isProductionBuilder ? 'text-white' : 'text-[#05090b]'}`}>Print-Ready Store</h1>
             </div>
           </div>
-          {isCoroBuilder ? <nav className="order-3 flex w-full items-center justify-center gap-1 overflow-x-auto px-1 pt-2 text-[10px] font-semibold uppercase text-slate-500 md:order-none md:w-auto md:flex-1 md:pt-0">
+          {isProductionBuilder ? <nav className="order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
             {STORE_CATEGORIES.map((category) => {
               const active = storeCategory === category.id;
               const icon = category.id === 'banners' ? 'BN' : category.id === 'rigid' ? 'RG' : category.id === 'decals' ? 'AD' : category.id === 'magnets' ? 'MG' : category.id === 'apparel' ? 'AP' : category.id === 'misc' ? 'MS' : 'CO';
-              return <button key={category.id} type="button" onClick={() => openStoreCategory(category.id)} className={`group flex min-w-20 flex-col items-center gap-1 border-b-2 px-2 py-1 transition ${active ? 'border-[#1678b8] text-[#1678b8]' : 'border-transparent hover:border-slate-300 hover:text-slate-800'}`}>
-                <span className={`flex h-8 w-8 items-center justify-center border text-[10px] font-black ${active ? 'border-[#1678b8] bg-[#eaf5fb]' : 'border-slate-300 bg-white group-hover:bg-slate-50'}`}>{icon}</span>
+              return <button key={category.id} type="button" onClick={() => openStoreCategory(category.id)} className={`group flex min-w-14 flex-col items-center gap-1 border-b-2 px-1 pb-2 pt-0 transition ${active ? 'border-[#0ea5e9] text-[#50c7ff]' : 'border-transparent text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}>
+                <span className={`flex h-8 w-8 items-center justify-center rounded border text-[10px] font-black shadow-sm ${active ? 'border-[#0ea5e9] bg-[#071827] text-[#65d5ff] shadow-[0_0_16px_rgba(14,165,233,0.40)]' : 'border-white/20 bg-[#0c1118] text-slate-300 group-hover:border-slate-500'}`}>{icon}</span>
                 <span>{category.label}</span>
               </button>;
             })}
           </nav> : null}
           <div className="flex items-center gap-2 text-sm">
-            <button onClick={() => setStoreView('store')} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Products</button>
-            {storeView === 'builder' && !isCoroBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
-            {storeView === 'builder' && !isCoroBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
-            {isCoroBuilder ? <button type="button" onClick={() => setShowImageZone(true)} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-bold text-slate-700 hover:bg-slate-50">Image Zone</button> : null}
-            <button className="rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]">Cart</button>
-            {isCoroBuilder ? <button type="button" className="rounded-md border border-slate-300 bg-white px-3 py-2 font-bold text-slate-600 hover:bg-slate-50">Menu</button> : null}
+            <button onClick={() => setStoreView('store')} className={`${isProductionBuilder ? 'rounded border border-white/15 bg-[#0b1018] px-4 py-2 font-semibold text-slate-400 hover:border-slate-500 hover:text-slate-100' : 'rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50'}`}>Products</button>
+            {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
+            {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
+            {isProductionBuilder ? <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
+            <button className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart</button>
+            {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
         </div>
       </header>
@@ -2145,16 +2407,16 @@ export default function Home() {
       {storeView === 'store' ? (
         <section className="mx-auto max-w-[1800px] px-4 py-5 md:px-6">
           <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-            <aside className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)]">
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-[#1f73be]">Online ordering</p>
-              <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Shop ready artwork products</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">Upload finished artwork, check fit, get online pricing, and checkout separately from the quote system.</p>
+            <aside className={`rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
+              <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Online ordering</p>
+              <h2 className={`mt-2 text-2xl font-black tracking-tight ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>Shop ready artwork products</h2>
+              <p className={`mt-2 text-sm leading-6 ${isProductionBuilder ? 'text-slate-300' : 'text-slate-600'}`}>Upload finished artwork, check fit, get online pricing, and checkout separately from the quote system.</p>
               <div className="mt-5 space-y-2">
-                {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => setStoreCategory(category.id)} className={`w-full rounded-md border p-3 text-left transition ${storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className="mt-1 block text-xs text-slate-500">{category.description}</span></button>)}
+                {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => setStoreCategory(category.id)} className={`w-full rounded-md border p-3 text-left transition ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
               </div>
             </aside>
 
-            <section className="overflow-hidden rounded-lg border border-white/80 bg-white/88 shadow-[0_18px_48px_rgba(7,17,31,0.08)]">
+            <section className={`overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/72 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/88'}`}>
               <div className="relative min-h-64 overflow-hidden bg-[#dff0ff]">
                 <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(22,120,184,0.92),rgba(255,255,255,0.58)),linear-gradient(90deg,rgba(5,9,11,0.16)_1px,transparent_1px)] bg-[size:auto,34px_34px]" />
                 <div className="relative grid min-h-64 items-center gap-6 px-6 py-8 md:grid-cols-[minmax(0,1fr)_360px] lg:px-10">
@@ -2177,10 +2439,10 @@ export default function Home() {
               <div className="p-4 md:p-6">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
-                    <h3 className="text-xl font-black text-slate-950">{STORE_CATEGORIES.find((category) => category.id === storeCategory)?.label || 'Products'}</h3>
-                    <p className="mt-1 text-sm text-slate-500">Choose a product to open the print-ready builder.</p>
+                    <h3 className={`text-xl font-black ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>{STORE_CATEGORIES.find((category) => category.id === storeCategory)?.label || 'Products'}</h3>
+                    <p className={`mt-1 text-sm ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>Choose a product to open the print-ready builder.</p>
                   </div>
-                  <button type="button" onClick={() => setStoreCategory('apparel')} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Apparel Designer</button>
+                  <button type="button" onClick={() => setStoreCategory('apparel')} className={`rounded-md border px-3 py-2 text-sm font-medium ${isProductionBuilder ? 'border-white/20 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : 'border-slate-300 bg-white hover:bg-slate-50'}`}>Apparel Designer</button>
                 </div>
                 <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {visibleStoreProducts.map((product) => <button key={product.id} type="button" onClick={() => openStoreProduct(product)} className={`group min-h-52 rounded-lg border p-5 text-left shadow-sm transition ${product.disabled ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-75' : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-[#1678b8] hover:shadow-[0_18px_42px_rgba(7,17,31,0.12)]'}`}>
@@ -2200,8 +2462,8 @@ export default function Home() {
         </section>
       ) : (
       <>
-      <div className={`mx-auto grid gap-4 xl:items-start ${isCoroBuilder ? 'max-w-none px-0 py-0 xl:grid-cols-1' : 'max-w-[1800px] px-4 py-4 md:px-6 xl:grid-cols-[300px_minmax(520px,1fr)_360px]'}`}>
-        <aside id="product" className={`${isCoroBuilder ? 'hidden' : 'rounded-lg border border-white/80 bg-white/92 shadow-[0_18px_48px_rgba(7,17,31,0.08)] backdrop-blur xl:sticky xl:top-4 xl:max-h-[calc(100vh-8rem)] xl:overflow-hidden'}`}>
+      <div className={`mx-auto grid gap-4 xl:items-start ${isProductionBuilder ? 'min-h-0 w-full flex-1 max-w-none px-0 py-0 xl:grid-cols-1' : 'max-w-[1800px] px-4 py-4 md:px-6 xl:grid-cols-[300px_minmax(520px,1fr)_360px]'}`}>
+        <aside id="product" className={`${isProductionBuilder ? 'hidden' : 'rounded-lg border border-white/80 bg-white/92 shadow-[0_18px_48px_rgba(7,17,31,0.08)] backdrop-blur xl:sticky xl:top-4 xl:max-h-[calc(100vh-8rem)] xl:overflow-hidden'}`}>
           <div className="border-b border-slate-200 p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -2214,7 +2476,7 @@ export default function Home() {
           </div>
 
           <div className="space-y-3 p-4">
-            <div className={`grid grid-cols-2 gap-2 ${isCoroBuilder ? 'hidden' : ''}`}>
+            <div className={`grid grid-cols-2 gap-2 ${isProductionBuilder ? 'hidden' : ''}`}>
               {(['apparel', 'signage'] as ProductMode[]).map((mode) => <button key={mode} type="button" onClick={() => setProductMode(mode)} className={`rounded-md border px-3 py-2 text-xs font-bold ${productMode === mode ? 'border-[#1678b8] bg-[#1678b8] text-white shadow-sm' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>{mode === 'apparel' ? 'Apparel' : 'Signs'}</button>)}
             </div>
             {productMode === 'apparel' ? <>
@@ -2288,8 +2550,8 @@ export default function Home() {
           </div></> : <div className="border-t border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">Sign mode uses the same artwork tools with sign-specific sizing and pricing.</div>}
         </aside>
 
-        <section className={`${isCoroBuilder ? 'border-0 bg-transparent shadow-none' : 'rounded-lg border border-white/80 bg-white/88 shadow-[0_18px_48px_rgba(7,17,31,0.08)] backdrop-blur xl:sticky xl:top-4 xl:min-h-[calc(100vh-8rem)]'}`}>
-          <div className={`flex flex-wrap items-center gap-2 border-b border-slate-200 p-3 ${isCoroBuilder ? 'hidden' : ''}`}>
+        <section className={`${isProductionBuilder ? 'h-full border-0 bg-transparent shadow-none' : 'rounded-lg border border-white/80 bg-white/88 shadow-[0_18px_48px_rgba(7,17,31,0.08)] backdrop-blur xl:sticky xl:top-4 xl:min-h-[calc(100vh-8rem)]'}`}>
+          <div className={`flex flex-wrap items-center gap-2 border-b border-slate-200 p-3 ${isProductionBuilder ? 'hidden' : ''}`}>
             <button onClick={() => restoreHistory(-1)} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Undo</button>
             <button onClick={() => restoreHistory(1)} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Redo</button>
             <div className="ml-auto flex items-center rounded-md border border-slate-300 bg-white">
@@ -2299,8 +2561,8 @@ export default function Home() {
             </div>
           </div>
 
-          <div className={`grid gap-3 ${isCoroBuilder ? 'p-0' : 'p-3'} ${productMode === 'signage' ? '' : 'lg:grid-cols-[minmax(0,1fr)_210px]'}`}>
-            <div className={`relative flex items-center justify-center ${isCoroBuilder ? 'rounded-none p-0' : 'rounded-lg p-4'} ${productMode === 'signage' ? `${isCoroBuilder ? 'min-h-[calc(100vh-8.5rem)] pb-28 bg-[radial-gradient(circle_at_52%_35%,rgba(22,120,184,0.32),rgba(22,120,184,0.13)_22%,transparent_48%),linear-gradient(rgba(255,255,255,0.075)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.075)_1px,transparent_1px)] bg-[size:auto,24px_24px,24px_24px]' : 'min-h-[660px] bg-[linear-gradient(#e5e7eb_1px,transparent_1px),linear-gradient(90deg,#e5e7eb_1px,transparent_1px)] bg-[size:24px_24px]'} overflow-hidden bg-[#202224]` : 'min-h-[520px] overflow-hidden bg-[#e2e7ed]'}`}>
+          <div className={`grid gap-3 ${isProductionBuilder ? 'h-full p-0' : 'p-3'} ${productMode === 'signage' ? '' : 'lg:grid-cols-[minmax(0,1fr)_210px]'}`}>
+            <div className={`relative flex items-center justify-center ${isProductionBuilder ? 'coro-hex-bg h-full rounded-none p-0' : 'rounded-lg p-4'} ${productMode === 'signage' ? `${isProductionBuilder ? '' : 'min-h-[660px] bg-[linear-gradient(#e5e7eb_1px,transparent_1px),linear-gradient(90deg,#e5e7eb_1px,transparent_1px)] bg-[size:24px_24px]'} overflow-hidden bg-[#202224]` : 'min-h-[520px] overflow-hidden bg-[#e2e7ed]'}`}>
               {productMode === 'apparel' ? <div className="absolute bottom-4 left-4 top-4 z-20 hidden w-20 overflow-hidden rounded-lg border border-white/35 bg-[#07111f]/88 text-white shadow-[0_18px_45px_rgba(7,17,31,0.22)] backdrop-blur md:block">
                 <div className="flex h-full flex-col items-stretch py-3 text-center text-[11px]">
                   <button type="button" className="px-2 py-3 text-[#1678b8] hover:bg-white/10" title="AI Design"><span className="block text-xl">AI</span><span>Design</span></button>
@@ -2311,39 +2573,53 @@ export default function Home() {
                   <a href="#quote" className="px-2 py-3 hover:bg-white/10" title="Names and quantities"><span className="block text-xl">00</span><span>Names</span></a>
                 </div>
               </div> : null}
-              {productMode === 'signage' ? <div className={`absolute z-10 grid items-start gap-3 text-slate-700 ${isCoroBuilder ? 'left-[9vw] right-[9vw] top-10 lg:grid-cols-[minmax(220px,1fr)_minmax(360px,0.9fr)_180px]' : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
+              {productMode === 'signage' ? <div className={`absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[8vw] top-10 lg:grid-cols-[minmax(220px,1fr)_minmax(420px,0.85fr)_180px]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
                 <div className="flex items-start gap-3">
-                  <div className={`${isCoroBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
+                  <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
-                    <p className={`${isCoroBuilder ? 'hidden' : 'text-[10px] font-black uppercase tracking-[0.22em] text-[#1678b8]'}`}>Hue Production Builder</p>
-                    <p className={`${isCoroBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.name}</p>
-                    <p className={`mt-1 text-xs ${isCoroBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.name} {String(signValues.material || '4mm')} Single Sided , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
+                    <p className={`${isProductionBuilder ? 'hidden' : 'text-[10px] font-black uppercase tracking-[0.22em] text-[#1678b8]'}`}>Hue Production Builder</p>
+                    <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.name}</p>
+                    <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.name} {selectedSignProduct.id === 'banner' ? selectedBannerMaterial.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
                   </div>
                 </div>
-                <div className={`text-xs ${isCoroBuilder ? 'rounded-md border border-white/10 bg-[#1b1d1f]/55 px-4 py-2 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.16)] backdrop-blur' : ''}`}>
-                  <p className={`font-semibold uppercase ${isCoroBuilder ? 'text-center text-slate-200 underline decoration-slate-500' : 'text-slate-500'}`}>Pricing and Shipping</p>
-                  <div className={`mt-1 grid gap-x-5 gap-y-1 ${isCoroBuilder ? 'grid-cols-[70px_1fr_1fr] text-center' : 'grid-cols-2'}`}>
+                <div className={`text-xs ${isProductionBuilder ? 'rounded border border-white/16 bg-[#070b10]/78 px-7 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.18)] backdrop-blur' : ''}`}>
+                  <p className={`font-semibold uppercase ${isProductionBuilder ? 'text-center text-[#62d4ff]' : 'text-slate-500'}`}>Pricing and Shipping</p>
+                  <div className={`mt-1 grid gap-x-5 gap-y-1 ${isProductionBuilder ? 'grid-cols-[90px_1fr_1fr] text-center' : 'grid-cols-2'}`}>
                     {isCoroBuilder ? <>
                       <span />
-                      <span className="font-bold text-slate-200">Single-Sided</span>
-                      <span className="font-bold text-slate-200">Double-Sided</span>
-                      <span>4mm</span>
-                      <span>$44.00 per sheet</span>
-                      <span>$55.00 per sheet</span>
-                      <span>10mm</span>
-                      <span>$70.00 per sheet</span>
-                      <span>$90.00 per sheet</span>
+                      <span className="font-bold text-slate-100">Sheet Price</span>
+                      <span className="font-bold text-slate-100">Single Sign</span>
+                      <span>{String(signValues.material || '4mm')}</span>
+                      <span>{coroPricingIsLoaded && signPricePerSheet !== null ? `${formatSignPrice(signPricePerSheet, coroPricingCurrency)} / sheet` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{coroPricingIsLoaded && coroPricePerSign !== null ? `${formatSignPrice(coroPricePerSign, coroPricingCurrency)} / each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>Full sheet</span>
+                      <span>{coroPricePerFullSheet !== null ? `${formatSignPrice(coroPricePerFullSheet, coroPricingCurrency)} if filled` : '-'}</span>
+                      <span>{coroSheetLayout.signsPerSheet} signs max</span>
+                    </> : isBannerBuilder ? <>
+                      <span />
+                      <span className="font-bold text-slate-100">Banner Price</span>
+                      <span className="font-bold text-slate-100">Single Banner</span>
+                      <span>{selectedBannerMaterial.label}</span>
+                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{bannerSquareFeet.toFixed(1)} sqft</span>
+                      <span>{signValues.grommets ? 'Grommets included' : 'No grommets'}</span>
+                      <span>{signValues.welding ? 'Welded edges' : 'No welding'}</span>
                     </> : <>
                       <span>Single-Sided</span><span>Double-Sided</span>
                       <span>{selectedSignProduct.id === 'banner' ? '13oz / 15oz / 18oz' : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
                     </>}
                   </div>
+                  {isProductionBuilder ? <p className="mt-3 text-center text-[11px] text-slate-400">Pricing uses your current Hue quote API with shipping/handling already built into the item price.</p> : null}
                 </div>
-                <div className={`text-right ${isCoroBuilder ? 'pt-5' : ''}`}>
-                  <p className={`${isCoroBuilder ? 'text-3xl' : 'text-2xl'} font-semibold text-green-500`}>{selectedSignProduct.id === 'yard-sign' && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, signEstimate?.currency) : signEstimate ? formatSignPrice(signEstimate.price?.retail, signEstimate.currency) : '$0.00'}</p>
-                  <p className={`text-xs ${isCoroBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.id === 'yard-sign' ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : `${signWidth * signHeight > 0 ? `${Math.round((signWidth * signHeight) / 144)} sqft` : '0 sqft'} / Production estimate`}</p>
+                <div className={`text-right ${isProductionBuilder ? 'pt-7' : ''}`}>
+                  <p className={`${isProductionBuilder ? 'text-3xl' : 'text-2xl'} font-semibold text-green-500`}>{selectedSignProduct.id === 'yard-sign' && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signEstimate ? formatSignPrice(signEstimate.price?.retail, signEstimate.currency) : '$0.00'}</p>
+                  <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{selectedSignProduct.id === 'yard-sign' ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / Production estimate`}</p>
+                  {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
+                  {isBannerBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
+                  {hasCoroSheetWarning ? <button type="button" onClick={() => setShowCoroSheetWarning(true)} className="mt-3 rounded bg-red-600 px-3 py-1.5 text-xs font-black text-white shadow-[0_10px_24px_rgba(220,38,38,0.24)] hover:bg-red-500">{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0)} warning{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0) === 1 ? '' : 's'}</button> : null}
                 </div>
-                <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className={`${isCoroBuilder ? 'hidden' : 'min-h-14'} bg-green-500 px-4 text-sm font-bold uppercase text-white hover:bg-green-600 disabled:cursor-wait disabled:opacity-70`}>{isSignEstimateLoading ? 'Pricing...' : signEstimate ? 'Update Price' : 'Price It'}</button>
+                <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className={`${isProductionBuilder ? 'hidden' : 'min-h-14'} bg-green-500 px-4 text-sm font-bold uppercase text-white hover:bg-green-600 disabled:cursor-wait disabled:opacity-70`}>{isSignEstimateLoading ? 'Pricing...' : signEstimate ? 'Update Price' : 'Price It'}</button>
               </div> : null}
               {productMode === 'apparel' && layers.length === 0 ? <div className="absolute bottom-20 left-24 top-6 z-10 hidden w-[min(540px,42vw)] rounded-lg bg-white p-8 shadow-sm lg:block">
                 <h2 className="text-center text-2xl font-black text-[#05090b]">What&apos;s next for you?</h2>
@@ -2365,44 +2641,54 @@ export default function Home() {
                 <button type="button" onClick={() => setPrintLocation('sleeve')} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">Sleeve<br />Design</button>
                 <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">+<br />Zoom</button>
               </div> : null}
-              <div id="design-canvas" className={`relative w-full ${productMode === 'signage' ? `${isCoroBuilder ? 'mt-20' : 'mt-24'} aspect-[4/3] max-w-[1040px]` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
+              <div id="design-canvas" className={`${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-32 top-56' : 'bottom-20 top-44'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
                 {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
-                  {selectedSignProduct.id === 'yard-sign' ? <div className="relative flex w-[23%] min-w-56 max-w-[360px] items-center justify-center" style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height }}>
-                    <div className="absolute -top-8 left-0 right-0 text-center text-sm font-bold text-slate-100">{coroSheetLayout.signsPerSheet} signs / Top of Sheet</div>
-                    <div className="absolute -bottom-8 left-0 right-0 text-center text-xs text-slate-300">Sheet #1 / 48&quot; x 96&quot; / Front Side</div>
-                    <div className="absolute -left-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute left-[-10px] top-1/2 -translate-y-1/2 -rotate-90 bg-[#202224]/80 px-2">Left</span></div>
-                    <div className="absolute -right-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 bg-[#202224]/80 px-2">Right</span></div>
-                    <button type="button" onClick={() => { if (!hasCoroSheetArtwork) setShowImageZone(true); }} className="absolute inset-0 border border-slate-500 bg-white text-left shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
-                      <div className="grid h-full w-full gap-[2px] p-1" style={{ gridTemplateColumns: `repeat(${coroSheetLayout.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${coroSheetLayout.rows}, minmax(0, 1fr))` }}>
-                        {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => {
-                          const sheetItem = coroSheetArtworkItems.length ? coroSheetArtworkItems[coroMultipleImages ? index % coroSheetArtworkItems.length : 0] : null;
-                          const cellImage = sheetItem?.dataUrl || signArtworkPreviewUrl;
-                          return <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#64748b] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{cellImage ? <img src={cellImage} alt="" className="h-full w-full object-cover" /> : <span className="px-1 text-center text-[8px] font-bold uppercase leading-tight text-slate-400">add art</span>}</div>;
-                        })}
+                  {selectedSignProduct.id === 'yard-sign' ? <div className={`relative flex w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[360px]' : ''}`}>
+                    {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.max(0, current - 1))} disabled={activeCoroSheetIndex === 0} className={`${activeCoroOptionPanel === 'images' ? 'left-[370px]' : 'left-8'} absolute z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35`}>‹</button> : null}
+                    <div className={`flex items-center gap-14 overflow-x-auto px-8 pb-24 pt-10 ${activeCoroOptionPanel === 'images' ? 'max-w-[calc(100vw-540px)]' : 'max-w-[74vw]'}`}>
+                    {coroSheetPreviews.map((sheetPreview, sheetIndex) => {
+                      const selectedSheet = sheetIndex === activeCoroSheetIndex;
+                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`relative flex shrink-0 cursor-pointer items-center justify-center transition ${selectedSheet ? 'z-10 scale-105' : 'opacity-80 hover:opacity-100'} ${activeCoroOptionPanel === 'images' ? 'w-[min(13vw,20vh)] min-w-32 max-w-[210px]' : coroSheetPreviews.length > 1 ? 'w-[min(13vw,21vh)] min-w-36 max-w-[220px]' : 'w-[min(16vw,23vh)] min-w-36 max-w-[250px]'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height }}>
+                      <div className="absolute -top-8 left-1/2 flex w-max -translate-x-1/2 flex-col items-center gap-1 text-center">
+                        <span className="text-sm font-black text-slate-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]">{sheetPreview.quantity} sign{sheetPreview.quantity === 1 ? '' : 's'} / Top of Sheet</span>
                       </div>
-                    </button>
-                    {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
-                  </div> : <div className="relative flex w-[82%] items-center justify-center" style={{ aspectRatio: signPreviewAspect }}>
-                    <div className="absolute -top-7 left-0 right-0 border-t border-slate-300 text-center text-xs text-slate-500"><span className="bg-white/80 px-2">{signWidth || 0}&quot;</span></div>
-                    <div className="absolute -bottom-7 left-0 right-0 text-center text-xs text-slate-500">Top of Image</div>
-                    <div className="absolute -left-9 bottom-0 top-0 border-l border-slate-300 text-xs text-slate-500"><span className="absolute left-[-12px] top-1/2 -translate-y-1/2 -rotate-90 bg-white/80 px-2">{signHeight || 0}&quot;</span></div>
-                    <div className="absolute -right-9 bottom-0 top-0 border-r border-slate-300 text-xs text-slate-500"><span className="absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 bg-white/80 px-2">{signHeight || 0}&quot;</span></div>
-                    <div className="absolute inset-0 rounded-sm border border-slate-300 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
-                      <div className="absolute inset-3 border border-dashed border-slate-300" />
-                      <div className="absolute inset-1">{[0, 1, 2, 3].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-400 bg-slate-100 ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : 'bottom-0 right-0'}`} />)}</div>
+                      <div className="absolute -bottom-8 left-0 right-0 text-center text-xs text-slate-300">Sheet #{sheetPreview.sheetNumber} / 48&quot; x 96&quot; / {coroSheetViewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
+                      {hasCoroDoubleSided ? <div className="absolute -bottom-16 left-1/2 flex -translate-x-1/2 overflow-hidden rounded border border-white/20 bg-black/45 text-[10px] font-black uppercase text-slate-200 backdrop-blur">
+                        <button type="button" onClick={() => setCoroSheetViewSide('front')} className={`px-3 py-1 ${coroSheetViewSide === 'front' ? 'bg-[#0ea5e9] text-white' : 'hover:bg-white/10'}`}>Front</button>
+                        <button type="button" onClick={() => setCoroSheetViewSide('back')} className={`border-l border-white/15 px-3 py-1 ${coroSheetViewSide === 'back' ? 'bg-[#0ea5e9] text-white' : 'hover:bg-white/10'}`}>Back</button>
+                      </div> : null}
+                      <div className="absolute -left-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute left-[-10px] top-1/2 -translate-y-1/2 -rotate-90 bg-[#050b12]/80 px-2">Left</span></div>
+                      <div className="absolute -right-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 bg-[#050b12]/80 px-2">Right</span></div>
+                      <button type="button" onClick={() => { setActiveCoroSheetIndex(sheetIndex); if (!hasCoroSheetArtwork) setShowImageZone(true); }} className={`absolute inset-0 border bg-white text-left shadow-[0_24px_55px_rgba(0,0,0,0.50),0_0_42px_rgba(96,165,250,0.22)] ${selectedSheet ? 'border-[#0ea5e9] ring-4 ring-[#0ea5e9]/35' : 'border-white'}`}>
+                        <div className="grid h-full w-full gap-[2px] p-1" style={{ gridTemplateColumns: `repeat(${coroSheetLayout.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${coroSheetLayout.rows}, minmax(0, 1fr))` }}>
+                          {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => {
+                            const shouldFillCell = index < sheetPreview.quantity;
+                            const sheetItem = shouldFillCell ? sheetPreview.cells[index] : null;
+                            const cellImage = coroSheetViewSide === 'back' ? sheetItem?.backDataUrl || null : sheetItem?.dataUrl || signArtworkPreviewUrl;
+                            return <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className="h-full w-full object-fill" /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">{shouldFillCell ? 'add art' : ''}</span>}</div>;
+                          })}
+                        </div>
+                      </button>
+                    </div>;
+                    })}
                     </div>
-                    {layers.length === 0 ? <span className="pointer-events-none relative z-10 rounded bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload artwork or add text</span> : null}
+                    {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.min(coroSheetPreviews.length - 1, current + 1))} disabled={activeCoroSheetIndex >= coroSheetPreviews.length - 1} className="absolute right-8 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35">›</button> : null}
+                    {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="absolute z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
+                  </div> : <div className={`relative flex items-center justify-center ${isBannerBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''} ${isBannerBuilder ? 'w-[min(54vw,980px)] max-h-[54vh]' : 'w-[82%]'}`} style={{ aspectRatio: signPreviewAspect }}>
+                    <div className={`absolute -top-8 left-0 right-0 border-t text-center text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={isBannerBuilder ? 'bg-[#07111f]/90 px-2' : 'bg-white/80 px-2'}>{signWidth || 0}&quot;</span></div>
+                    <div className={`absolute -bottom-9 left-0 right-0 text-center text-xs ${isBannerBuilder ? 'text-slate-300' : 'text-slate-500'}`}>Front Side</div>
+                    <div className={`absolute -left-9 bottom-0 top-0 border-l text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute left-[-12px] top-1/2 -translate-y-1/2 -rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
+                    <div className={`absolute -right-9 bottom-0 top-0 border-r text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
+                    <div className="absolute inset-0 rounded-sm border border-slate-300 bg-white shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]">
+                      <div className="absolute inset-3 border border-dashed border-slate-300" />
+                      <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div>
+                    </div>
+                    {layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
                   </div>}
                 </div> : hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
                 {productMode === 'apparel' && showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-dashed border-[#1678b8]/60 bg-[#1678b8]/10 shadow-[0_0_0_9999px_rgba(255,255,255,0.04)]" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><span className="absolute -top-7 left-0 rounded bg-[#1678b8] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">{PRINT_AREA_CONFIG[printLocation].label}</span></div> : null}
-                <div className={`designer-fabric-layer absolute ${productMode === 'signage' ? selectedSignProduct.id === 'yard-sign' ? 'pointer-events-none left-1/2 top-1/2 w-[23%] min-w-56 max-w-[360px] -translate-x-1/2 -translate-y-1/2 opacity-0' : 'left-1/2 top-1/2 w-[82%] -translate-x-1/2 -translate-y-1/2' : 'inset-0'}`} style={productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
+                <div className={`designer-fabric-layer absolute ${productMode === 'signage' ? selectedSignProduct.id === 'yard-sign' ? 'pointer-events-none left-1/2 top-1/2 w-[23%] min-w-56 max-w-[360px] -translate-x-1/2 -translate-y-1/2 opacity-0' : `left-1/2 top-1/2 ${isBannerBuilder && activeCoroOptionPanel === 'images' ? 'ml-[180px]' : ''} ${isBannerBuilder ? 'w-[min(54vw,980px)] max-h-[54vh]' : 'w-[82%]'} -translate-x-1/2 -translate-y-1/2` : 'inset-0'}`} style={productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
-              {productMode === 'signage' && selectedSignProduct.id === 'yard-sign' && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-24 left-12 z-10 text-sm">
-                <label className="flex items-center gap-2 text-xs text-slate-200">
-                  <input type="checkbox" checked={coroMultipleImages} onChange={(event) => setCoroMultipleImages(event.target.checked)} />
-                  <span className="font-medium">Multiple Images?</span>
-                </label>
-              </div> : null}
               {productMode === 'signage' && selectedSignProduct.id === 'yard-sign' && !isCoroBuilder ? <div className="absolute left-4 top-24 z-10 w-60 rounded border border-slate-200 bg-white/95 p-3 text-sm shadow-[0_12px_30px_rgba(7,17,31,0.10)]">
                 <div className="flex items-center gap-2">
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-yellow-300 text-xs font-black text-slate-950">1</span>
@@ -2413,44 +2699,123 @@ export default function Home() {
                   <button type="button" onClick={() => setShowImageZone(true)} className="rounded-md bg-[#1678b8] px-3 py-2 text-xs font-bold text-white hover:bg-[#0f5f94]">{signArtworkPreviewUrl ? 'Replace' : 'Upload'}</button>
                   <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">Clear</button>
                 </div>
-                <label className="mt-3 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                  <input type="checkbox" checked={coroMultipleImages} onChange={(event) => setCoroMultipleImages(event.target.checked)} />
-                  <span>Multiple images on one sheet</span>
-                </label>
-                {coroMultipleImages ? <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">Multiple-image placement is next. For now, one image fills every cut position.</p> : null}
               </div> : null}
-              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-24 left-4 top-24 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-md border border-slate-500 bg-[#f8fafc] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
-                <div className={`rounded p-3 ${signArtworkStatusOk ? 'bg-green-100' : 'bg-red-100'}`}>
+              {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-md border border-slate-500 bg-[#f8fafc] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+                <div className={`rounded p-3 ${signArtworkStatusOk && !bannerAspectMismatch ? 'bg-green-100' : 'bg-red-100'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk ? 'text-green-700' : 'text-red-600'}`}>Item #1 / {signArtworkStatusLabel}</h3>
-                      <p className="mt-2 text-xs text-slate-700">width: <span className="font-bold">{signWidth || 0}</span>&quot; <span className="ml-3">height: <span className="font-bold">{signHeight || 0}</span>&quot;</span> <span className="ml-3">qty: <span className="font-bold">{designerQuantity}</span></span></p>
+                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-green-700' : 'text-red-600'}`}>Item #1 / {signArtworkPreviewUrl ? bannerAspectMismatch ? 'Check Fit' : 'OK' : 'Select Image'}</h3>
+                      <div className="mt-2 grid grid-cols-[1fr_1fr_64px] gap-2 text-xs text-slate-700">
+                        <label>width<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
+                        <label>height<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
+                        <label>qty<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
+                      </div>
                     </div>
                     <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
                   </div>
-                  {signArtworkPreviewUrl ? <button type="button" onClick={() => setShowImageZone(true)} className="mt-3 flex min-h-28 w-full items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
+                  <button type="button" onClick={() => setShowImageZone(true)} className="mt-3 flex min-h-28 w-full items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
                     {signArtworkPreviewUrl ? <span className="w-full">
                       <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" />
-                      <span className="mt-2 block text-[10px] font-bold text-slate-600">Placed {coroSheetLayout.signsPerSheet} per sheet</span>
-                      {signArtworkSize ? <span className="mt-1 block text-[10px] text-slate-500">Actual: {signArtworkSize.width}&quot; x {signArtworkSize.height}&quot;</span> : null}
-                    </span> : <span>Click here to upload or select front image</span>}
-                  </button> : <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="mt-3 flex min-h-28 w-full cursor-pointer items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">Click here to upload or select front image</label>}
+                      <span className="mt-2 block font-bold text-slate-600">Front image</span>
+                      <span className="mt-1 block text-slate-500">{bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width.toFixed(2)}" x ${bannerArtworkActualSize.height.toFixed(2)}"` : 'Artwork uploaded'}</span>
+                    </span> : <span>Click here to upload or select image</span>}
+                  </button>
+                  {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve proportion or Stretch to force {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
-                    <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2">Color Matching</button>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <button type="button" onClick={() => fitSelectedArtwork('cover')} disabled={!activeObject} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
+                    <button type="button" onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
                     <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
                     <button type="button" onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40">Stretch</button>
                     <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                   </div>
                 </div>
-                <button type="button" className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add Sign</button>
-                <label className="mt-4 flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={coroMultipleImages} onChange={(event) => setCoroMultipleImages(event.target.checked)} />
-                  <span className="font-medium">Multiple Images?</span>
-                </label>
+                <button type="button" onClick={() => setShowImageZone(true)} className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add / Replace Banner Art</button>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose finished banner artwork.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
+                  <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
+                </div>
+                {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-600 hover:bg-slate-50">Close Panel</button>
+              </aside> : null}
+              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-md border border-slate-500 bg-[#f8fafc] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+                {coroSheetArtworkItems.length > 0 ? <div className="space-y-3">
+                  {coroSheetArtworkItems.map((item, index) => {
+                    const itemQuantity = Math.max(1, Number(coroArtworkQuantities[item.id] || 1));
+                    const frontActualSize = getFittedArtworkSize(item.width, item.height, signWidth, signHeight);
+                    const backActualSize = getFittedArtworkSize(item.backWidth, item.backHeight, signWidth, signHeight);
+                    const frontMismatch = aspectRatioMismatch(item.width, item.height, signWidth, signHeight);
+                    const backMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, signWidth, signHeight) : false;
+                    const itemNeedsCheck = frontMismatch || backMismatch || (hasCoroDoubleSided && !item.backDataUrl);
+                    const itemFirstCellIndex = coroSheetCells.findIndex((cell) => cell.id === item.id);
+                    const itemSheetIndex = itemFirstCellIndex >= 0 ? Math.floor(itemFirstCellIndex / coroSheetLayout.signsPerSheet) : 0;
+                    return <div key={item.id} onClick={() => setActiveCoroSheetIndex(itemSheetIndex)} className={`cursor-pointer rounded p-3 ${itemNeedsCheck ? 'bg-red-100' : 'bg-green-100'} ${itemSheetIndex === activeCoroSheetIndex ? 'ring-2 ring-[#1678b8]' : ''}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className={`text-base font-black uppercase leading-tight ${itemNeedsCheck ? 'text-red-600' : 'text-green-700'}`}>Item #{index + 1} / {itemNeedsCheck ? hasCoroDoubleSided && !item.backDataUrl ? 'Select Back Image' : 'Check Fit' : 'OK'}</h3>
+                          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-700">
+                            <span>width: <span className="font-bold">{signWidth || 0}</span>&quot;</span>
+                            <span>height: <span className="font-bold">{signHeight || 0}</span>&quot;</span>
+                            <label className="flex items-center gap-1">qty:
+                              <input type="number" min={1} step={1} value={String(itemQuantity)} onChange={(event) => updateCoroArtworkQuantity(item.id, event.target.value)} className="h-6 w-14 rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" />
+                            </label>
+                          </p>
+                        </div>
+                        <button type="button" onClick={() => removeCoroArtworkItem(item.id)} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50">delete</button>
+                      </div>
+                      <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        <button type="button" onClick={() => chooseCoroSideImage(item.id, 'front')} className={`flex min-h-28 w-full items-center justify-center border bg-white p-2 text-center text-[10px] uppercase hover:border-[#1678b8] hover:text-[#1678b8] ${frontMismatch ? 'border-red-500 text-red-500' : 'border-slate-300 text-slate-400'}`}>
+                          <span className="w-full">
+                            <img src={item.dataUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" />
+                            <span className="mt-2 block font-bold text-slate-600">Front image</span>
+                            <span className="mt-1 block text-slate-500">Actual: {frontActualSize.width.toFixed(0)}&quot; x {frontActualSize.height.toFixed(0)}&quot;</span>
+                          </span>
+                        </button>
+                        {hasCoroDoubleSided ? <button type="button" onClick={() => chooseCoroSideImage(item.id, 'back')} className={`flex min-h-28 w-full items-center justify-center border bg-white p-2 text-center text-[10px] uppercase hover:border-[#1678b8] hover:text-[#1678b8] ${!item.backDataUrl || backMismatch ? 'border-red-500 text-red-500' : 'border-slate-300 text-slate-400'}`}>
+                          <span className="w-full">
+                            {item.backDataUrl ? <img src={item.backDataUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" /> : <span className="mx-auto flex h-20 max-w-full items-center justify-center bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] px-2 text-slate-400">Click here to select back image</span>}
+                            <span className="mt-2 block font-bold text-slate-600">Back image</span>
+                            <span className="mt-1 block text-slate-500">{item.backDataUrl ? `Actual: ${backActualSize.width.toFixed(0)}" x ${backActualSize.height.toFixed(0)}"` : 'No image selected'}</span>
+                          </span>
+                        </button> : null}
+                      </div>
+                      {hasCoroDoubleSided ? <button type="button" onClick={() => copyCoroFrontToBack(item.id)} className="mt-2 w-full rounded border border-[#1678b8]/30 bg-white px-2 py-2 text-xs font-bold text-[#1678b8] hover:bg-[#eaf5fb]">Copy Front Image To Back</button> : null}
+                      <p className="mt-2 text-center text-[10px] font-bold text-slate-600">Starts on sheet #{itemSheetIndex + 1}</p>
+                      {frontMismatch || backMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Aspect ratio mismatch. Image will stretch to fit {signWidth}&quot; x {signHeight}&quot;.</p> : null}
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
+                        <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2">Color Matching</button>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <button type="button" onClick={() => fitSelectedArtwork('cover')} disabled={!activeObject} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
+                        <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
+                        <button type="button" onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40">Stretch</button>
+                        <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
+                      </div>
+                    </div>;
+                  })}
+                </div> : <div className="rounded bg-red-100 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-black uppercase leading-tight text-red-600">Item #1 / Select Image</h3>
+                      <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-700">
+                        <span>width: <span className="font-bold">{signWidth || 0}</span>&quot;</span>
+                        <span>height: <span className="font-bold">{signHeight || 0}</span>&quot;</span>
+                        <label className="flex items-center gap-1">qty:
+                          <input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="h-6 w-14 rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" />
+                        </label>
+                      </p>
+                    </div>
+                    <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
+                  </div>
+                  <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    <label htmlFor="artwork-upload-input" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); setImageLibraryStatus('Choose an image or PDF artwork file for the front side.'); }} className="flex min-h-28 w-full cursor-pointer items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">Click here to upload or select front image</label>
+                    {hasCoroDoubleSided ? <button type="button" onClick={() => setImageLibraryStatus('Add the front image first, then choose or copy the back image.')} className="flex min-h-28 w-full items-center justify-center border border-red-300 bg-white p-2 text-center text-[10px] uppercase text-red-400 hover:border-[#1678b8] hover:text-[#1678b8]">Click here to select back image</button> : null}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
+                    <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2">Color Matching</button>
+                  </div>
+                </div>}
+                <button type="button" onClick={startAddCoroSign} className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add Sign</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
                   <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
@@ -2478,15 +2843,21 @@ export default function Home() {
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-600 hover:bg-slate-50">Close Panel</button>
               </aside> : null}
-              {isCoroBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-24 left-1/2 z-20 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+              {isProductionBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-20 left-1/2 z-20 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-[#1678b8]">{activeCoroOptionPanel === 'sides' ? 'Print Sides' : activeCoroOptionPanel}</p>
-                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : 'Options'}</h3>
+                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? isBannerBuilder ? 'Banner Size' : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : 'Options'}</h3>
                   </div>
                   <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
                 </div>
-                {activeCoroOptionPanel === 'size' ? <div className="mt-4 grid max-h-72 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                {activeCoroOptionPanel === 'size' && isBannerBuilder ? <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Width inches<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
+                  <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Height inches<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
+                  <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Quantity<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
+                  <p className="rounded bg-[#eaf5fb] px-3 py-2 text-xs leading-5 text-[#0f5f94] sm:col-span-3">Uploading artwork will auto-fill a starting banner size from the file pixels. You can override it here, then use Fit or Stretch in the Images panel.</p>
+                </div> : null}
+                {activeCoroOptionPanel === 'size' && isCoroBuilder ? <div className="mt-4 grid max-h-72 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
                   {CORO_SIZE_OPTIONS.map((option) => {
                     const parsed = parseCoroSize(option.value);
                     const layout = getCoroSheetLayout(parsed.width, parsed.height, designerQuantity);
@@ -2495,7 +2866,7 @@ export default function Home() {
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'material' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {[{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }].map((option) => {
+                  {(isBannerBuilder ? BANNER_MATERIAL_OPTIONS.map((option) => ({ ...option, price: option.note })) : [{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }]).map((option) => {
                     const selected = String(signValues.material || '4mm') === option.value;
                     return <button key={option.value} type="button" onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.price}</span></button>;
                   })}
@@ -2503,7 +2874,7 @@ export default function Home() {
                 {activeCoroOptionPanel === 'sides' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: 'single', label: 'Single-Sided', note: 'Front side only' }, { value: 'double', label: 'Double-Sided', note: 'Front and back print' }].map((option) => {
                     const selected = String(signValues.sides || 'single') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('sides', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('sides', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'stakes' ? <div className="mt-4 grid gap-3 sm:grid-cols-4">
@@ -2513,7 +2884,15 @@ export default function Home() {
                   })}
                 </div> : null}
               </div> : null}
-              {productMode === 'signage' ? <div className={`absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${isCoroBuilder ? 'inset-x-0 bottom-8 justify-center' : 'inset-x-3 bottom-4 justify-center'}`}>
+              {isProductionBuilder ? <div className="absolute bottom-6 left-8 z-20 flex items-center gap-3 text-xs text-slate-200">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/45 font-black shadow-[0_0_22px_rgba(14,165,233,0.18)]">N</div>
+                <div className="flex h-8 items-center overflow-hidden rounded border border-white/15 bg-black/38 backdrop-blur">
+                  <button type="button" onClick={() => { const next = Math.max(0.5, zoom - 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="h-full px-3 text-slate-300 hover:bg-white/10">-</button>
+                  <span className="border-x border-white/10 px-4 text-[#bce7ff]">{Math.round(zoom * 100)}%</span>
+                  <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="h-full px-3 text-slate-300 hover:bg-white/10">+</button>
+                </div>
+              </div> : null}
+              {productMode === 'signage' ? <div className={`absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${isProductionBuilder ? 'bottom-6 left-60 right-8 max-h-11 justify-end overflow-hidden' : 'inset-x-3 bottom-4 justify-center'}`}>
                 {[
                   ['Images', String(coroSheetArtworkItems.length || layers.length || 1), signArtworkStatusOk],
                   ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
@@ -2526,16 +2905,16 @@ export default function Home() {
                         ['Gloss', signValues.gloss ? 'Yes' : 'No', Boolean(signValues.gloss)]
                       ] as [string, string, boolean][]
                     : [
-                        ['Welding', 'Yes', true],
+                        ['Welding', signValues.welding ? 'Yes' : 'No', Boolean(signValues.welding)],
                         ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
-                        ['Grommets', 'Yes', true],
+                        ['Grommets', signValues.grommets ? 'Yes' : 'No', Boolean(signValues.grommets)],
                         ['Pole Pockets', signValues.polePocket ? 'Yes' : 'None', Boolean(signValues.polePocket)],
                         ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
                       ] as [string, string, boolean][])
                 ].map(([label, value, active]) => {
                   const isImagesTile = String(label) === 'Images';
                   const needsArtworkFit = isImagesTile && (layers.length > 0 || coroSheetArtworkItems.length > 0) && !signArtworkStatusOk;
-                  return <button type="button" onClick={() => handleCoroTileClick(String(label))} key={String(label)} className={`flex min-h-12 min-w-36 items-center justify-between gap-4 border-2 bg-white px-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_14px_34px_rgba(0,0,0,0.22)] ${needsArtworkFit ? 'border-red-500 text-red-600' : active ? 'border-[#1678b8] text-[#1678b8]' : 'border-slate-300 text-slate-400'}`}><span>{label}</span><span className={`${needsArtworkFit ? 'bg-red-500' : active ? 'bg-[#1678b8]' : 'bg-slate-300'} px-3 py-2 text-white`}>{value}</span></button>;
+                  return <button type="button" onClick={() => handleCoroTileClick(String(label))} key={String(label)} className={`flex min-h-9 min-w-24 items-center justify-between gap-2 rounded border bg-black/42 px-2.5 text-left shadow-sm backdrop-blur transition hover:-translate-y-0.5 ${isProductionBuilder ? needsArtworkFit ? 'border-red-500 text-red-300' : active ? 'border-[#0ea5e9]/70 text-[#93ddff]' : 'border-white/15 text-slate-400' : needsArtworkFit ? 'border-red-500 text-red-600' : active ? 'border-[#1678b8] text-[#1678b8]' : 'border-slate-300 text-slate-400'}`}><span>{label}</span><span className={`${needsArtworkFit ? 'bg-red-500' : active ? 'bg-[#0ea5e9]' : 'bg-slate-600'} px-2 py-1 text-white`}>{value}</span></button>;
                 })}
               </div> : null}
             </div>
@@ -2547,7 +2926,7 @@ export default function Home() {
           </div>
         </section>
 
-        <aside id="design" className={`${isCoroBuilder ? 'hidden' : 'space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-8rem)] xl:overflow-y-auto'}`}>
+        <aside id="design" className={`${isProductionBuilder ? 'hidden' : 'space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-8rem)] xl:overflow-y-auto'}`}>
           <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Create</h2>
             <div className="mt-3 space-y-2"><input value={textValue} onChange={(event) => setTextValue(event.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#1f73be] focus:ring-2 focus:ring-[#1f73be]/15" placeholder="Type your text" /><button onClick={addText} className="w-full rounded-md bg-[#1f73be] px-3 py-2 text-sm font-bold text-white hover:bg-[#2a86d8]">Add Text</button><button type="button" onClick={triggerArtworkUpload} className="block w-full cursor-pointer rounded-md border border-dashed border-slate-400 bg-slate-50 p-3 text-center text-sm font-medium hover:bg-slate-100">Upload Artwork</button></div>
@@ -2626,7 +3005,7 @@ export default function Home() {
         </aside>
       </div>
 
-      <section id="quote" className={`mx-auto max-w-[1800px] px-4 pb-6 md:px-6 ${isCoroBuilder ? 'hidden' : ''}`}>
+      <section id="quote" className={`mx-auto max-w-[1800px] px-4 pb-6 md:px-6 ${isProductionBuilder ? 'hidden' : ''}`}>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section id="qty" className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Quantity & Estimate</h2><p className="mt-1 text-sm text-slate-600">Total quantity: <span className="font-semibold text-slate-950">{designerQuantity}</span></p></div>{productMode === 'apparel' ? <span className={`rounded-full px-3 py-1 text-xs font-semibold ${recommendationBadgeClass}`}>{printRecommendation.badge}</span> : <span className="rounded-full bg-[#eef6ff] px-3 py-1 text-xs font-semibold text-[#125b99]">Signs & Banners</span>}</div>
@@ -2670,6 +3049,24 @@ export default function Home() {
           <section className="rounded-lg border border-white/80 bg-white/92 p-4 shadow-[0_12px_34px_rgba(7,17,31,0.06)]"><h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Quote Request</h2><p className="mt-2 text-sm">Status: <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${quoteReadinessClass}`}>{quoteReadiness}</span></p>{missingQuoteRequirements.length > 0 ? <p className="mt-2 text-xs text-amber-700">Missing: {missingQuoteRequirements.join(', ')}</p> : <p className="mt-2 text-xs text-emerald-700">Ready to request.</p>}<div className="mt-3 space-y-2 text-sm"><input value={customerInfo.name} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, name: event.target.value }))} placeholder="Name" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input value={customerInfo.organization} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, organization: event.target.value }))} placeholder="Business / Organization" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input value={customerInfo.email} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, email: event.target.value }))} placeholder="Email" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input value={customerInfo.phone} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, phone: event.target.value }))} placeholder="Phone" className="w-full rounded-md border border-slate-300 px-3 py-2" /><input type="date" value={customerInfo.neededByDate} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, neededByDate: event.target.value }))} className="w-full rounded-md border border-slate-300 px-3 py-2" /><textarea value={customerInfo.notes} onChange={(event) => setCustomerInfo((prev) => ({ ...prev, notes: event.target.value }))} placeholder="Notes" rows={3} className="w-full rounded-md border border-slate-300 px-3 py-2" /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><button onClick={captureDesignPreview} className="col-span-2 rounded-md border border-[#1f73be] bg-white px-3 py-2 font-medium text-[#125b99] hover:bg-[#eef6ff]">Capture Preview</button><button onClick={copyQuoteSummary} className="rounded-md bg-[#1f73be] px-3 py-2 font-medium text-white hover:bg-[#2a86d8]">Copy Summary</button><button onClick={openEmailRequest} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Email</button><button onClick={exportQuotePackage} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Export</button><button onClick={() => importQuotePackageInputRef.current?.click()} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Import</button><input ref={importQuotePackageInputRef} type="file" accept="application/json,.json" className="hidden" onChange={importQuotePackage} /></div>{draftStatus || quotePackageStatus ? <p className="mt-3 text-xs text-slate-600">{draftStatus || quotePackageStatus}</p> : null}</section>
         </div>
       </section>
+
+      {showCoroSheetWarning ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/75 p-4 backdrop-blur-md">
+        <section className="w-[min(680px,92vw)] overflow-hidden rounded-xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_30px_90px_rgba(0,0,0,0.68),0_0_54px_rgba(14,165,233,0.20)]">
+          <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-4 text-center">
+            <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Production Check</p>
+            <h3 className="mt-1 text-2xl font-black uppercase text-white">Sheet Space Warning</h3>
+          </div>
+          <div className="px-7 py-8 text-center">
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-yellow-300/70 bg-yellow-300/15 text-xl font-black text-yellow-200 shadow-[0_0_28px_rgba(250,204,21,0.25)]">!</span>
+            <p className="mt-5 text-sm text-slate-300">Please review the production checks for this sheet layout.</p>
+            <div className="mx-auto mt-5 max-w-xl space-y-3 rounded-lg border border-white/10 bg-white/[0.04] px-5 py-4 text-left text-sm leading-6 text-slate-100">
+              {hasCoroUnusedSheetSpace ? <p>There {coroUnusedSheetSpaces === 1 ? 'is' : 'are'} <span className="font-black text-yellow-200">{coroUnusedSheetSpaces}</span> unused sign space{coroUnusedSheetSpaces === 1 ? '' : 's'} available on the existing sheet{coroSheetLayout.sheetCount === 1 ? '' : 's'}. You may be able to add more signs without adding another sheet.</p> : null}
+              {hasCoroAspectMismatch ? <p><span className="font-black text-yellow-200">Aspect ratio mismatch:</span> one or more images will be stretched to fit the selected {signWidth}&quot; x {signHeight}&quot; sign size. Review the preview before ordering.</p> : null}
+            </div>
+            <button type="button" onClick={() => setShowCoroSheetWarning(false)} className="mt-7 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-6 py-3 text-xs font-black uppercase tracking-wide text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#103656]">Close</button>
+          </div>
+        </section>
+      </div> : null}
 
       {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
         <section className="flex h-[min(760px,86vh)] w-[min(1320px,94vw)] flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#f5f7fa] text-slate-950 shadow-[0_28px_80px_rgba(0,0,0,0.45)]">
@@ -2742,7 +3139,7 @@ export default function Home() {
         </section>
       </div> : null}
 
-      <div className={`fixed inset-x-0 bottom-0 z-40 border-t border-white/80 bg-white/90 shadow-[0_-14px_34px_rgba(7,17,31,0.08)] backdrop-blur ${isCoroBuilder ? 'hidden' : ''}`}>
+      <div className={`fixed inset-x-0 bottom-0 z-40 border-t border-white/80 bg-white/90 shadow-[0_-14px_34px_rgba(7,17,31,0.08)] backdrop-blur ${isProductionBuilder ? 'hidden' : ''}`}>
         <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 px-4 py-3 text-xs md:px-6 md:text-sm">
           <button type="button" onClick={() => setStoreView('store')} className="rounded-md border border-[#1678b8] bg-white px-4 py-3 font-bold text-[#1678b8] hover:bg-[#eaf5fb]">{isCoroBuilder ? 'Products' : '+ Add Products'}</button>
           {productMode === 'apparel' ? <img src={getProductCardImage(selectedPreview)} alt={selectedProductName} className="h-12 w-12 rounded-md border border-slate-200 bg-slate-100 object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-md border border-[#1678b8]/25 bg-[#eaf5fb] text-[10px] font-bold uppercase text-[#1678b8]">Sign</div>}
