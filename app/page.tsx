@@ -762,6 +762,7 @@ export default function Home() {
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
+  const [pendingBannerPlacement, setPendingBannerPlacement] = useState<{ dataUrl: string; name: string; width: number; height: number } | null>(null);
   const [coroSheetArtworkItems, setCoroSheetArtworkItems] = useState<ImageZoneItem[]>([]);
   const [coroArtworkQuantities, setCoroArtworkQuantities] = useState<CoroArtworkQuantityMap>({});
   const [showImageZone, setShowImageZone] = useState(false);
@@ -1821,12 +1822,12 @@ export default function Home() {
   const placeImageOnDesign = async (dataUrl: string, sourceName = 'Uploaded artwork') => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
+    if (productMode === 'signage') setSignArtworkPreviewUrl(dataUrl);
     if (productMode === 'signage') {
       canvas.getObjects().forEach((obj) => canvas.remove(obj));
       canvas.discardActiveObject();
     }
     const img = await FabricImage.fromURL(dataUrl);
-    if (productMode === 'signage') setSignArtworkPreviewUrl(dataUrl);
     img.set({ ...FABRIC_CONTROL_STYLE });
     fitObjectToArtworkArea(img, 'contain');
     (img as FabricObject & { data?: { printLocation?: PrintLocation; originalWidth?: number; originalHeight?: number; fileName?: string } }).data = {
@@ -1976,7 +1977,15 @@ export default function Home() {
     }
     const imageItem = await hydrateImageZoneItemSize(item);
     if (isCoroBuilder) placeCoroArtworkOnSheet(imageItem);
-    if (isBannerBuilder) applyBannerSizeFromPixels(imageItem.width, imageItem.height);
+    if (isBannerBuilder) {
+      setSignArtworkPreviewUrl(imageItem.dataUrl);
+      applyBannerSizeFromPixels(imageItem.width, imageItem.height);
+      setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height });
+      setImageLibraryStatus(`${imageItem.name} selected for the banner.`);
+      setShowImageZone(false);
+      setActiveCoroOptionPanel('images');
+      return;
+    }
     if (!fabricCanvasRef.current) {
       const targetProductId = selectedSignProduct.id;
       setProductMode('signage');
@@ -1992,10 +2001,6 @@ export default function Home() {
     } catch (error) {
       setImageLibraryStatus(`Could not place ${imageItem.name}: ${error instanceof Error ? error.message : 'image failed to load'}. Try uploading the original file again.`);
       return;
-    }
-    if (isBannerBuilder) {
-      applyBannerSizeFromPixels(imageItem.width, imageItem.height);
-      setImageLibraryStatus(`${imageItem.name} placed on the banner.`);
     }
     setShowImageZone(false);
   };
@@ -2042,9 +2047,14 @@ export default function Home() {
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(item.id);
       if (isImageFile && isCoroBuilder) placeCoroArtworkOnSheet(item);
-      if (isImageFile && isBannerBuilder) applyBannerSizeFromPixels(imagePixels.width, imagePixels.height);
-      if (canPlaceOnCanvas) await placeImageOnDesign(dataUrl, file.name);
-      if (isImageFile && isBannerBuilder) applyBannerSizeFromPixels(imagePixels.width, imagePixels.height);
+      if (isImageFile && isBannerBuilder) {
+        setSignArtworkPreviewUrl(dataUrl);
+        applyBannerSizeFromPixels(imagePixels.width, imagePixels.height);
+        setPendingBannerPlacement({ dataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height });
+        setImageLibraryStatus(`${file.name} selected for the banner.`);
+      } else if (canPlaceOnCanvas) {
+        await placeImageOnDesign(dataUrl, file.name);
+      }
       event.target.value = '';
 
       if (isSupabaseStorageConfigured) {
@@ -2080,6 +2090,29 @@ export default function Home() {
     };
     reader.readAsDataURL(file);
   };
+
+  useEffect(() => {
+    if (!pendingBannerPlacement || !isBannerBuilder || !fabricCanvasRef.current) return;
+    let canceled = false;
+    const placement = pendingBannerPlacement;
+    window.requestAnimationFrame(() => {
+      void (async () => {
+        try {
+          await placeImageOnDesign(placement.dataUrl, placement.name);
+          if (canceled) return;
+          setSignArtworkPreviewUrl(placement.dataUrl);
+          setSignArtworkSize(calculateContainedSignArtworkSize(placement.width || 1, placement.height || 1));
+          setImageLibraryStatus(`${placement.name} placed on the banner.`);
+          setPendingBannerPlacement(null);
+        } catch (error) {
+          if (canceled) return;
+          setImageLibraryStatus(`Could not place ${placement.name}: ${error instanceof Error ? error.message : 'image failed to load'}.`);
+          setPendingBannerPlacement(null);
+        }
+      })();
+    });
+    return () => { canceled = true; };
+  }, [isBannerBuilder, pendingBannerPlacement, signHeight, signWidth]);
 
   const alignSelected = (axis: 'horizontal' | 'vertical') => editSelected((obj) => {
     const center = obj.getCenterPoint();
@@ -2772,6 +2805,7 @@ export default function Home() {
                     <div className={`absolute -right-9 bottom-0 top-0 border-r text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
                     <div className="absolute inset-0 rounded-sm border border-slate-300 bg-white shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]">
                       <div className="absolute inset-3 border border-dashed border-slate-300" />
+                      {signArtworkPreviewUrl ? <img src={signArtworkPreviewUrl} alt="" className="absolute inset-0 h-full w-full object-fill" /> : null}
                       <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div>
                     </div>
                     {layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
