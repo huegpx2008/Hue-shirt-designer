@@ -23,12 +23,12 @@ type ProductMode = 'apparel' | 'signage';
 type SignProductId = 'banner' | 'yard-sign';
 type StoreView = 'store' | 'builder';
 type StoreCategoryId = 'banners' | 'coro' | 'rigid' | 'decals' | 'magnets' | 'apparel' | 'misc';
-type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | null;
+type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | 'webbing' | null;
 type SignFieldType = 'number' | 'select' | 'checkbox';
 type SignFieldOption = { label: string; value: string };
 type SignField = { name: string; label: string; type: SignFieldType; defaultValue: string | boolean; step?: string; options?: SignFieldOption[] };
 type SignProductConfig = { id: SignProductId; name: string; apiSlug: string; description: string; preview: 'banner' | 'yard-sign'; fields: SignField[] };
-type StoreProductCard = { id: string; category: StoreCategoryId; title: string; subtitle: string; description: string; mode: ProductMode; signProductId?: SignProductId; badge?: string; disabled?: boolean };
+type StoreProductCard = { id: string; category: StoreCategoryId; title: string; subtitle: string; description: string; mode: ProductMode; signProductId?: SignProductId; badge?: string; disabled?: boolean; initialSignValues?: Partial<Record<string, string | boolean>> };
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
@@ -222,7 +222,8 @@ const STORE_CATEGORIES: { id: StoreCategoryId; label: string; description: strin
   { id: 'misc', label: 'More', description: 'Additional print-ready products' }
 ];
 const STORE_PRODUCTS: StoreProductCard[] = [
-  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Indoor / outdoor banner', description: 'Upload finished banner art, check fit, and price online.', mode: 'signage', signProductId: 'banner', badge: 'Online order' },
+  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Indoor / outdoor banner', description: 'Upload finished banner art, check fit, and price online.', mode: 'signage', signProductId: 'banner', badge: 'Online order', initialSignValues: { material: '15-single', sides: 'single' } },
+  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: 'Air-flow perforated banner', description: 'Use the banner layout tool for finished mesh banner artwork.', mode: 'signage', signProductId: 'banner', badge: 'Mesh', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
   { id: 'coro-sheet', category: 'coro', title: 'CORO', subtitle: '48 x 96 sheet-based signs', description: 'Choose a cut size, upload finished art, and see sheet usage before ordering.', mode: 'signage', signProductId: 'yard-sign', badge: 'Sheet price' },
   { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: 'Printed rigid panels', description: 'Rigid sign ordering is coming into this store flow next.', mode: 'signage', disabled: true, badge: 'Soon' },
   { id: 'rigid-pvc', category: 'rigid', title: 'PVC / Foam Board', subtitle: 'Indoor displays and panels', description: 'A ready-art upload flow for rigid signage.', mode: 'signage', disabled: true, badge: 'Soon' },
@@ -235,10 +236,9 @@ const BANNER_PREVIEW_DPI = 150;
 const BANNER_MATERIAL_OPTIONS = [
   { value: '13-single', label: '13oz Vinyl', note: 'Single-sided everyday banner' },
   { value: '15-single', label: '15oz Vinyl', note: 'Heavier indoor/outdoor vinyl' },
-  { value: '18-single', label: '18oz Vinyl', note: 'Heavy-duty single-sided vinyl' },
-  { value: '18-double', label: '18oz Blockout Vinyl', note: 'Double-sided banner material' },
-  { value: 'mesh-single', label: 'Mesh Banner', note: 'Air-flow perforated banner' }
+  { value: '18-single', label: '18oz Vinyl', note: 'Required for double-sided banners' }
 ];
+const MESH_BANNER_MATERIAL = { value: 'mesh-single', label: 'Mesh Banner', note: 'Air-flow perforated banner' };
 const CORO_SIZE_OPTIONS = [
   { label: '6" x 6" (128 per sheet)', value: '6x6' },
   { label: '6" x 12" (64 per sheet)', value: '6x12' },
@@ -283,13 +283,24 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
         name: 'material',
         label: 'Material',
         type: 'select',
-        defaultValue: '13-single',
+        defaultValue: '15-single',
         options: BANNER_MATERIAL_OPTIONS
+      },
+      {
+        name: 'sides',
+        label: 'Print Sides',
+        type: 'select',
+        defaultValue: 'single',
+        options: [
+          { label: 'Single-Sided', value: 'single' },
+          { label: 'Double-Sided', value: 'double' }
+        ]
       },
       { name: 'grommets', label: 'Grommets', type: 'checkbox', defaultValue: true },
       { name: 'polePocket', label: 'Pole Pocket', type: 'checkbox', defaultValue: false },
       { name: 'welding', label: 'Welding', type: 'checkbox', defaultValue: true },
       { name: 'rope', label: 'Rope', type: 'checkbox', defaultValue: false },
+      { name: 'webbing', label: 'Webbing', type: 'checkbox', defaultValue: false },
       { name: 'windSlits', label: 'Wind Slits', type: 'checkbox', defaultValue: false },
       { name: 'rush', label: 'Rush', type: 'checkbox', defaultValue: false }
     ]
@@ -450,6 +461,30 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
       isDoubleSided,
       stakeType: stepStakes > 0 ? 'standard' : 'none',
       stepStakes
+    };
+  }
+
+  if (product.id === 'banner') {
+    const sides = String(values.sides || 'single');
+    const isDoubleSided = sides === 'double';
+    const material = String(values.material || '15-single');
+    return {
+      width: Number(values.width),
+      height: Number(values.height),
+      quantity: Number(values.quantity),
+      material: isDoubleSided ? '18-single' : material,
+      sides,
+      printSides: sides,
+      sideCount: isDoubleSided ? 2 : 1,
+      doubleSided: isDoubleSided,
+      isDoubleSided,
+      grommets: material === 'mesh-single' ? Boolean(values.grommets) : true,
+      welding: material === 'mesh-single' ? Boolean(values.welding) : true,
+      rope: Boolean(values.rope),
+      webbing: Boolean(values.webbing),
+      polePocket: Boolean(values.polePocket),
+      windSlits: Boolean(values.windSlits),
+      rush: Boolean(values.rush)
     };
   }
 
@@ -737,6 +772,7 @@ export default function Home() {
   const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>(null);
   const [isAddingCoroSign, setIsAddingCoroSign] = useState(false);
   const [showCoroSheetWarning, setShowCoroSheetWarning] = useState(false);
+  const [showBannerDoubleSidedWarning, setShowBannerDoubleSidedWarning] = useState(false);
   const [coroPlacementTarget, setCoroPlacementTarget] = useState<CoroPlacementTarget>({ itemId: null, side: 'front' });
   const [coroSheetViewSide, setCoroSheetViewSide] = useState<CoroArtworkSide>('front');
   const [activeCoroSheetIndex, setActiveCoroSheetIndex] = useState(0);
@@ -1037,7 +1073,15 @@ export default function Home() {
   const isProductionBuilder = isCoroBuilder || isBannerBuilder;
   const bannerArtworkActualSize = signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
   const bannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
-  const selectedBannerMaterial = BANNER_MATERIAL_OPTIONS.find((option) => option.value === String(signValues.material || '13-single')) || BANNER_MATERIAL_OPTIONS[0];
+  const isMeshBanner = isBannerBuilder && String(signValues.material || '') === 'mesh-single';
+  const bannerMaterialOptions = String(signValues.sides || 'single') === 'double'
+    ? BANNER_MATERIAL_OPTIONS.filter((option) => option.value === '18-single')
+    : isMeshBanner
+      ? [MESH_BANNER_MATERIAL]
+      : BANNER_MATERIAL_OPTIONS;
+  const selectedBannerMaterial = bannerMaterialOptions.find((option) => option.value === String(signValues.material || '15-single')) || bannerMaterialOptions[0];
+  const bannerDisplayName = isBannerBuilder && selectedBannerMaterial.value === 'mesh-single' ? 'Mesh Banner' : selectedSignProduct.name;
+  const bannerLocalOptionTotal = isBannerBuilder && Boolean(signValues.windSlits) ? 10 : 0;
   const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
   const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight)));
   const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
@@ -1046,8 +1090,10 @@ export default function Home() {
   const signArtworkStatusOk = hasCoroSheetArtwork || (layers.length > 0 && signArtworkMatchesSize);
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
-  const signRetailTotal = numericPrice(signEstimate?.price?.retail);
-  const signEachTotal = numericPrice(signEstimate?.price?.each);
+  const signRetailBase = numericPrice(signEstimate?.price?.retail);
+  const signEachBase = numericPrice(signEstimate?.price?.each);
+  const signRetailTotal = signRetailBase !== null ? signRetailBase + bannerLocalOptionTotal : null;
+  const signEachTotal = signEachBase !== null ? signEachBase + (bannerLocalOptionTotal / Math.max(1, designerQuantity)) : null;
   const signPricePerSheet = signRetailTotal !== null ? signRetailTotal / coroSheetLayout.sheetCount : null;
   const coroPricePerSign = signEachTotal ?? (signRetailTotal !== null ? signRetailTotal / Math.max(1, effectiveCoroQuantity) : null);
   const coroPricePerFullSheet = coroPricePerSign !== null ? coroPricePerSign * coroSheetLayout.signsPerSheet : null;
@@ -1918,9 +1964,10 @@ export default function Home() {
     if (isCoroBuilder) placeCoroArtworkOnSheet(item);
     if (isBannerBuilder) applyBannerSizeFromPixels(item.width, item.height);
     if (!fabricCanvasRef.current) {
+      const targetProductId = selectedSignProduct.id;
       setProductMode('signage');
-      setSignProductId('yard-sign');
-      setStoreCategory('coro');
+      setSignProductId(targetProductId);
+      setStoreCategory(targetProductId === 'banner' ? 'banners' : 'coro');
       setStoreView('builder');
       setShowImageZone(false);
       setActiveCoroOptionPanel('images');
@@ -1937,7 +1984,7 @@ export default function Home() {
     const canvas = fabricCanvasRef.current;
     const isImageFile = isPreviewableImageFile(file);
     const canPlaceOnCanvas = Boolean(isImageFile && canvas);
-    if (isImageFile && !canPlaceOnCanvas) setImageLibraryStatus('Adding file to the library. Open the CORO sheet to place it on the design.');
+    if (isImageFile && !canPlaceOnCanvas) setImageLibraryStatus(`Adding file to the library. Open the ${selectedSignProduct.name} builder to place it on the design.`);
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result as string;
@@ -2285,10 +2332,7 @@ export default function Home() {
   const openStoreCategory = (categoryId: StoreCategoryId) => {
     setStoreCategory(categoryId);
     if (categoryId === 'banners') {
-      setProductMode('signage');
-      setSignProductId('banner');
-      setStoreView('builder');
-      setActiveCoroOptionPanel('images');
+      setStoreView('store');
       return;
     }
     if (categoryId === 'coro') {
@@ -2309,7 +2353,12 @@ export default function Home() {
   const openStoreProduct = (product: StoreProductCard) => {
     if (product.disabled) return;
     setProductMode(product.mode);
-    if (product.signProductId) setSignProductId(product.signProductId);
+    if (product.signProductId) {
+      const nextProduct = SIGN_PRODUCT_CONFIGS.find((config) => config.id === product.signProductId);
+      setSignProductId(product.signProductId);
+      if (nextProduct) setSignValues({ ...getDefaultSignValues(nextProduct), ...(product.initialSignValues || {}) } as Record<string, string | boolean>);
+      setSignEstimate(null);
+    }
     setStoreView('builder');
     if (product.signProductId === 'banner' || product.signProductId === 'yard-sign') setActiveCoroOptionPanel('images');
   };
@@ -2317,6 +2366,22 @@ export default function Home() {
   const updateSignOption = (name: string, value: string | boolean) => {
     setSignValues((prev) => ({ ...prev, [name]: value }));
     setSignEstimate(null);
+  };
+
+  const updatePrintSides = (value: string) => {
+    if (isBannerBuilder) {
+      setSignValues((prev) => ({
+        ...prev,
+        sides: value,
+        material: value === 'double' ? '18-single' : prev.material
+      }));
+      setSignEstimate(null);
+      setActiveCoroOptionPanel('images');
+      if (value === 'double') setShowBannerDoubleSidedWarning(true);
+      return;
+    }
+    updateSignOption('sides', value);
+    setActiveCoroOptionPanel('images');
   };
 
   const openCoroOptionPanel = (panel: CoroOptionPanel) => {
@@ -2346,6 +2411,10 @@ export default function Home() {
     }
     if (label === 'Welding') {
       updateSignOption('welding', !Boolean(signValues.welding));
+      return;
+    }
+    if (label === 'Webbing') {
+      openCoroOptionPanel('webbing');
       return;
     }
     if (label === 'Rope') {
@@ -2508,7 +2577,7 @@ export default function Home() {
                 <div className="mt-3 grid gap-3">
                   <label className="text-xs font-medium text-slate-600">Quantity<input type="number" min={1} value={String(signValues.quantity ?? '')} onChange={(event) => { setSignValues((prev) => ({ ...prev, quantity: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
                   <label className="text-xs font-medium text-slate-600">Material<select value={String(signValues.material ?? '4mm')} onChange={(event) => { setSignValues((prev) => ({ ...prev, material: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="4mm">4mm CORO</option><option value="10mm">10mm CORO</option></select></label>
-                  <label className="text-xs font-medium text-slate-600">Print Sides<select value={String(signValues.sides ?? 'single')} onChange={(event) => { setSignValues((prev) => ({ ...prev, sides: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="single">Single-Sided</option><option value="double">Double-Sided</option></select></label>
+                  <label className="text-xs font-medium text-slate-600">Print Sides<select value={String(signValues.sides ?? 'single')} onChange={(event) => updatePrintSides(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="single">Single-Sided</option><option value="double">Double-Sided</option></select></label>
                 </div>
               </div>
               <button type="button" onClick={() => isCoroBuilder ? setShowImageZone(true) : triggerArtworkUpload()} className="w-full rounded-md bg-[#1678b8] px-3 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-[#0f5f94]">{signArtworkPreviewUrl ? 'Replace Artwork' : 'Upload Artwork'}</button>
@@ -2578,8 +2647,8 @@ export default function Home() {
                   <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
                     <p className={`${isProductionBuilder ? 'hidden' : 'text-[10px] font-black uppercase tracking-[0.22em] text-[#1678b8]'}`}>Hue Production Builder</p>
-                    <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.name}</p>
-                    <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.name} {selectedSignProduct.id === 'banner' ? selectedBannerMaterial.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
+                    <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{isBannerBuilder ? bannerDisplayName : selectedSignProduct.name}</p>
+                    <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {selectedSignProduct.id === 'banner' ? selectedBannerMaterial.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
                   </div>
                 </div>
                 <div className={`text-xs ${isProductionBuilder ? 'rounded border border-white/16 bg-[#070b10]/78 px-7 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.18)] backdrop-blur' : ''}`}>
@@ -2603,17 +2672,17 @@ export default function Home() {
                       <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{bannerSquareFeet.toFixed(1)} sqft</span>
-                      <span>{signValues.grommets ? 'Grommets included' : 'No grommets'}</span>
-                      <span>{signValues.welding ? 'Welded edges' : 'No welding'}</span>
+                      <span>Grommets included</span>
+                      <span>{signValues.windSlits ? '+ $10 wind slits' : 'Standard finishing'}</span>
                     </> : <>
                       <span>Single-Sided</span><span>Double-Sided</span>
                       <span>{selectedSignProduct.id === 'banner' ? '13oz / 15oz / 18oz' : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
                     </>}
                   </div>
-                  {isProductionBuilder ? <p className="mt-3 text-center text-[11px] text-slate-400">Pricing uses your current Hue quote API with shipping/handling already built into the item price.</p> : null}
+                  {isProductionBuilder ? <p className="mt-3 text-center text-[11px] text-slate-400">Pricing is powered by your current Hue API pricing rules.</p> : null}
                 </div>
                 <div className={`text-right ${isProductionBuilder ? 'pt-7' : ''}`}>
-                  <p className={`${isProductionBuilder ? 'text-3xl' : 'text-2xl'} font-semibold text-green-500`}>{selectedSignProduct.id === 'yard-sign' && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signEstimate ? formatSignPrice(signEstimate.price?.retail, signEstimate.currency) : '$0.00'}</p>
+                  <p className={`${isProductionBuilder ? 'text-3xl' : 'text-2xl'} font-semibold text-green-500`}>{selectedSignProduct.id === 'yard-sign' && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : '$0.00'}</p>
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{selectedSignProduct.id === 'yard-sign' ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / Production estimate`}</p>
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
                   {isBannerBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
@@ -2847,7 +2916,7 @@ export default function Home() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-[#1678b8]">{activeCoroOptionPanel === 'sides' ? 'Print Sides' : activeCoroOptionPanel}</p>
-                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? isBannerBuilder ? 'Banner Size' : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : 'Options'}</h3>
+                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? isBannerBuilder ? 'Banner Size' : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : activeCoroOptionPanel === 'webbing' ? 'Mesh Webbing' : 'Options'}</h3>
                   </div>
                   <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
                 </div>
@@ -2866,7 +2935,7 @@ export default function Home() {
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'material' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {(isBannerBuilder ? BANNER_MATERIAL_OPTIONS.map((option) => ({ ...option, price: option.note })) : [{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }]).map((option) => {
+                  {(isBannerBuilder ? bannerMaterialOptions.map((option) => ({ ...option, price: option.note })) : [{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }]).map((option) => {
                     const selected = String(signValues.material || '4mm') === option.value;
                     return <button key={option.value} type="button" onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.price}</span></button>;
                   })}
@@ -2874,7 +2943,7 @@ export default function Home() {
                 {activeCoroOptionPanel === 'sides' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: 'single', label: 'Single-Sided', note: 'Front side only' }, { value: 'double', label: 'Double-Sided', note: 'Front and back print' }].map((option) => {
                     const selected = String(signValues.sides || 'single') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('sides', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                    return <button key={option.value} type="button" onClick={() => updatePrintSides(option.value)} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.value === 'double' && isBannerBuilder ? '18oz material with front and back setup' : option.note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'stakes' ? <div className="mt-4 grid gap-3 sm:grid-cols-4">
@@ -2882,6 +2951,18 @@ export default function Home() {
                     const selected = String(signValues.stepStakes || '0') === count;
                     return <button key={count} type="button" onClick={() => { updateSignOption('stepStakes', count); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-center ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-lg font-black">{count}</span><span className="mt-1 block text-xs text-slate-500">stakes</span></button>;
                   })}
+                </div> : null}
+                {activeCoroOptionPanel === 'webbing' ? <div className="mt-4 grid gap-4 sm:grid-cols-[1.15fr_1fr]">
+                  <div className="rounded border border-[#b7d8ea] bg-[#eef8ff] px-4 py-4 text-sm leading-6 text-[#0f4262]">
+                    <p className="font-black text-[#0f5f94]">Webbing adds extra reinforcement to the top and bottom welds.</p>
+                    <p className="mt-2">We recommend webbing on mesh banners over 8ft. Pricing is sent through your Hue API rules with the rest of the mesh options.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[{ value: true, label: 'Yes' }, { value: false, label: 'No' }].map((option) => {
+                      const selected = Boolean(signValues.webbing) === option.value;
+                      return <button key={option.label} type="button" onClick={() => { updateSignOption('webbing', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-center text-sm font-black uppercase ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}>{option.label}</button>;
+                    })}
+                  </div>
                 </div> : null}
               </div> : null}
               {isProductionBuilder ? <div className="absolute bottom-6 left-8 z-20 flex items-center gap-3 text-xs text-slate-200">
@@ -2896,7 +2977,7 @@ export default function Home() {
                 {[
                   ['Images', String(coroSheetArtworkItems.length || layers.length || 1), signArtworkStatusOk],
                   ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
-                  ['Material', String(signValues.material || (selectedSignProduct.id === 'yard-sign' ? '4mm' : '15oz')), true],
+                  ['Material', isBannerBuilder ? selectedBannerMaterial.label : String(signValues.material || '4mm'), true],
                   ['Print Sides', String(signValues.sides || 'single'), true],
                   ...(selectedSignProduct.id === 'yard-sign'
                     ? [
@@ -2905,11 +2986,18 @@ export default function Home() {
                         ['Gloss', signValues.gloss ? 'Yes' : 'No', Boolean(signValues.gloss)]
                       ] as [string, string, boolean][]
                     : [
-                        ['Welding', signValues.welding ? 'Yes' : 'No', Boolean(signValues.welding)],
-                        ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
-                        ['Grommets', signValues.grommets ? 'Yes' : 'No', Boolean(signValues.grommets)],
-                        ['Pole Pockets', signValues.polePocket ? 'Yes' : 'None', Boolean(signValues.polePocket)],
-                        ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
+                        ...(isMeshBanner
+                          ? [
+                              ['Welding', signValues.welding ? 'Yes' : 'No', Boolean(signValues.welding)],
+                              ['Webbing', signValues.webbing ? 'Yes' : 'No', Boolean(signValues.webbing)],
+                              ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
+                              ['Grommets', signValues.grommets ? 'Yes' : 'No', Boolean(signValues.grommets)],
+                              ['Pole Pockets', signValues.polePocket ? 'Yes' : 'None', Boolean(signValues.polePocket)]
+                            ]
+                          : [
+                              ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
+                              ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
+                            ]) as [string, string, boolean][]
                       ] as [string, string, boolean][])
                 ].map(([label, value, active]) => {
                   const isImagesTile = String(label) === 'Images';
@@ -3064,6 +3152,20 @@ export default function Home() {
               {hasCoroAspectMismatch ? <p><span className="font-black text-yellow-200">Aspect ratio mismatch:</span> one or more images will be stretched to fit the selected {signWidth}&quot; x {signHeight}&quot; sign size. Review the preview before ordering.</p> : null}
             </div>
             <button type="button" onClick={() => setShowCoroSheetWarning(false)} className="mt-7 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-6 py-3 text-xs font-black uppercase tracking-wide text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#103656]">Close</button>
+          </div>
+        </section>
+      </div> : null}
+
+      {showBannerDoubleSidedWarning ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/75 p-4 backdrop-blur-md">
+        <section className="w-[min(680px,92vw)] overflow-hidden rounded-xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_30px_90px_rgba(0,0,0,0.68),0_0_54px_rgba(14,165,233,0.20)]">
+          <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-4 text-center">
+            <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Production Check</p>
+            <h3 className="mt-1 text-2xl font-black uppercase text-white">Double-Sided Banner</h3>
+          </div>
+          <div className="px-7 py-8 text-center">
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-yellow-300/70 bg-yellow-300/15 text-xl font-black text-yellow-200 shadow-[0_0_28px_rgba(250,204,21,0.25)]">!</span>
+            <p className="mx-auto mt-5 max-w-xl text-sm leading-6 text-slate-200">Double-sided banners use 18oz material and need a 1.5 inch white border for welding. The builder will adjust the setup for that production requirement.</p>
+            <button type="button" onClick={() => setShowBannerDoubleSidedWarning(false)} className="mt-7 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-6 py-3 text-xs font-black uppercase tracking-wide text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#103656]">Close</button>
           </div>
         </section>
       </div> : null}
