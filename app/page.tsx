@@ -33,6 +33,7 @@ type SignProductConfig = { id: SignProductId; name: string; apiSlug: string; des
 type StoreProductCard = { id: string; category: StoreCategoryId; title: string; subtitle: string; description: string; mode: ProductMode; signProductId?: SignProductId; badge?: string; disabled?: boolean; initialSignValues?: Partial<Record<string, string | boolean>> };
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
+type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
 type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'caps' | 'other' | 'other-part-3' | 'other-part-4';
 type SizeKey = 'YS' | 'YM' | 'YL' | 'YXL' | 'AS' | 'AM' | 'AL' | 'AXL' | '2XL' | '3XL' | '4XL';
@@ -67,16 +68,19 @@ const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://zcugxtcbv
 const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_cK1tQvEVsg69SIMrrdLQpQ_Sw2ot5qb';
 const SUPABASE_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || 'artwork-files';
 const SUPABASE_LIBRARY_PREFIX = 'test-library';
+const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const isSupabaseStorageConfigured = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && SUPABASE_STORAGE_BUCKET);
 
-const getSupabaseStorageHeaders = () => ({
+const getSupabaseStorageHeaders = (accessToken?: string) => ({
   apikey: SUPABASE_PUBLISHABLE_KEY,
-  Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`
+  Authorization: `Bearer ${accessToken || SUPABASE_PUBLISHABLE_KEY}`
 });
 
 const encodeStoragePath = (path: string) => path.split('/').map((part) => encodeURIComponent(part)).join('/');
 
 const getSupabasePublicUrl = (path: string) => `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(path)}`;
+
+const getCustomerLibraryPrefix = (session: CustomerSession | null) => session?.user?.id ? `customers/${session.user.id}` : SUPABASE_LIBRARY_PREFIX;
 
 const getSafeStorageFileName = (name: string) => {
   const cleanName = name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -101,13 +105,13 @@ const getErrorMessage = async (response: Response) => {
   }
 };
 
-const uploadArtworkFileToSupabase = async (file: File) => {
+const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession | null) => {
   if (!isSupabaseStorageConfigured) throw new Error('Supabase is not configured.');
-  const storagePath = `${SUPABASE_LIBRARY_PREFIX}/${Date.now()}-${getSafeStorageFileName(file.name)}`;
+  const storagePath = `${getCustomerLibraryPrefix(session)}/${Date.now()}-${getSafeStorageFileName(file.name)}`;
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(storagePath)}`, {
     method: 'POST',
     headers: {
-      ...getSupabaseStorageHeaders(),
+      ...getSupabaseStorageHeaders(session?.access_token),
       'Content-Type': file.type || 'application/octet-stream',
       'x-upsert': 'false'
     },
@@ -932,6 +936,13 @@ export default function Home() {
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
+  const [customerSession, setCustomerSession] = useState<CustomerSession | null>(null);
+  const [showCustomerLogin, setShowCustomerLogin] = useState(false);
+  const [customerAuthMode, setCustomerAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [customerAuthEmail, setCustomerAuthEmail] = useState('');
+  const [customerAuthPassword, setCustomerAuthPassword] = useState('');
+  const [customerAuthStatus, setCustomerAuthStatus] = useState('');
+  const [isCustomerAuthLoading, setIsCustomerAuthLoading] = useState(false);
   const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>(null);
   const [isAddingCoroSign, setIsAddingCoroSign] = useState(false);
   const [showCoroSheetWarning, setShowCoroSheetWarning] = useState(false);
@@ -954,22 +965,37 @@ export default function Home() {
   const historyIndexRef = useRef(-1);
 
   useEffect(() => {
+    try {
+      const storedSession = window.localStorage.getItem(CUSTOMER_SESSION_STORAGE_KEY);
+      if (!storedSession) return;
+      const parsedSession = JSON.parse(storedSession) as CustomerSession;
+      if (parsedSession?.access_token) {
+        setCustomerSession(parsedSession);
+        setCustomerAuthStatus(`Signed in as ${parsedSession.user?.email || 'customer'}.`);
+      }
+    } catch {
+      window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!isSupabaseStorageConfigured) {
       setImageLibraryStatus('Supabase storage is not configured. Uploads will stay in this browser session.');
       return;
     }
     let mounted = true;
     const loadImageLibrary = async () => {
+      const libraryPrefix = getCustomerLibraryPrefix(customerSession);
       setIsImageLibraryLoading(true);
       try {
         const response = await fetch(`${SUPABASE_URL}/storage/v1/object/list/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}`, {
           method: 'POST',
           headers: {
-            ...getSupabaseStorageHeaders(),
+            ...getSupabaseStorageHeaders(customerSession?.access_token),
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            prefix: SUPABASE_LIBRARY_PREFIX,
+            prefix: libraryPrefix,
             limit: 100,
             offset: 0,
             sortBy: { column: 'created_at', order: 'desc' }
@@ -981,7 +1007,7 @@ export default function Home() {
         const remoteItems = files
           .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder')
           .map((file) => {
-            const storagePath = `${SUPABASE_LIBRARY_PREFIX}/${file.name}`;
+            const storagePath = `${libraryPrefix}/${file.name}`;
             return {
               id: file.id || storagePath,
               name: file.name,
@@ -1000,7 +1026,9 @@ export default function Home() {
           const localItems = prev.filter((item) => item.source !== 'supabase');
           return [...remoteItems, ...localItems];
         });
-        setImageLibraryStatus(`Connected to Supabase library. ${remoteItems.length} stored file${remoteItems.length === 1 ? '' : 's'} found.`);
+        setImageLibraryStatus(customerSession?.user?.email
+          ? `Signed in as ${customerSession.user.email}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.`
+          : `Guest library ready. ${remoteItems.length} stored file${remoteItems.length === 1 ? '' : 's'} found.`);
       } catch (error) {
         if (!mounted) return;
         setImageLibraryStatus(`Supabase library not readable yet: ${error instanceof Error ? error.message : 'unknown error'}. Local previews still work.`);
@@ -1010,7 +1038,7 @@ export default function Home() {
     };
     void loadImageLibrary();
     return () => { mounted = false; };
-  }, []);
+  }, [customerSession]);
 
   useEffect(() => {
     setSignValues(getDefaultSignValues(selectedSignProduct));
@@ -2365,7 +2393,7 @@ export default function Home() {
       if (isSupabaseStorageConfigured) {
         setImageLibraryStatus(`${canPlaceOnCanvas ? 'Preview ready' : 'Library file ready'}. Saving original file to ${SUPABASE_STORAGE_BUCKET}...`);
         try {
-          const storageInfo = await uploadArtworkFileToSupabase(file);
+          const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
           setImageZoneItems((prev) => prev.map((entry) => entry.id === localItemId ? {
             ...entry,
             id: storageInfo.storagePath,
@@ -2381,7 +2409,9 @@ export default function Home() {
             source: 'supabase'
           } : entry));
           setSelectedImageZoneId(storageInfo.storagePath);
-          setImageLibraryStatus(`Saved original file to Supabase: ${storageInfo.storagePath}`);
+          setImageLibraryStatus(customerSession?.user?.email
+            ? `Saved original file to ${customerSession.user.email}'s library.`
+            : `Saved original file to guest library: ${storageInfo.storagePath}`);
         } catch (error) {
           setImageLibraryStatus(`Preview ready. Supabase upload failed: ${error instanceof Error ? error.message : 'unknown error'}. Check bucket policies.`);
         }
@@ -2694,6 +2724,82 @@ export default function Home() {
     };
   }, [coroSheetLayout.sheetCount, customCoroHasValidSizes, designerQuantity, effectiveCoroQuantity, isCoroBuilder, isProductionBuilder, primaryCustomCoroItem, selectedSignProduct, signHeight, signValues, signWidth]);
 
+  const saveCustomerSession = (session: CustomerSession) => {
+    setCustomerSession(session);
+    window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(session));
+  };
+
+  const handleCustomerAuth = async () => {
+    const email = customerAuthEmail.trim();
+    const password = customerAuthPassword;
+    if (!email || !password) {
+      setCustomerAuthStatus('Enter an email and password.');
+      return;
+    }
+    setIsCustomerAuthLoading(true);
+    setCustomerAuthStatus(customerAuthMode === 'signin' ? 'Signing in...' : 'Creating account...');
+    try {
+      const endpoint = customerAuthMode === 'signin'
+        ? `${SUPABASE_URL}/auth/v1/token?grant_type=password`
+        : `${SUPABASE_URL}/auth/v1/signup`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_PUBLISHABLE_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await response.json() as Partial<CustomerSession> & { msg?: string; message?: string; error_description?: string };
+      if (!response.ok) throw new Error(data.error_description || data.message || data.msg || 'Supabase sign-in failed.');
+      if (!data.access_token) {
+        setCustomerAuthStatus('Account created. Check email confirmation if Supabase requires it, then sign in.');
+        setCustomerAuthMode('signin');
+        return;
+      }
+      const nextSession: CustomerSession = {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: data.expires_at,
+        user: data.user
+      };
+      saveCustomerSession(nextSession);
+      setCustomerAuthStatus(`Signed in as ${nextSession.user?.email || email}.`);
+      setImageLibraryStatus(`Signed in as ${nextSession.user?.email || email}. Loading saved artwork library...`);
+      setShowCustomerLogin(false);
+    } catch (error) {
+      setCustomerAuthStatus(error instanceof Error ? error.message : 'Customer sign-in failed.');
+    } finally {
+      setIsCustomerAuthLoading(false);
+    }
+  };
+
+  const handleGuestMode = () => {
+    setShowCustomerLogin(false);
+    setCustomerAuthStatus('Continuing as guest.');
+    if (!customerSession) setImageLibraryStatus('Guest mode: artwork previews work now, saved libraries need sign in.');
+  };
+
+  const handleCustomerSignOut = async () => {
+    const sessionToClose = customerSession;
+    setCustomerSession(null);
+    window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
+    setImageZoneItems((prev) => prev.filter((item) => item.source !== 'supabase'));
+    setSelectedImageZoneId(null);
+    setCustomerAuthStatus('Signed out. Guest mode is active.');
+    setImageLibraryStatus('Signed out. Guest mode is active.');
+    if (sessionToClose?.access_token) {
+      try {
+        await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+          method: 'POST',
+          headers: getSupabaseStorageHeaders(sessionToClose.access_token)
+        });
+      } catch {
+        // Local sign-out already completed; remote logout can fail harmlessly in dev.
+      }
+    }
+  };
+
   const visibleStoreProducts = STORE_PRODUCTS.filter((product) => product.category === storeCategory);
   const filteredCoroSizeOptions = CORO_SIZE_OPTIONS.filter((option) => {
     const query = coroSizeSearch.trim().toLowerCase();
@@ -2868,6 +2974,7 @@ export default function Home() {
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
             {isProductionBuilder ? <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
+            <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerSession?.user?.email || 'Guest'}</button>
             <button className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
@@ -3659,6 +3766,38 @@ export default function Home() {
             <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-yellow-300/70 bg-yellow-300/15 text-xl font-black text-yellow-200 shadow-[0_0_28px_rgba(250,204,21,0.25)]">!</span>
             <p className="mx-auto mt-5 max-w-xl text-sm leading-6 text-slate-200">Double-sided banners use 18oz material and need a 1.5 inch white border for welding. The builder will adjust the setup for that production requirement.</p>
             <button type="button" onClick={() => setShowBannerDoubleSidedWarning(false)} className="mt-7 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-6 py-3 text-xs font-black uppercase tracking-wide text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#103656]">Close</button>
+          </div>
+        </section>
+      </div> : null}
+
+      {showCustomerLogin ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/75 p-4 backdrop-blur-md">
+        <section className="w-[min(520px,94vw)] overflow-hidden rounded-xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_30px_90px_rgba(0,0,0,0.68),0_0_54px_rgba(14,165,233,0.20)]">
+          <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-5">
+            <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Customer Account</p>
+            <h3 className="mt-1 text-2xl font-black text-white">{customerSession ? 'Artwork Library' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Use guest mode for quick orders, or sign in to keep artwork ready for reorders.</p>
+          </div>
+          <div className="space-y-4 px-6 py-6">
+            {customerSession ? <div className="rounded-lg border border-[#0ea5e9]/25 bg-[#0b263d]/60 p-4">
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Signed In</p>
+              <p className="mt-2 break-all text-lg font-black text-white">{customerSession.user?.email || 'Customer account'}</p>
+              <p className="mt-2 text-sm text-slate-300">Uploads save to this customer library when Supabase storage policies allow it.</p>
+            </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
+              <label className="block text-sm font-bold text-slate-200">Email
+                <input type="email" value={customerAuthEmail} onChange={(event) => setCustomerAuthEmail(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete="email" />
+              </label>
+              <label className="block text-sm font-bold text-slate-200">Password
+                <input type="password" value={customerAuthPassword} onChange={(event) => setCustomerAuthPassword(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete={customerAuthMode === 'signin' ? 'current-password' : 'new-password'} />
+              </label>
+              <button type="submit" disabled={isCustomerAuthLoading} className="w-full rounded border border-[#0ea5e9]/60 bg-[#1678b8] px-5 py-3 text-sm font-black uppercase text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-60">{isCustomerAuthLoading ? 'Working...' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</button>
+            </form>}
+            {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              {!customerSession ? <button type="button" onClick={() => setCustomerAuthMode((current) => current === 'signin' ? 'signup' : 'signin')} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">{customerAuthMode === 'signin' ? 'Create Account' : 'Use Sign In'}</button> : null}
+              <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue as Guest</button>
+              {customerSession ? <button type="button" onClick={() => { void handleCustomerSignOut(); }} className="flex-1 rounded border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20">Sign Out</button> : null}
+              <button type="button" onClick={() => setShowCustomerLogin(false)} className="flex-1 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-4 py-3 text-sm font-black text-white hover:bg-[#103656]">Close</button>
+            </div>
           </div>
         </section>
       </div> : null}
