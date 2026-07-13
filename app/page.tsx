@@ -117,6 +117,22 @@ const encodeStoragePath = (path: string) => path.split('/').map((part) => encode
 
 const getSupabasePublicUrl = (path: string) => `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(path)}`;
 
+const getSupabaseSignedUrl = async (path: string, session: CustomerSession | null) => {
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(path)}`, {
+    method: 'POST',
+    headers: {
+      ...getSupabaseStorageHeaders(session?.access_token),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ expiresIn: 3600 })
+  });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+  const payload = await response.json() as { signedURL?: string; signedUrl?: string };
+  const signedUrl = payload.signedURL || payload.signedUrl;
+  if (!signedUrl) throw new Error('Supabase did not return a signed preview URL.');
+  return signedUrl.startsWith('http') ? signedUrl : `${SUPABASE_URL}${signedUrl}`;
+};
+
 const getSafeStorageFileName = (name: string) => {
   const cleanName = name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   return cleanName || 'artwork-file';
@@ -163,9 +179,10 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
     body: file
   });
   if (!response.ok) throw new Error(await getErrorMessage(response));
+  const previewUrl = await getSupabaseSignedUrl(storagePath, session).catch(() => getSupabasePublicUrl(storagePath));
   return {
     storagePath,
-    storageUrl: getSupabasePublicUrl(storagePath)
+    storageUrl: previewUrl
   };
 };
 
@@ -1098,25 +1115,29 @@ export default function Home() {
           return { prefix, files };
         }));
         if (!mounted) return;
-        const remoteItems = libraryResponses
+        const remoteItems = await Promise.all(libraryResponses
           .flatMap(({ prefix, files }) => files
           .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder' && file.metadata?.mimetype)
-          .map((file) => {
+          .map(async (file) => {
             const storagePath = `${prefix}/${file.name}`;
+            const previewUrl = await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
+            const imageSize = file.metadata?.mimetype?.startsWith('image/')
+              ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
+              : { width: 0, height: 0 };
             return {
               id: file.id || storagePath,
               name: file.name,
-              dataUrl: getSupabasePublicUrl(storagePath),
-              width: 0,
-              height: 0,
+              dataUrl: previewUrl,
+              width: imageSize.width,
+              height: imageSize.height,
               dpi: 300,
               uploadedAt: file.updated_at || file.created_at || 'Supabase',
               storagePath,
-              storageUrl: getSupabasePublicUrl(storagePath),
+              storageUrl: previewUrl,
               source: 'supabase' as const,
               mimeType: file.metadata?.mimetype
             };
-          }));
+          })));
         setImageZoneItems((prev) => {
           const localItems = prev.filter((item) => item.source !== 'supabase');
           return [...remoteItems, ...localItems];
