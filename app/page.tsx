@@ -942,6 +942,7 @@ export default function Home() {
   const [customerAuthEmail, setCustomerAuthEmail] = useState('');
   const [customerAuthPassword, setCustomerAuthPassword] = useState('');
   const [customerAuthStatus, setCustomerAuthStatus] = useState('');
+  const [isGuestCheckout, setIsGuestCheckout] = useState(false);
   const [isCustomerAuthLoading, setIsCustomerAuthLoading] = useState(false);
   const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>(null);
   const [isAddingCoroSign, setIsAddingCoroSign] = useState(false);
@@ -971,6 +972,7 @@ export default function Home() {
       const parsedSession = JSON.parse(storedSession) as CustomerSession;
       if (parsedSession?.access_token) {
         setCustomerSession(parsedSession);
+        setIsGuestCheckout(false);
         setCustomerAuthStatus(`Signed in as ${parsedSession.user?.email || 'customer'}.`);
       }
     } catch {
@@ -1297,7 +1299,10 @@ export default function Home() {
   const hasBannerArtwork = isBannerBuilder && Boolean(signArtworkPreviewUrl);
   const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
   const signArtworkStatusOk = hasCoroSheetArtwork || (hasBannerArtwork ? (!rawBannerAspectMismatch || bannerFitResolved) : (layers.length > 0 && signArtworkMatchesSize));
-  const signArtworkStatusLabel = !layers.length && !hasCoroSheetArtwork && !hasBannerArtwork ? 'Select Image' : signArtworkStatusOk ? 'OK' : 'Select Fit/Center';
+  const signArtworkStatusLabel = !layers.length && !hasCoroSheetArtwork && !hasBannerArtwork ? 'Needs Artwork' : signArtworkStatusOk ? 'Print Ready' : 'Needs Fit Check';
+  const hueQualityStatus = signArtworkStatusOk ? 'Hue check ready' : 'Needs artwork check';
+  const hueOrderPathLabel = customerSession?.user?.email ? 'Saved customer library' : 'Guest checkout path';
+  const customerAccountButtonLabel = customerSession?.user?.email || (isGuestCheckout ? 'Quick checkout' : 'Account');
   const sizeBreakdown = useMemo(() => SIZE_FIELDS.filter((size) => sizeQuantities[size] > 0).map((size) => `${size}: ${sizeQuantities[size]}`).join(', ') || 'No sizes added', [sizeQuantities]);
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
   const signRetailBase = numericPrice(signEstimate?.price?.retail);
@@ -2764,6 +2769,7 @@ export default function Home() {
         user: data.user
       };
       saveCustomerSession(nextSession);
+      setIsGuestCheckout(false);
       setCustomerAuthStatus(`Signed in as ${nextSession.user?.email || email}.`);
       setImageLibraryStatus(`Signed in as ${nextSession.user?.email || email}. Loading saved artwork library...`);
       setShowCustomerLogin(false);
@@ -2775,19 +2781,21 @@ export default function Home() {
   };
 
   const handleGuestMode = () => {
+    setIsGuestCheckout(true);
     setShowCustomerLogin(false);
-    setCustomerAuthStatus('Continuing as guest.');
-    if (!customerSession) setImageLibraryStatus('Guest mode: artwork previews work now, saved libraries need sign in.');
+    setCustomerAuthStatus('Continuing without an account.');
+    if (!customerSession) setImageLibraryStatus('Quick checkout: artwork previews work now, saved libraries need an account.');
   };
 
   const handleCustomerSignOut = async () => {
     const sessionToClose = customerSession;
     setCustomerSession(null);
+    setIsGuestCheckout(true);
     window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
     setImageZoneItems((prev) => prev.filter((item) => item.source !== 'supabase'));
     setSelectedImageZoneId(null);
-    setCustomerAuthStatus('Signed out. Guest mode is active.');
-    setImageLibraryStatus('Signed out. Guest mode is active.');
+    setCustomerAuthStatus('Signed out. Quick checkout is active.');
+    setImageLibraryStatus('Signed out. Quick checkout is active.');
     if (sessionToClose?.access_token) {
       try {
         await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
@@ -2974,7 +2982,7 @@ export default function Home() {
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
             {isProductionBuilder ? <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
-            <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerSession?.user?.email || 'Guest'}</button>
+            <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
             <button className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
@@ -3150,8 +3158,8 @@ export default function Home() {
                   <a href="#quote" className="px-2 py-3 hover:bg-white/10" title="Names and quantities"><span className="block text-xl">00</span><span>Names</span></a>
                 </div>
               </div> : null}
-              {productMode === 'signage' ? <div className={`absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[8vw] top-10 lg:grid-cols-[minmax(220px,1fr)_minmax(420px,0.85fr)_180px]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
-                <div className="flex items-start gap-3">
+              {productMode === 'signage' ? <div className={`absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[8vw] top-8 lg:grid-cols-[minmax(240px,1fr)_minmax(360px,430px)]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
+                <div className={`flex items-start gap-3 ${isProductionBuilder ? 'max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-3 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur' : ''}`}>
                   <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
                     <p className={`${isProductionBuilder ? 'hidden' : 'text-[10px] font-black uppercase tracking-[0.22em] text-[#1678b8]'}`}>Hue Production Builder</p>
@@ -3159,9 +3167,12 @@ export default function Home() {
                     <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {selectedSignProduct.id === 'vehicle-magnet' ? '' : isBannerBuilder ? selectedBannerMaterial?.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
                   </div>
                 </div>
-                <div className={`text-xs ${isProductionBuilder ? 'rounded border border-white/16 bg-[#070b10]/78 px-7 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.18)] backdrop-blur' : ''}`}>
-                  <p className={`font-semibold uppercase ${isProductionBuilder ? 'text-center text-[#62d4ff]' : 'text-slate-500'}`}>Pricing and Shipping</p>
-                  <div className={`mt-1 grid gap-x-5 gap-y-1 ${isProductionBuilder ? 'grid-cols-[90px_1fr_1fr] text-center' : 'grid-cols-2'}`}>
+                <div className={`text-xs ${isProductionBuilder ? 'rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-6 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur lg:col-start-2 lg:row-start-1' : ''}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className={`font-black uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-slate-500'}`}>Hue Production Summary</p>
+                    {isProductionBuilder ? <span className="rounded-full border border-[#0ea5e9]/35 bg-[#0b263d] px-2.5 py-1 text-[10px] font-black uppercase text-[#9be6ff]">{hueQualityStatus}</span> : null}
+                  </div>
+                  <div className={`mt-3 grid gap-x-5 gap-y-1 ${isProductionBuilder ? 'grid-cols-[90px_1fr_1fr] text-center' : 'grid-cols-2'}`}>
                     {isCoroBuilder ? <>
                       <span />
                       <span className="font-bold text-slate-100">Sheet Price</span>
@@ -3187,10 +3198,14 @@ export default function Home() {
                       <span>{isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
                     </>}
                   </div>
-                  {isProductionBuilder ? <p className="mt-3 text-center text-[11px] text-slate-400">Pricing is powered by your current Hue API pricing rules.</p> : null}
+                  {isProductionBuilder ? <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+                    <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">Hue API pricing</span>
+                    <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">{hueOrderPathLabel}</span>
+                  </div> : null}
                 </div>
-                <div className={`text-right ${isProductionBuilder ? 'pt-7' : ''}`}>
-                  <p className={`${isProductionBuilder ? 'text-3xl' : 'text-2xl'} font-semibold text-green-500`}>{selectedSignProduct.id === 'yard-sign' && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : '$0.00'}</p>
+                <div className={`text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-2 lg:row-start-2' : ''}`}>
+                  {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
+                  <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{selectedSignProduct.id === 'yard-sign' && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : '$0.00'}</p>
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{selectedSignProduct.id === 'yard-sign' ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / Production estimate`}</p>
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
                   {isBannerBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
@@ -3226,8 +3241,9 @@ export default function Home() {
                     {coroSheetPreviews.map((sheetPreview, sheetIndex) => {
                       const selectedSheet = sheetIndex === activeCoroSheetIndex;
                       return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`relative flex shrink-0 cursor-pointer items-center justify-center transition ${selectedSheet ? 'z-10 scale-105' : 'opacity-80 hover:opacity-100'} ${activeCoroOptionPanel === 'images' ? 'w-[min(13vw,20vh)] min-w-32 max-w-[210px]' : coroSheetPreviews.length > 1 ? 'w-[min(13vw,21vh)] min-w-36 max-w-[220px]' : 'w-[min(16vw,23vh)] min-w-36 max-w-[250px]'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height }}>
-                      <div className="absolute -top-8 left-1/2 flex w-max -translate-x-1/2 flex-col items-center gap-1 text-center">
-                        <span className="text-sm font-black text-slate-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]">{sheetPreview.quantity} sign{sheetPreview.quantity === 1 ? '' : 's'} / Top of Sheet</span>
+                      <div className="absolute -top-12 left-1/2 flex w-max -translate-x-1/2 flex-col items-center gap-1 text-center">
+                        <span className="text-sm font-black text-slate-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]">{sheetPreview.quantity} sign{sheetPreview.quantity === 1 ? '' : 's'} / Hue Sheet Map</span>
+                        {selectedSheet ? <span className="rounded-full border border-[#0ea5e9]/35 bg-[#06111d]/85 px-2.5 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] text-[#9be6ff] shadow-[0_0_18px_rgba(14,165,233,0.22)]">Fit / sheet / price check</span> : null}
                       </div>
                       <div className="absolute -bottom-8 left-0 right-0 text-center text-xs text-slate-300">Sheet #{sheetPreview.sheetNumber} / 48&quot; x 96&quot; / {coroSheetViewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
                       {hasCoroDoubleSided ? <div className="absolute -bottom-16 left-1/2 flex -translate-x-1/2 overflow-hidden rounded border border-white/20 bg-black/45 text-[10px] font-black uppercase text-slate-200 backdrop-blur">
@@ -3285,14 +3301,18 @@ export default function Home() {
                   <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">Clear</button>
                 </div>
               </div> : null}
-              {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-md border border-slate-500 bg-[#f8fafc] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+              {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-[#0ea5e9]/25 bg-[#f8fbff] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45),0_0_34px_rgba(14,165,233,0.16)]">
+                <div className="mb-3 rounded-lg border border-[#0ea5e9]/20 bg-[#06111d] px-3 py-2 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#62d4ff]">Hue Artwork Queue</p>
+                  <p className="mt-1 text-xs text-slate-300">Banner sets for this order</p>
+                </div>
                 {bannerOrderItems.length > 0 ? <div className="mb-3 space-y-3">
                   {bannerOrderItems.map((item, index) => {
                     const itemMismatch = item.dataUrl ? aspectRatioMismatch(item.artworkSize?.width, item.artworkSize?.height, item.width, item.height) && item.fitState === 'unresolved' : true;
                     return <button key={item.id} type="button" onClick={async () => { await loadBannerOrderItem(item); }} className={`w-full rounded p-3 text-left ${itemMismatch ? 'bg-red-100' : 'bg-green-100'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h3 className={`text-base font-black uppercase leading-tight ${itemMismatch ? 'text-red-600' : 'text-green-700'}`}>Item #{index + 1} / {itemMismatch ? 'Check Fit' : 'OK'}</h3>
+                          <h3 className={`text-base font-black uppercase leading-tight ${itemMismatch ? 'text-red-600' : 'text-green-700'}`}>Artwork Set #{index + 1} / {itemMismatch ? 'Needs Fit Check' : 'Print Ready'}</h3>
                           <p className="mt-1 text-xs text-slate-700">width: <span className="font-bold">{item.width}</span>&quot; &nbsp; height: <span className="font-bold">{item.height}</span>&quot; &nbsp; qty: <span className="font-bold">{item.quantity}</span></p>
                         </div>
                         <span onClick={(event) => { event.stopPropagation(); removeBannerOrderItem(item.id); }} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50">delete</span>
@@ -3309,7 +3329,7 @@ export default function Home() {
                 <div className={`rounded p-3 ${signArtworkStatusOk && !bannerAspectMismatch ? 'bg-green-100' : 'bg-red-100'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-green-700' : 'text-red-600'}`}>Item #{bannerOrderItems.length + 1} / {signArtworkPreviewUrl ? bannerAspectMismatch ? 'Check Fit' : 'OK' : 'Select Image'}</h3>
+                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-green-700' : 'text-red-600'}`}>Artwork Set #{bannerOrderItems.length + 1} / {signArtworkPreviewUrl ? bannerAspectMismatch ? 'Needs Fit Check' : 'Print Ready' : 'Needs Artwork'}</h3>
                       <div className="mt-2 grid grid-cols-[1fr_1fr_64px] gap-2 text-xs text-slate-700">
                         <label>width<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>height<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
@@ -3333,7 +3353,7 @@ export default function Home() {
                     <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                   </div>
                 </div>
-                <button type="button" onClick={startAddBannerItem} className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add Banner</button>
+                <button type="button" onClick={startAddBannerItem} className="mt-3 flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-[#0ea5e9]/35 bg-white text-sm font-black text-[#0f5f94] hover:border-[#1678b8] hover:bg-[#eef8ff]">+ Add Banner Set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose finished banner artwork.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
                   <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
@@ -3341,7 +3361,11 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-600 hover:bg-slate-50">Close Panel</button>
               </aside> : null}
-              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-md border border-slate-500 bg-[#f8fafc] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-[#0ea5e9]/25 bg-[#f8fbff] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45),0_0_34px_rgba(14,165,233,0.16)]">
+                <div className="mb-3 rounded-lg border border-[#0ea5e9]/20 bg-[#06111d] px-3 py-2 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#62d4ff]">Hue Artwork Queue</p>
+                  <p className="mt-1 text-xs text-slate-300">Sheet artwork sets for this order</p>
+                </div>
                 {coroSheetArtworkItems.length > 0 ? <div className="space-y-3">
                   {coroSheetArtworkItems.map((item, index) => {
                     const itemQuantity = Math.max(1, Number(coroArtworkQuantities[item.id] || 1));
@@ -3360,7 +3384,7 @@ export default function Home() {
                     return <div key={item.id} onClick={() => setActiveCoroSheetIndex(itemSheetIndex)} className={`cursor-pointer rounded p-3 ${itemNeedsCheck ? 'bg-red-100' : 'bg-green-100'} ${itemSheetIndex === activeCoroSheetIndex ? 'ring-2 ring-[#1678b8]' : ''}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <h3 className={`text-base font-black uppercase leading-tight ${itemNeedsCheck ? 'text-red-600' : 'text-green-700'}`}>Item #{index + 1} / {itemNeedsCheck ? hasCoroDoubleSided && !item.backDataUrl ? 'Select Back Image' : 'Check Fit' : 'OK'}</h3>
+                          <h3 className={`text-base font-black uppercase leading-tight ${itemNeedsCheck ? 'text-red-600' : 'text-green-700'}`}>Artwork Set #{index + 1} / {itemNeedsCheck ? hasCoroDoubleSided && !item.backDataUrl ? 'Needs Back Art' : 'Needs Fit Check' : 'Print Ready'}</h3>
                           {isCustomCoro ? <div className="mt-2 space-y-2 text-xs text-slate-700">
                             <div className="grid grid-cols-[1fr_1fr_54px] gap-2">
                               <label>width<input type="number" min={0} step="0.25" value={String(itemSignWidth)} onChange={(event) => updateCoroArtworkSize(item.id, 'signWidth', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
@@ -3417,7 +3441,7 @@ export default function Home() {
                 </div> : <div className="rounded bg-red-100 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-base font-black uppercase leading-tight text-red-600">Item #1 / Select Image</h3>
+                      <h3 className="text-base font-black uppercase leading-tight text-red-600">Artwork Set #1 / Needs Artwork</h3>
                       {isCustomCoro ? <div className="mt-2 space-y-2 text-xs text-slate-700">
                         <div className="grid grid-cols-[1fr_1fr_54px] gap-2">
                           <label>width<input type="number" min={0} step="0.25" value={String(signValues.width ?? 0)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
@@ -3449,7 +3473,7 @@ export default function Home() {
                     <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2">Color Matching</button>
                   </div>
                 </div>}
-                <button type="button" onClick={startAddCoroSign} className="mt-3 flex h-24 w-full items-center justify-center border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-[#1678b8] hover:text-[#1678b8]">+ Add Sign</button>
+                <button type="button" onClick={startAddCoroSign} className="mt-3 flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-[#0ea5e9]/35 bg-white text-sm font-black text-[#0f5f94] hover:border-[#1678b8] hover:bg-[#eef8ff]">+ Add Artwork Set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
                   <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
@@ -3457,11 +3481,11 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="mt-4">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Sheet Images</p>
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Library Queue</p>
                     <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-600">{imageZoneItems.length}</span>
                   </div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">
-                    {imageZoneItems.length === 0 ? <p className="rounded border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">Uploaded art will show here for this session.</p> : imageZoneItems.map((item) => {
+                    {imageZoneItems.length === 0 ? <p className="rounded border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">Artwork saved for this session will show here.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
                       return <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
                         {item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}
@@ -3602,7 +3626,8 @@ export default function Home() {
                     ] as [string, string, boolean][]).map(([label, value, active]) => {
                   const isImagesTile = String(label) === 'Images';
                   const needsArtworkFit = isImagesTile && (layers.length > 0 || coroSheetArtworkItems.length > 0) && !signArtworkStatusOk;
-                  return <button type="button" onClick={() => handleCoroTileClick(String(label))} key={String(label)} className={`flex min-h-9 min-w-24 items-center justify-between gap-2 rounded border bg-black/42 px-2.5 text-left shadow-sm backdrop-blur transition hover:-translate-y-0.5 ${isProductionBuilder ? needsArtworkFit ? 'border-red-500 text-red-300' : active ? 'border-[#0ea5e9]/70 text-[#93ddff]' : 'border-white/15 text-slate-400' : needsArtworkFit ? 'border-red-500 text-red-600' : active ? 'border-[#1678b8] text-[#1678b8]' : 'border-slate-300 text-slate-400'}`}><span>{label}</span><span className={`${needsArtworkFit ? 'bg-red-500' : active ? 'bg-[#0ea5e9]' : 'bg-slate-600'} px-2 py-1 text-white`}>{value}</span></button>;
+                  const hueTileLabel = String(label) === 'Images' ? 'Artwork' : String(label) === 'Print Sides' ? 'Sides' : String(label) === 'Step Stakes' ? 'Stakes' : String(label) === 'Wind Slits' ? 'Slits' : String(label) === 'Rounded Corners' ? 'Corners' : String(label);
+                  return <button type="button" onClick={() => handleCoroTileClick(String(label))} key={String(label)} className={`flex min-h-9 min-w-24 items-center justify-between gap-2 rounded-full border px-3 text-left shadow-sm backdrop-blur transition hover:-translate-y-0.5 ${isProductionBuilder ? needsArtworkFit ? 'border-red-500/80 bg-red-950/35 text-red-200 shadow-[0_0_20px_rgba(239,68,68,0.18)]' : active ? 'border-[#0ea5e9]/80 bg-[#06111d]/85 text-[#a9e9ff] shadow-[0_0_22px_rgba(14,165,233,0.22)]' : 'border-white/15 bg-[#06111d]/58 text-slate-400 hover:border-[#0ea5e9]/35 hover:text-slate-200' : needsArtworkFit ? 'border-red-500 text-red-600' : active ? 'border-[#1678b8] text-[#1678b8]' : 'border-slate-300 text-slate-400'}`}><span>{hueTileLabel}</span><span className={`rounded-full ${needsArtworkFit ? 'bg-red-500' : active ? 'bg-[#0ea5e9]' : 'bg-slate-600'} px-2.5 py-1 text-white`}>{value}</span></button>;
                 })}
               </div> : null}
             </div>
@@ -3629,7 +3654,7 @@ export default function Home() {
             <div className={`rounded-md p-3 ${signArtworkStatusOk ? 'bg-green-100' : 'bg-rose-100'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <h2 className={`text-sm font-bold uppercase tracking-wide ${signArtworkStatusOk ? 'text-green-700' : 'text-red-600'}`}>Item #1 / {signArtworkStatusLabel}</h2>
+                  <h2 className={`text-sm font-bold uppercase tracking-wide ${signArtworkStatusOk ? 'text-green-700' : 'text-red-600'}`}>Artwork Set #1 / {signArtworkStatusLabel}</h2>
                   <p className="mt-1 text-xs text-slate-600">{signWidth || 0}&quot; x {signHeight || 0}&quot; / Qty {designerQuantity}</p>
                 </div>
                 <button type="button" onClick={clearSignArtwork} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">delete</button>
@@ -3775,7 +3800,7 @@ export default function Home() {
           <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-5">
             <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Customer Account</p>
             <h3 className="mt-1 text-2xl font-black text-white">{customerSession ? 'Artwork Library' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-300">Use guest mode for quick orders, or sign in to keep artwork ready for reorders.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Create an account to keep artwork ready for reorders, or continue without an account for a quick checkout.</p>
           </div>
           <div className="space-y-4 px-6 py-6">
             {customerSession ? <div className="rounded-lg border border-[#0ea5e9]/25 bg-[#0b263d]/60 p-4">
@@ -3793,8 +3818,8 @@ export default function Home() {
             </form>}
             {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
             <div className="flex flex-wrap gap-2">
-              {!customerSession ? <button type="button" onClick={() => setCustomerAuthMode((current) => current === 'signin' ? 'signup' : 'signin')} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">{customerAuthMode === 'signin' ? 'Create Account' : 'Use Sign In'}</button> : null}
-              <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue as Guest</button>
+              {!customerSession ? <button type="button" onClick={() => setCustomerAuthMode((current) => current === 'signin' ? 'signup' : 'signin')} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">{customerAuthMode === 'signin' ? 'Create Account' : 'Sign In Instead'}</button> : null}
+              <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue Without Account</button>
               {customerSession ? <button type="button" onClick={() => { void handleCustomerSignOut(); }} className="flex-1 rounded border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20">Sign Out</button> : null}
               <button type="button" onClick={() => setShowCustomerLogin(false)} className="flex-1 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-4 py-3 text-sm font-black text-white hover:bg-[#103656]">Close</button>
             </div>
