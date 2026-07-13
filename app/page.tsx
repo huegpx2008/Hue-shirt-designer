@@ -133,6 +133,13 @@ const encodeStoragePath = (path: string) => path.split('/').map((part) => encode
 
 const getSupabasePublicUrl = (path: string) => `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(path)}`;
 
+const getAbsoluteSupabaseStorageUrl = (url: string) => {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('/storage/v1/')) return `${SUPABASE_URL}${url}`;
+  if (url.startsWith('/object/')) return `${SUPABASE_URL}/storage/v1${url}`;
+  return `${SUPABASE_URL}/storage/v1/${url.replace(/^\/+/, '')}`;
+};
+
 const getSupabaseSignedUrl = async (path: string, session: CustomerSession | null) => {
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(path)}`, {
     method: 'POST',
@@ -146,7 +153,7 @@ const getSupabaseSignedUrl = async (path: string, session: CustomerSession | nul
   const payload = await response.json() as { signedURL?: string; signedUrl?: string };
   const signedUrl = payload.signedURL || payload.signedUrl;
   if (!signedUrl) throw new Error('Supabase did not return a signed preview URL.');
-  return signedUrl.startsWith('http') ? signedUrl : `${SUPABASE_URL}${signedUrl}`;
+  return getAbsoluteSupabaseStorageUrl(signedUrl);
 };
 
 const getSafeStorageFileName = (name: string) => {
@@ -450,7 +457,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
         name: 'size',
         label: 'Size',
         type: 'select',
-        defaultValue: 'custom',
+        defaultValue: '24x18',
         options: CORO_SIZE_OPTIONS
       },
       { name: 'quantity', label: 'Quantity', type: 'number', defaultValue: '10', step: '1' },
@@ -1420,7 +1427,7 @@ export default function Home() {
   const primaryCustomCoroItem = isCustomCoro ? coroSheetArtworkItems.find((item) => Number(item.signWidth || 0) > 0 && Number(item.signHeight || 0) > 0) : null;
   const isCoroBuilder = productMode === 'signage' && selectedSignProduct.id === 'yard-sign';
   const isBannerBuilder = productMode === 'signage' && selectedSignProduct.preview === 'banner';
-  const isProductionBuilder = isCoroBuilder || isBannerBuilder;
+  const isProductionBuilder = productMode === 'signage';
   const bannerArtworkActualSize = signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
   const rawBannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
   const bannerFitResolved = isBannerBuilder && Boolean(signArtworkPreviewUrl) && (bannerArtworkFitState === 'fit' || bannerArtworkFitState === 'stretch');
@@ -2316,15 +2323,15 @@ export default function Home() {
   const canPlaceImageZoneItem = (item: ImageZoneItem) => Boolean(item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') || isLikelyImagePath(item.name) || isLikelyImagePath(item.dataUrl));
 
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
-    if (item.width > 0 && item.height > 0) return item;
-    try {
-      const size = await getImageNaturalSize(item.dataUrl);
-      const sizedItem = { ...item, width: size.width, height: size.height };
-      setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
-      return sizedItem;
-    } catch {
-      return item;
-    }
+    const refreshedUrl = item.source === 'supabase' && item.storagePath
+      ? await getSupabaseSignedUrl(item.storagePath, customerSession)
+      : item.dataUrl;
+    const size = item.width > 0 && item.height > 0 && refreshedUrl === item.dataUrl
+      ? { width: item.width, height: item.height }
+      : await getImageNaturalSize(refreshedUrl);
+    const sizedItem = { ...item, dataUrl: refreshedUrl, storageUrl: item.storagePath ? refreshedUrl : item.storageUrl, width: size.width, height: size.height };
+    setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
+    return sizedItem;
   };
 
   const applyBannerSizeFromPixels = (width: number, height: number) => {
@@ -2534,7 +2541,13 @@ export default function Home() {
       setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
       return;
     }
-    const imageItem = await hydrateImageZoneItemSize(item);
+    let imageItem: ImageZoneItem;
+    try {
+      imageItem = await hydrateImageZoneItemSize(item);
+    } catch (error) {
+      setImageLibraryStatus(`Could not load ${item.name} from your saved library: ${error instanceof Error ? error.message : 'image access failed'}. Please sign in again and retry.`);
+      return;
+    }
     if (isCoroBuilder) placeCoroArtworkOnSheet(imageItem);
     if (isBannerBuilder) {
       setSignArtworkPreviewUrl(imageItem.dataUrl);
@@ -3436,7 +3449,7 @@ export default function Home() {
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-600">Order</p>
                 <div className="mt-3 grid gap-3">
                   <label className="text-xs font-medium text-slate-600">Quantity<input type="number" min={1} value={String(signValues.quantity ?? '')} onChange={(event) => { setSignValues((prev) => ({ ...prev, quantity: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
-                  <label className="text-xs font-medium text-slate-600">Material<select value={String(signValues.material ?? '4mm')} onChange={(event) => { setSignValues((prev) => ({ ...prev, material: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="4mm">4mm CORO</option><option value="10mm">10mm CORO</option></select></label>
+                  <label className="text-xs font-medium text-slate-600">Material<select value={String(signValues.material ?? '4mm')} onChange={(event) => { setSignValues((prev) => ({ ...prev, material: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="4mm">4mm CORO</option><option value="10mm" disabled>10mm CORO — Coming soon</option></select></label>
                   <label className="text-xs font-medium text-slate-600">Print Sides<select value={String(signValues.sides ?? 'single')} onChange={(event) => updatePrintSides(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="single">Single-Sided</option><option value="double">Double-Sided</option></select></label>
                 </div>
               </div>
@@ -3492,6 +3505,10 @@ export default function Home() {
 
           <div className={`grid gap-3 ${isProductionBuilder ? 'h-full p-0' : 'p-3'} ${productMode === 'signage' ? '' : 'lg:grid-cols-[minmax(0,1fr)_210px]'}`}>
             <div className={`relative flex items-center justify-center ${isProductionBuilder ? 'coro-hex-bg h-full rounded-none p-0' : 'rounded-lg p-4'} ${productMode === 'signage' ? `${isProductionBuilder ? '' : 'min-h-[660px] bg-[linear-gradient(#e5e7eb_1px,transparent_1px),linear-gradient(90deg,#e5e7eb_1px,transparent_1px)] bg-[size:24px_24px]'} overflow-hidden bg-[#202224]` : 'min-h-[520px] overflow-hidden bg-[#e2e7ed]'}`}>
+              <div aria-hidden="true" className={`hue-production-atmosphere pointer-events-none absolute ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'hue-production-atmosphere--panel-open' : ''} ${isProductionBuilder ? '' : 'hue-production-atmosphere--light'}`}>
+                <span className="hue-production-atmosphere__word block text-[clamp(4rem,12vw,11rem)] font-black leading-none tracking-[-0.08em]">HUE</span>
+                <span className="hue-production-atmosphere__label mt-2 block text-[9px] font-black uppercase tracking-[0.56em]">Production canvas</span>
+              </div>
               {productMode === 'apparel' ? <div className="absolute bottom-4 left-4 top-4 z-20 hidden w-20 overflow-hidden rounded-lg border border-white/35 bg-[#07111f]/88 text-white shadow-[0_18px_45px_rgba(7,17,31,0.22)] backdrop-blur md:block">
                 <div className="flex h-full flex-col items-stretch py-3 text-center text-[11px]">
                   <button type="button" className="px-2 py-3 text-[#1678b8] hover:bg-white/10" title="AI Design"><span className="block text-xl">AI</span><span>Design</span></button>
@@ -3553,6 +3570,7 @@ export default function Home() {
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{selectedSignProduct.id === 'yard-sign' ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / Production estimate`}</p>
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
                   {isBannerBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
+                  {isProductionBuilder && signEstimateStatus ? <p className={`mt-2 max-w-[240px] text-xs leading-4 ${signEstimate ? 'text-emerald-300' : isSignEstimateLoading ? 'text-[#8be3ff]' : 'text-amber-300'}`}>{signEstimateStatus}</p> : null}
                   {hasCoroSheetWarning ? <button type="button" onClick={() => setShowCoroSheetWarning(true)} className="mt-3 rounded bg-red-600 px-3 py-1.5 text-xs font-black text-white shadow-[0_10px_24px_rgba(220,38,38,0.24)] hover:bg-red-500">{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0)} warning{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0) === 1 ? '' : 's'}</button> : null}
                   {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading} className="mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSignEstimateLoading ? 'Pricing...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
                 </div>
@@ -3580,24 +3598,24 @@ export default function Home() {
               </div> : null}
               <div id="design-canvas" className={`${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-32 top-56' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
                 {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
-                  {selectedSignProduct.id === 'yard-sign' ? <div className={`relative flex w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[360px]' : ''}`}>
+                  {selectedSignProduct.id === 'yard-sign' ? <div className={`coro-sheet-stage relative flex w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[360px]' : ''}`}>
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.max(0, current - 1))} disabled={activeCoroSheetIndex === 0} className={`${activeCoroOptionPanel === 'images' ? 'left-[370px]' : 'left-8'} absolute z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35`}>‹</button> : null}
-                    <div className={`flex items-center gap-14 overflow-x-auto px-8 pb-24 pt-10 ${activeCoroOptionPanel === 'images' ? 'max-w-[calc(100vw-540px)]' : 'max-w-[74vw]'}`}>
+                    <div className={`coro-sheet-carousel relative z-[1] flex items-center gap-16 overflow-x-auto px-10 pb-24 pt-16 ${activeCoroOptionPanel === 'images' ? 'max-w-[calc(100vw-540px)]' : 'max-w-[78vw]'}`}>
                     {coroSheetPreviews.map((sheetPreview, sheetIndex) => {
                       const selectedSheet = sheetIndex === activeCoroSheetIndex;
-                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`relative flex shrink-0 cursor-pointer items-center justify-center transition ${selectedSheet ? 'z-10 scale-105' : 'opacity-80 hover:opacity-100'} ${activeCoroOptionPanel === 'images' ? 'w-[min(13vw,20vh)] min-w-32 max-w-[210px]' : coroSheetPreviews.length > 1 ? 'w-[min(13vw,21vh)] min-w-36 max-w-[220px]' : 'w-[min(16vw,23vh)] min-w-36 max-w-[250px]'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height }}>
-                      <div className="absolute -top-12 left-1/2 flex w-max -translate-x-1/2 flex-col items-center gap-1 text-center">
-                        <span className="text-sm font-black text-slate-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]">{sheetPreview.quantity} sign{sheetPreview.quantity === 1 ? '' : 's'} / Hue Sheet Map</span>
-                        {selectedSheet ? <span className="rounded-full border border-[#0ea5e9]/35 bg-[#06111d]/85 px-2.5 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] text-[#9be6ff] shadow-[0_0_18px_rgba(14,165,233,0.22)]">Fit / sheet / price check</span> : null}
+                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell relative flex shrink-0 cursor-pointer items-center justify-center transition ${selectedSheet ? 'z-10 scale-[1.04]' : 'opacity-75 hover:opacity-100'} ${activeCoroOptionPanel === 'images' ? 'w-[min(16vw,23vh)] min-w-40 max-w-[240px]' : coroSheetPreviews.length > 1 ? 'w-[min(16vw,23vh)] min-w-40 max-w-[240px]' : 'w-[min(18vw,25vh)] min-w-44 max-w-[270px]'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height }}>
+                      <div className="coro-sheet-heading absolute -top-14 left-1/2 flex w-max -translate-x-1/2 flex-col items-center gap-1.5 text-center">
+                        <span className="rounded-full border border-[#38bdf8]/25 bg-[#071827]/90 px-3 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-[#8be3ff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">Hue production sheet</span>
+                        <span className="text-xs font-bold text-slate-300"><strong className="text-white">{sheetPreview.quantity}</strong> sign{sheetPreview.quantity === 1 ? '' : 's'} mapped &middot; sheet {String(sheetPreview.sheetNumber).padStart(2, '0')}</span>
                       </div>
-                      <div className="absolute -bottom-8 left-0 right-0 text-center text-xs text-slate-300">Sheet #{sheetPreview.sheetNumber} / 48&quot; x 96&quot; / {coroSheetViewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
+                      <div className="coro-sheet-meta absolute -bottom-10 left-1/2 w-max -translate-x-1/2 rounded-full border border-white/10 bg-[#050d16]/80 px-3 py-1.5 text-center text-[10px] font-bold text-slate-300 backdrop-blur"><span className="text-[#8be3ff]">48 &times; 96</span> production sheet <span className="mx-1 text-white/25">/</span> {coroSheetViewSide === 'back' ? 'Back' : 'Front'}</div>
                       {hasCoroDoubleSided ? <div className="absolute -bottom-16 left-1/2 flex -translate-x-1/2 overflow-hidden rounded border border-white/20 bg-black/45 text-[10px] font-black uppercase text-slate-200 backdrop-blur">
                         <button type="button" onClick={() => setCoroSheetViewSide('front')} className={`px-3 py-1 ${coroSheetViewSide === 'front' ? 'bg-[#0ea5e9] text-white' : 'hover:bg-white/10'}`}>Front</button>
                         <button type="button" onClick={() => setCoroSheetViewSide('back')} className={`border-l border-white/15 px-3 py-1 ${coroSheetViewSide === 'back' ? 'bg-[#0ea5e9] text-white' : 'hover:bg-white/10'}`}>Back</button>
                       </div> : null}
-                      <div className="absolute -left-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute left-[-10px] top-1/2 -translate-y-1/2 -rotate-90 bg-[#050b12]/80 px-2">Left</span></div>
-                      <div className="absolute -right-8 bottom-0 top-0 text-xs text-slate-300"><span className="absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 bg-[#050b12]/80 px-2">Right</span></div>
-                      <button type="button" onClick={() => { setActiveCoroSheetIndex(sheetIndex); if (!hasCoroSheetArtwork) setShowImageZone(true); }} className={`absolute inset-0 border bg-white text-left shadow-[0_24px_55px_rgba(0,0,0,0.50),0_0_42px_rgba(96,165,250,0.22)] ${selectedSheet ? 'border-[#0ea5e9] ring-4 ring-[#0ea5e9]/35' : 'border-white'}`}>
+                      <div className="coro-sheet-edge coro-sheet-edge--left absolute -left-8 bottom-0 top-0 text-[9px] font-black uppercase tracking-[0.2em] text-[#8be3ff]/70"><span className="absolute left-[-14px] top-1/2 -translate-y-1/2 -rotate-90 bg-[#050b12]/80 px-2">Left edge</span></div>
+                      <div className="coro-sheet-edge coro-sheet-edge--right absolute -right-8 bottom-0 top-0 text-[9px] font-black uppercase tracking-[0.2em] text-[#8be3ff]/70"><span className="absolute right-[-16px] top-1/2 -translate-y-1/2 rotate-90 bg-[#050b12]/80 px-2">Right edge</span></div>
+                      <button type="button" onClick={() => { setActiveCoroSheetIndex(sheetIndex); if (!hasCoroSheetArtwork) setShowImageZone(true); }} className={`coro-sheet-frame absolute inset-0 overflow-hidden rounded-[3px] border bg-white text-left ${selectedSheet ? 'border-[#38bdf8] ring-2 ring-[#38bdf8]/60 ring-offset-4 ring-offset-[#071522]' : 'border-white/80'}`}>
                         {isCustomCoro && customCoroSheetPreviews.length > 0 ? <div className="relative h-full w-full overflow-hidden bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] p-1">
                           {(sheetPreview.cells as { item: ImageZoneItem; x: number; y: number; width: number; height: number }[]).map((cell, index) => {
                             const cellImage = coroSheetViewSide === 'back' ? cell.item.backDataUrl || null : cell.item.dataUrl || signArtworkPreviewUrl;
@@ -3610,7 +3628,7 @@ export default function Home() {
                             const sheetItem = shouldFillCell ? sheetPreview.cells[index] as ImageZoneItem | undefined : null;
                             const cellImage = coroSheetViewSide === 'back' ? sheetItem?.backDataUrl || null : sheetItem?.dataUrl || signArtworkPreviewUrl;
                             const cellFitState = coroSheetViewSide === 'back' ? sheetItem?.backFitState : sheetItem?.frontFitState;
-                            return <div key={index} className="relative flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' ? 'object-contain' : 'object-fill'}`} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">{shouldFillCell ? 'add art' : ''}</span>}</div>;
+                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' ? 'object-contain' : 'object-fill'}`} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
                           })}
                         </div>}
                       </button>
@@ -3618,8 +3636,8 @@ export default function Home() {
                     })}
                     </div>
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.min(coroSheetPreviews.length - 1, current + 1))} disabled={activeCoroSheetIndex >= coroSheetPreviews.length - 1} className="absolute right-8 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35">›</button> : null}
-                    {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="absolute z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
-                  </div> : <div className={`relative flex items-center justify-center ${isBannerBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''} ${isBannerBuilder ? activeCoroOptionPanel === 'images' ? 'w-[min(44vw,760px)] max-h-[48vh]' : 'w-[min(50vw,900px)] max-h-[50vh]' : 'w-[82%]'}`} style={{ aspectRatio: signPreviewAspect }}>
+                    {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="hue-sheet-upload group absolute z-10 flex w-44 flex-col items-center rounded-2xl border border-white/25 bg-[#1686c9] px-4 py-4 text-center text-white shadow-[0_18px_44px_rgba(3,105,161,0.42),0_0_32px_rgba(56,189,248,0.28)] hover:-translate-y-0.5 hover:bg-[#0e74b4]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xl transition group-hover:scale-105">+</span><span className="mt-2 text-xs font-black uppercase tracking-[0.08em]">Add your artwork</span><span className="mt-1 text-[9px] font-medium text-[#c8f2ff]">Upload or choose from library</span></button> : null}
+                  </div> : <div className={`relative flex items-center justify-center ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''} ${isProductionBuilder ? activeCoroOptionPanel === 'images' ? 'w-[min(44vw,760px)] max-h-[48vh]' : 'w-[min(50vw,900px)] max-h-[50vh]' : 'w-[82%]'}`} style={{ aspectRatio: signPreviewAspect }}>
                     <div className={`absolute -top-8 left-0 right-0 border-t text-center text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={isBannerBuilder ? 'bg-[#07111f]/90 px-2' : 'bg-white/80 px-2'}>{signWidth || 0}&quot;</span></div>
                     <div className={`absolute -bottom-9 left-0 right-0 text-center text-xs ${isBannerBuilder ? 'text-slate-300' : 'text-slate-500'}`}>Front Side</div>
                     <div className={`absolute -left-9 bottom-0 top-0 border-l text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute left-[-12px] top-1/2 -translate-y-1/2 -rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
@@ -3633,7 +3651,7 @@ export default function Home() {
                   </div>}
                 </div> : hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
                 {productMode === 'apparel' && showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-dashed border-[#1678b8]/60 bg-[#1678b8]/10 shadow-[0_0_0_9999px_rgba(255,255,255,0.04)]" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><span className="absolute -top-7 left-0 rounded bg-[#1678b8] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">{PRINT_AREA_CONFIG[printLocation].label}</span></div> : null}
-                <div className={`designer-fabric-layer absolute ${productMode === 'signage' ? selectedSignProduct.id === 'yard-sign' ? 'pointer-events-none left-1/2 top-1/2 w-[23%] min-w-56 max-w-[360px] -translate-x-1/2 -translate-y-1/2 opacity-0' : `left-1/2 top-1/2 ${isBannerBuilder && activeCoroOptionPanel === 'images' ? 'ml-[180px]' : ''} ${isBannerBuilder ? activeCoroOptionPanel === 'images' ? 'w-[min(44vw,760px)] max-h-[48vh]' : 'w-[min(50vw,900px)] max-h-[50vh]' : 'w-[82%]'} -translate-x-1/2 -translate-y-1/2` : 'inset-0'}`} style={productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
+                <div className={`designer-fabric-layer absolute ${productMode === 'signage' ? selectedSignProduct.id === 'yard-sign' ? 'pointer-events-none left-1/2 top-1/2 w-[23%] min-w-56 max-w-[360px] -translate-x-1/2 -translate-y-1/2 opacity-0' : `left-1/2 top-1/2 ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[180px]' : ''} ${isProductionBuilder ? activeCoroOptionPanel === 'images' ? 'w-[min(44vw,760px)] max-h-[48vh]' : 'w-[min(50vw,900px)] max-h-[50vh]' : 'w-[82%]'} -translate-x-1/2 -translate-y-1/2` : 'inset-0'}`} style={productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
               {productMode === 'signage' && selectedSignProduct.id === 'yard-sign' && !isCoroBuilder ? <div className="absolute left-4 top-24 z-10 w-60 rounded border border-slate-200 bg-white/95 p-3 text-sm shadow-[0_12px_30px_rgba(7,17,31,0.10)]">
                 <div className="flex items-center gap-2">
@@ -3646,18 +3664,50 @@ export default function Home() {
                   <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">Clear</button>
                 </div>
               </div> : null}
-              {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-[#0ea5e9]/25 bg-[#f8fbff] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45),0_0_34px_rgba(14,165,233,0.16)]">
-                <div className="mb-3 rounded-lg border border-[#0ea5e9]/20 bg-[#06111d] px-3 py-2 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#62d4ff]">Hue Artwork Queue</p>
-                  <p className="mt-1 text-xs text-slate-300">Banner sets for this order</p>
+              {isProductionBuilder && !isCoroBuilder && !isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
+                <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                  <div className="flex items-center gap-3">
+                    <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+                    <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork studio</p></div>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
+                </div>
+                <div className={`hue-artwork-card rounded-2xl border p-4 ${signArtworkPreviewUrl || layers.length > 0 ? 'hue-artwork-card--ready border-emerald-300/45 bg-[#f1fff8]' : 'hue-artwork-card--warning border-amber-300/45 bg-[#fffaf0]'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set 01</p>
+                      <h3 className={`mt-1 text-lg font-black leading-tight ${signArtworkPreviewUrl || layers.length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>{signArtworkPreviewUrl || layers.length > 0 ? 'Artwork loaded' : 'Let&apos;s add your artwork'}</h3>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-700">
+                        {selectedSignProduct.fields.filter((field) => ['width', 'height', 'quantity'].includes(field.name)).map((field) => <label key={field.name}>{field.name === 'quantity' ? 'qty' : field.name}<input type="number" min={field.name === 'quantity' ? 1 : 0} step={field.step} value={String(signValues[field.name] ?? field.defaultValue ?? '')} onChange={(event) => updateSignOption(field.name, event.target.value)} className="mt-1 h-8 w-full rounded border border-slate-300 bg-white px-2 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>)}
+                      </div>
+                    </div>
+                    <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45">Remove</button>
+                  </div>
+                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-dropzone group mt-3 flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
+                    {signArtworkPreviewUrl ? <span className="w-full"><img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" /><span className="mt-2 block text-xs font-black text-slate-800">Current artwork</span><span className="mt-1 block text-[10px] text-slate-400">Click to replace</span></span> : <span><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#e8f7ff] text-[#1678b8] transition group-hover:-translate-y-0.5 group-hover:bg-[#d7f2ff]"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><span className="mt-3 block text-xs font-black text-slate-800">Upload front artwork</span><span className="mt-1 block text-[10px] leading-4 text-slate-400">Choose a file or select from your library</span></span>}
+                  </label>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><button type="button" className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button><button type="button" className="rounded-lg border border-slate-300 bg-white px-2 py-2">Color Matching</button></div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label><button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open library</button></div>
+                {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
+                <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
+                  <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{item.width} x {item.height}px</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                </div>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
+              </aside> : null}
+              {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
+                <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                  <div className="flex items-center gap-3"><span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork studio</p></div></div>
+                  <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
                 </div>
                 {bannerOrderItems.length > 0 ? <div className="mb-3 space-y-3">
                   {bannerOrderItems.map((item, index) => {
                     const itemMismatch = item.dataUrl ? aspectRatioMismatch(item.artworkSize?.width, item.artworkSize?.height, item.width, item.height) && item.fitState === 'unresolved' : true;
-                    return <button key={item.id} type="button" onClick={async () => { await loadBannerOrderItem(item); }} className={`w-full rounded p-3 text-left ${itemMismatch ? 'bg-red-100' : 'bg-green-100'}`}>
+                    return <button key={item.id} type="button" onClick={async () => { await loadBannerOrderItem(item); }} className={`hue-artwork-card w-full rounded-2xl border p-4 text-left ${itemMismatch ? 'hue-artwork-card--warning border-amber-300/45 bg-[#fffaf0]' : 'hue-artwork-card--ready border-emerald-300/45 bg-[#f1fff8]'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h3 className={`text-base font-black uppercase leading-tight ${itemMismatch ? 'text-red-600' : 'text-green-700'}`}>Artwork Set #{index + 1} / {itemMismatch ? 'Needs Fit Check' : 'Print Ready'}</h3>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set {String(index + 1).padStart(2, '0')}</p><h3 className={`mt-1 text-lg font-black leading-tight ${itemMismatch ? 'text-amber-700' : 'text-emerald-700'}`}>{itemMismatch ? 'Needs a fit check' : 'Print ready'}</h3>
                           <p className="mt-1 text-xs text-slate-700">width: <span className="font-bold">{item.width}</span>&quot; &nbsp; height: <span className="font-bold">{item.height}</span>&quot; &nbsp; qty: <span className="font-bold">{item.quantity}</span></p>
                         </div>
                         <span onClick={(event) => { event.stopPropagation(); removeBannerOrderItem(item.id); }} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50">delete</span>
@@ -3671,10 +3721,10 @@ export default function Home() {
                     </button>;
                   })}
                 </div> : null}
-                <div className={`rounded p-3 ${signArtworkStatusOk && !bannerAspectMismatch ? 'bg-green-100' : 'bg-red-100'}`}>
+                <div className={`hue-artwork-card rounded-2xl border p-4 ${signArtworkStatusOk && !bannerAspectMismatch ? 'hue-artwork-card--ready border-emerald-300/45 bg-[#f1fff8]' : 'hue-artwork-card--warning border-amber-300/45 bg-[#fffaf0]'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className={`text-base font-black uppercase leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-green-700' : 'text-red-600'}`}>Artwork Set #{bannerOrderItems.length + 1} / {signArtworkPreviewUrl ? bannerAspectMismatch ? 'Needs Fit Check' : 'Print Ready' : 'Needs Artwork'}</h3>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set {String(bannerOrderItems.length + 1).padStart(2, '0')}</p><h3 className={`mt-1 text-lg font-black leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-emerald-700' : 'text-amber-700'}`}>{signArtworkPreviewUrl ? bannerAspectMismatch ? 'Needs a fit check' : 'Print ready' : 'Let&apos;s add your artwork'}</h3>
                       <div className="mt-2 grid grid-cols-[1fr_1fr_64px] gap-2 text-xs text-slate-700">
                         <label>width<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>height<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
@@ -3683,7 +3733,7 @@ export default function Home() {
                     </div>
                     <button type="button" onClick={clearCurrentBannerArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
                   </div>
-                  <button type="button" onClick={() => setShowImageZone(true)} className="mt-3 flex min-h-28 w-full items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
+                  <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-dropzone mt-3 flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-3 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
                     {signArtworkPreviewUrl ? <span className="w-full">
                       <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" />
                       <span className="mt-2 block font-bold text-slate-600">Front image</span>
@@ -3698,18 +3748,28 @@ export default function Home() {
                     <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                   </div>
                 </div>
-                <button type="button" onClick={startAddBannerItem} className="mt-3 flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-[#0ea5e9]/35 bg-white text-sm font-black text-[#0f5f94] hover:border-[#1678b8] hover:bg-[#eef8ff]">+ Add Banner Set</button>
+                <button type="button" onClick={startAddBannerItem} className="hue-add-artwork mt-3 flex h-20 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#38bdf8]/40 bg-white/[0.04] text-sm font-black text-[#8be3ff] hover:border-[#38bdf8]/80 hover:bg-[#0ea5e9]/10"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0ea5e9]/15 text-lg leading-none">+</span>Add another set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose finished banner artwork.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
-                  <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
+                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose finished banner artwork.')} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label>
+                  <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open library</button>
                 </div>
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-600 hover:bg-slate-50">Close Panel</button>
+                <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
+                  <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{item.width} x {item.height}px</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                </div>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
               </aside> : null}
-              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="absolute bottom-20 left-4 top-20 z-20 w-[min(330px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-[#0ea5e9]/25 bg-[#f8fbff] p-3 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45),0_0_34px_rgba(14,165,233,0.16)]">
-                <div className="mb-3 rounded-lg border border-[#0ea5e9]/20 bg-[#06111d] px-3 py-2 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#62d4ff]">Hue Artwork Queue</p>
-                  <p className="mt-1 text-xs text-slate-300">Sheet artwork sets for this order</p>
+              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
+                <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                  <div className="flex items-center gap-3">
+                    <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p>
+                      <p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork studio</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
                 </div>
                 {coroSheetArtworkItems.length > 0 ? <div className="space-y-3">
                   {coroSheetArtworkItems.map((item, index) => {
@@ -3726,10 +3786,11 @@ export default function Home() {
                     const itemFirstCellIndex = coroSheetCells.findIndex((cell) => cell.id === item.id);
                     const customItemSheetIndex = customCoroSheetPreviews.findIndex((sheet) => sheet.cells.some((cell) => cell.item.id === item.id));
                     const itemSheetIndex = isCustomCoro && customItemSheetIndex >= 0 ? customItemSheetIndex : itemFirstCellIndex >= 0 ? Math.floor(itemFirstCellIndex / coroSheetLayout.signsPerSheet) : 0;
-                    return <div key={item.id} onClick={() => setActiveCoroSheetIndex(itemSheetIndex)} className={`cursor-pointer rounded p-3 ${itemNeedsCheck ? 'bg-red-100' : 'bg-green-100'} ${itemSheetIndex === activeCoroSheetIndex ? 'ring-2 ring-[#1678b8]' : ''}`}>
+                    return <div key={item.id} onClick={() => setActiveCoroSheetIndex(itemSheetIndex)} className={`hue-artwork-card cursor-pointer rounded-2xl border p-4 ${itemNeedsCheck ? 'hue-artwork-card--warning border-amber-300/45 bg-[#fffaf0]' : 'hue-artwork-card--ready border-emerald-300/45 bg-[#f1fff8]'} ${itemSheetIndex === activeCoroSheetIndex ? 'ring-2 ring-[#38bdf8] ring-offset-2 ring-offset-[#07111f]' : ''}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <h3 className={`text-base font-black uppercase leading-tight ${itemNeedsCheck ? 'text-red-600' : 'text-green-700'}`}>Artwork Set #{index + 1} / {itemNeedsCheck ? hasCoroDoubleSided && !item.backDataUrl ? 'Needs Back Art' : 'Needs Fit Check' : 'Print Ready'}</h3>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set {String(index + 1).padStart(2, '0')}</p>
+                          <h3 className={`mt-1 text-lg font-black leading-tight ${itemNeedsCheck ? 'text-amber-700' : 'text-emerald-700'}`}>{itemNeedsCheck ? hasCoroDoubleSided && !item.backDataUrl ? 'Needs back artwork' : 'Needs a fit check' : 'Print ready'}</h3>
                           {isCustomCoro ? <div className="mt-2 space-y-2 text-xs text-slate-700">
                             <div className="grid grid-cols-[1fr_1fr_54px] gap-2">
                               <label>width<input type="number" min={0} step="0.25" value={String(itemSignWidth)} onChange={(event) => updateCoroArtworkSize(item.id, 'signWidth', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
@@ -3750,17 +3811,17 @@ export default function Home() {
                             </label>
                           </p>}
                         </div>
-                        <button type="button" onClick={() => removeCoroArtworkItem(item.id)} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50">delete</button>
+                        <button type="button" onClick={() => removeCoroArtworkItem(item.id)} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600">Remove</button>
                       </div>
                       <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                        <button type="button" onClick={() => chooseCoroSideImage(item.id, 'front')} className={`flex min-h-28 w-full items-center justify-center border bg-white p-2 text-center text-[10px] uppercase hover:border-[#1678b8] hover:text-[#1678b8] ${frontMismatch ? 'border-red-500 text-red-500' : 'border-slate-300 text-slate-400'}`}>
+                        <button type="button" onClick={() => chooseCoroSideImage(item.id, 'front')} className={`hue-artwork-dropzone flex min-h-32 w-full items-center justify-center rounded-xl border bg-white p-3 text-center text-[10px] uppercase hover:border-[#0ea5e9] hover:text-[#1678b8] ${frontMismatch ? 'border-amber-500 text-amber-600' : 'border-slate-200 text-slate-400'}`}>
                           <span className="w-full">
                             <img src={item.dataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.frontFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} />
                             <span className="mt-2 block font-bold text-slate-600">Front image</span>
                             <span className="mt-1 block text-slate-500">Actual: {frontActualSize.width.toFixed(0)}&quot; x {frontActualSize.height.toFixed(0)}&quot;</span>
                           </span>
                         </button>
-                        {hasCoroDoubleSided ? <button type="button" onClick={() => chooseCoroSideImage(item.id, 'back')} className={`flex min-h-28 w-full items-center justify-center border bg-white p-2 text-center text-[10px] uppercase hover:border-[#1678b8] hover:text-[#1678b8] ${!item.backDataUrl || backMismatch ? 'border-red-500 text-red-500' : 'border-slate-300 text-slate-400'}`}>
+                        {hasCoroDoubleSided ? <button type="button" onClick={() => chooseCoroSideImage(item.id, 'back')} className={`hue-artwork-dropzone flex min-h-32 w-full items-center justify-center rounded-xl border bg-white p-3 text-center text-[10px] uppercase hover:border-[#0ea5e9] hover:text-[#1678b8] ${!item.backDataUrl || backMismatch ? 'border-amber-500 text-amber-600' : 'border-slate-200 text-slate-400'}`}>
                           <span className="w-full">
                             {item.backDataUrl ? <img src={item.backDataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.backFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} /> : <span className="mx-auto flex h-20 max-w-full items-center justify-center bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] px-2 text-slate-400">Click here to select back image</span>}
                             <span className="mt-2 block font-bold text-slate-600">Back image</span>
@@ -3783,10 +3844,11 @@ export default function Home() {
                       </div>
                     </div>;
                   })}
-                </div> : <div className="rounded bg-red-100 p-3">
+                </div> : <div className="hue-artwork-card hue-artwork-card--warning rounded-2xl border border-amber-300/45 bg-[#fffaf0] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-base font-black uppercase leading-tight text-red-600">Artwork Set #1 / Needs Artwork</h3>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set 01</p>
+                      <h3 className="mt-1 text-lg font-black leading-tight text-amber-700">Let&apos;s add your artwork</h3>
                       {isCustomCoro ? <div className="mt-2 space-y-2 text-xs text-slate-700">
                         <div className="grid grid-cols-[1fr_1fr_54px] gap-2">
                           <label>width<input type="number" min={0} step="0.25" value={String(signValues.width ?? 0)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
@@ -3807,30 +3869,32 @@ export default function Home() {
                         </label>
                       </p>}
                     </div>
-                    <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
+                    <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45">Remove</button>
                   </div>
                   <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                    <label htmlFor="artwork-upload-input" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); setImageLibraryStatus('Choose an image or PDF artwork file for the front side.'); }} className="flex min-h-28 w-full cursor-pointer items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">Click here to upload or select front image</label>
-                    {hasCoroDoubleSided ? <button type="button" onClick={() => setImageLibraryStatus('Add the front image first, then choose or copy the back image.')} className="flex min-h-28 w-full items-center justify-center border border-red-300 bg-white p-2 text-center text-[10px] uppercase text-red-400 hover:border-[#1678b8] hover:text-[#1678b8]">Click here to select back image</button> : null}
+                    <label htmlFor="artwork-upload-input" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); setImageLibraryStatus('Choose an image or PDF artwork file for the front side.'); }} className="hue-artwork-dropzone group flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
+                      <span><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#e8f7ff] text-[#1678b8] transition group-hover:-translate-y-0.5 group-hover:bg-[#d7f2ff]"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><span className="mt-3 block text-xs font-black text-slate-800">Upload front artwork</span><span className="mt-1 block text-[10px] leading-4 text-slate-400">Choose a file or select from your library</span></span>
+                    </label>
+                    {hasCoroDoubleSided ? <button type="button" onClick={() => setImageLibraryStatus('Add the front image first, then choose or copy the back image.')} className="hue-artwork-dropzone flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-amber-300 bg-white p-3 text-center text-[10px] font-bold uppercase text-amber-600 hover:border-[#1678b8] hover:text-[#1678b8]">Select back artwork</button> : null}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
                     <button type="button" className="rounded border border-slate-300 bg-white px-2 py-2">Color Matching</button>
                   </div>
                 </div>}
-                <button type="button" onClick={startAddCoroSign} className="mt-3 flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-[#0ea5e9]/35 bg-white text-sm font-black text-[#0f5f94] hover:border-[#1678b8] hover:bg-[#eef8ff]">+ Add Artwork Set</button>
+                <button type="button" onClick={startAddCoroSign} className="hue-add-artwork mt-3 flex h-20 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#38bdf8]/40 bg-white/[0.04] text-sm font-black text-[#8be3ff] hover:border-[#38bdf8]/80 hover:bg-[#0ea5e9]/10"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0ea5e9]/15 text-lg leading-none">+</span>Add another set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="cursor-pointer rounded bg-[#1678b8] px-3 py-2 text-center text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload File</label>
-                  <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-700 hover:bg-slate-50">Library</button>
+                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label>
+                  <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open library</button>
                 </div>
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
-                <div className="mt-4">
+                <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Library Queue</p>
-                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-600">{imageZoneItems.length}</span>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p>
+                    <span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span>
                   </div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">
-                    {imageZoneItems.length === 0 ? <p className="rounded border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">Artwork saved for this session will show here.</p> : imageZoneItems.map((item) => {
+                    {imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
                       return <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
                         {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}
@@ -3844,7 +3908,7 @@ export default function Home() {
                     })}
                   </div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-black uppercase text-slate-600 hover:bg-slate-50">Close Panel</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
               </aside> : null}
               {isProductionBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-20 left-1/2 z-20 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
                 <div className="flex items-start justify-between gap-3">
@@ -3889,9 +3953,9 @@ export default function Home() {
                   </div>
                 </div> : null}
                 {activeCoroOptionPanel === 'material' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {(isBannerBuilder ? bannerMaterialOptions.map((option) => ({ value: option.value, label: option.label, price: String('note' in option ? option.note : 'Priced by Hue API') })) : [{ value: '4mm', label: '4mm CORO', price: '$44.00 single / $55.00 double' }, { value: '10mm', label: '10mm CORO', price: '$70.00 single / $90.00 double' }]).map((option) => {
+                  {(isBannerBuilder ? bannerMaterialOptions.map((option) => ({ value: option.value, label: option.label, note: String('note' in option ? option.note : 'Priced by Hue API'), disabled: false })) : [{ value: '4mm', label: '4mm CORO', note: '', disabled: false }, { value: '10mm', label: '10mm CORO', note: 'Coming soon', disabled: true }]).map((option) => {
                     const selected = String(signValues.material || '4mm') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.price}</span></button>;
+                    return <button key={option.value} type="button" disabled={option.disabled} onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${option.disabled ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span>{option.note ? <span className={`mt-1 block text-xs ${option.disabled ? 'font-bold uppercase tracking-wide text-slate-500' : 'text-slate-500'}`}>{option.note}</span> : null}</button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'sides' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -3900,11 +3964,19 @@ export default function Home() {
                     return <button key={option.value} type="button" onClick={() => updatePrintSides(option.value)} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.value === 'double' && isBannerBuilder ? '18oz material with front and back setup' : option.note}</span></button>;
                   })}
                 </div> : null}
-                {activeCoroOptionPanel === 'stakes' ? <div className="mt-4 grid gap-3 sm:grid-cols-4">
-                  {['0', '10', '25', '50'].map((count) => {
-                    const selected = String(signValues.stepStakes || '0') === count;
-                    return <button key={count} type="button" onClick={() => { updateSignOption('stepStakes', count); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-center ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-lg font-black">{count}</span><span className="mt-1 block text-xs text-slate-500">stakes</span></button>;
-                  })}
+                {activeCoroOptionPanel === 'stakes' ? <div className="mt-4">
+                  <div className="grid gap-3 sm:grid-cols-4">
+                    {['0', '10', '25', '50'].map((count) => {
+                      const selected = String(signValues.stepStakes || '0') === count;
+                      return <button key={count} type="button" onClick={() => { updateSignOption('stepStakes', count); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-center ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-lg font-black">{count}</span><span className="mt-1 block text-xs text-slate-500">stakes</span></button>;
+                    })}
+                  </div>
+                  <div className="mt-3 flex flex-col gap-3 rounded border border-dashed border-[#9ec9df] bg-[#f3faff] p-3 sm:flex-row sm:items-end">
+                    <label className="min-w-0 flex-1 text-xs font-bold uppercase tracking-wide text-[#0f5f94]">Custom quantity
+                      <input type="number" min={0} step={1} inputMode="numeric" value={String(signValues.stepStakes ?? '0')} onChange={(event) => updateSignOption('stepStakes', event.target.value === '' ? '' : String(Math.max(0, Math.floor(Number(event.target.value) || 0))))} className="mt-1.5 h-10 w-full rounded border border-slate-300 bg-white px-3 text-base font-black text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" placeholder="Enter number of stakes" />
+                    </label>
+                    <button type="button" onClick={() => { if (String(signValues.stepStakes ?? '') === '') updateSignOption('stepStakes', '0'); setActiveCoroOptionPanel(null); }} className="h-10 rounded bg-[#1678b8] px-5 text-xs font-black uppercase tracking-wide text-white hover:bg-[#0f5f94]">Use quantity</button>
+                  </div>
                 </div> : null}
                 {activeCoroOptionPanel === 'webbing' ? <div className="mt-4 grid gap-4 sm:grid-cols-[1.15fr_1fr]">
                   <div className="rounded border border-[#b7d8ea] bg-[#eef8ff] px-4 py-4 text-sm leading-6 text-[#0f4262]">
@@ -4426,72 +4498,71 @@ export default function Home() {
         </section>
       </div> : null}
 
-      {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-        <section className="flex h-[min(760px,86vh)] w-[min(1320px,94vw)] flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#f5f7fa] text-slate-950 shadow-[0_28px_80px_rgba(0,0,0,0.45)]">
-          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-5 py-4">
-            <div className="mr-auto">
-              <h2 className="text-2xl font-normal tracking-tight">Image Zone</h2>
-              <p className="text-xs text-slate-500">Upload finished artwork, choose existing files, then place onto the sheet.</p>
+      {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/80 p-4 backdrop-blur-md">
+        <section className="hue-image-library flex h-[min(800px,90vh)] w-[min(1380px,96vw)] flex-col overflow-hidden rounded-[22px] border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)]">
+          <div className="relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
+            <div className="mr-auto flex min-w-[280px] items-center gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+              <div><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Graphics</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Library</h2><p className="mt-0.5 text-xs text-slate-400">Your print-ready artwork vault</p></div>
             </div>
-            <select className="h-9 min-w-52 rounded border border-slate-300 bg-white px-3 text-sm">
+            <select className="h-10 min-w-48 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
               <option>Home</option>
               <option>Recent Uploads</option>
               <option>CORO Orders</option>
             </select>
-            <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-9 cursor-pointer items-center rounded bg-[#1678b8] px-4 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Upload Image</label>
-            <button type="button" className="h-9 rounded bg-[#1678b8] px-4 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Create Folder</button>
-            <button type="button" className="h-9 rounded bg-[#1678b8] px-4 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Rename Folder</button>
-            <button type="button" className="h-9 rounded bg-[#1678b8] px-4 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Image Setup</button>
-            <input className="h-9 min-w-56 flex-1 rounded border border-slate-300 px-3 text-sm" placeholder="Search Images" />
-            <select className="h-9 rounded border border-slate-300 bg-white px-3 text-sm">
+            <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</label>
+            <button type="button" className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Image setup</button>
+            <div className="order-last flex w-full items-center gap-2 pt-2"><span className="text-lg text-[#67d8ff]">⌕</span><input className="h-10 min-w-56 flex-1 rounded-xl border border-white/15 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" placeholder="Search your artwork library" />
+            <select className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
               <option>Sort: Date</option>
               <option>Sort: Name</option>
               <option>Sort: Size</option>
             </select>
-            <button type="button" onClick={() => setShowImageZone(false)} className="h-9 rounded border border-slate-300 bg-white px-4 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
+            <button type="button" onClick={() => setShowImageZone(false)} className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close</button></div>
           </div>
-          <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs">
-            <button type="button" className="rounded bg-[#1678b8] px-4 py-2 font-bold uppercase text-white">Select All</button>
-            <span className="text-slate-500">{imageZoneItems.length} item{imageZoneItems.length === 1 ? '' : 's'} in the artwork library</span>
-            {imageLibraryStatus ? <span className="hidden max-w-xl truncate text-slate-500 lg:inline">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
-            {selectedImageZoneId ? <span className="ml-auto rounded-full bg-[#eaf5fb] px-3 py-1 font-semibold text-[#1678b8]">Selected image ready</span> : null}
+          <div className="flex items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
+            <button type="button" className="rounded-lg border border-[#38bdf8]/35 bg-[#0c2a40] px-4 py-2 font-black uppercase text-[#8be3ff] hover:bg-[#10364f]">Select all</button>
+            <span className="font-semibold text-slate-300"><strong className="text-white">{imageZoneItems.length}</strong> item{imageZoneItems.length === 1 ? '' : 's'} in your artwork vault</span>
+            {imageLibraryStatus ? <span className="hidden max-w-xl truncate text-slate-400 lg:inline"><span className="mx-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
+            {selectedImageZoneId ? <span className="ml-auto rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 font-bold text-emerald-300">● Artwork selected</span> : null}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto bg-white p-4">
-            {imageZoneItems.length === 0 ? <div className="flex h-full min-h-80 items-center justify-center rounded border-2 border-dashed border-slate-300 bg-slate-50 text-center">
+          <div className="hue-image-library-grid min-h-0 flex-1 overflow-y-auto p-5">
+            {imageZoneItems.length === 0 ? <div className="flex h-full min-h-80 items-center justify-center rounded-2xl border border-dashed border-[#38bdf8]/35 bg-white/[0.035] text-center">
               <div>
-                <p className="text-lg font-semibold text-slate-800">No images uploaded yet</p>
-                <p className="mt-2 text-sm text-slate-500">Upload artwork here, then place it on the CORO sheet.</p>
-                <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="mt-5 inline-flex cursor-pointer rounded bg-[#1678b8] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f5f94]">Upload Image</label>
+                <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/20 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.15)]">+</span><p className="mt-5 text-lg font-black text-white">Your artwork vault is ready</p>
+                <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>
+                <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="mt-5 inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</label>
               </div>
             </div> : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {imageZoneItems.map((item) => {
                 const selected = selectedImageZoneId === item.id;
-                return <button key={item.id} type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`grid min-h-32 grid-cols-[112px_minmax(0,1fr)] gap-3 rounded border bg-white p-3 text-left shadow-sm transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
-                  <div className="flex h-28 items-center justify-center overflow-hidden rounded border border-slate-200 bg-slate-50">
+                return <button key={item.id} type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`group grid min-h-40 grid-cols-[118px_minmax(0,1fr)] gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-[#38bdf8] bg-[#f2fbff] shadow-[0_18px_46px_rgba(14,165,233,0.22),0_0_0_3px_rgba(56,189,248,0.12)]' : 'border-white/10 bg-white/[0.055] shadow-[0_16px_38px_rgba(0,0,0,0.24)] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.08]'}`}>
+                  <div className={`relative flex h-32 items-center justify-center overflow-hidden rounded-xl border ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
                     {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
+                    {selected ? <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1686c9] text-xs font-black text-white shadow-md">✓</span> : null}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{item.name}</p>
-                    <p className="mt-1 text-xs text-slate-500">{item.width || '-'} x {item.height || '-'} px</p>
-                    <p className="text-xs text-slate-500">{item.dpi} DPI</p>
-                    <p className="text-xs text-slate-500">{item.source === 'supabase' ? 'Stored in Supabase' : 'Browser preview'}</p>
-                    <p className="mt-2 text-xs text-slate-400">{item.uploadedAt}</p>
-                    <span className={`mt-3 inline-flex rounded px-3 py-1 text-xs font-bold uppercase ${selected ? 'bg-[#1678b8] text-white' : 'bg-slate-100 text-slate-600'}`}>{selected ? 'Selected' : 'Select'}</span>
-                    <span onClick={async (event) => { event.stopPropagation(); await useImageZoneItem(item); }} className="ml-2 mt-3 inline-flex rounded bg-[#1678b8] px-3 py-1 text-xs font-bold uppercase text-white">Use Image</span>
+                    <p className={`truncate text-sm font-black ${selected ? 'text-slate-950' : 'text-white'}`}>{item.name}</p>
+                    <p className={`mt-2 text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.width || '-'} × {item.height || '-'} px</p>
+                    <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
+                    <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</p>
+                    <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
+                    <span className={`mt-3 inline-flex rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</span>
+                    <span onClick={async (event) => { event.stopPropagation(); await useImageZoneItem(item); }} className="ml-2 mt-3 inline-flex rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">Use</span>
                   </div>
                 </button>;
               })}
             </div>}
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
-            <p className="text-xs text-slate-500">{isSupabaseStorageConfigured ? `Original files save to Supabase bucket: ${SUPABASE_STORAGE_BUCKET}.` : 'Original production files need Supabase config before they can persist.'}</p>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4">
+            <p className="text-xs text-slate-400"><span className="mr-2 text-emerald-400">●</span>{isSupabaseStorageConfigured ? 'Original artwork is securely saved to your Hue cloud library.' : 'Connect storage to make original artwork available in future sessions.'}</p>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setShowImageZone(false)} className="rounded border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button type="button" onClick={() => setShowImageZone(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-sm font-bold text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Cancel</button>
               <button type="button" disabled={!selectedImageZoneId} onClick={async () => {
                 const item = imageZoneItems.find((entry) => entry.id === selectedImageZoneId);
                 if (!item) return;
                 await useImageZoneItem(item);
-              }} className="rounded bg-[#1678b8] px-5 py-2 text-sm font-black uppercase text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Use Selected Image</button>
+              }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Use selected artwork</button>
             </div>
           </div>
         </section>
