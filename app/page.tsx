@@ -105,6 +105,22 @@ const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
 const GEORGIA_SALES_TAX_RATE = 0.08;
+
+const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
+  ...item,
+  artworkFiles: item.artworkFiles.map((file) => ({
+    ...file,
+    previewUrl: file.previewUrl?.startsWith('data:') ? undefined : file.previewUrl
+  }))
+}));
+
+const getPersistableTestOrders = (orders: TestOrder[]) => orders.map((order) => ({
+  ...order,
+  items: getPersistableCartItems(order.items)
+}));
+
+const isLikelyImagePath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg)(\?.*)?$/i.test(value);
+const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf)(\?.*)?$/i.test(value);
 const GEORGIA_SALES_TAX_LABEL = 'GA sales tax';
 const isSupabaseStorageConfigured = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && SUPABASE_STORAGE_BUCKET);
 
@@ -1063,14 +1079,18 @@ export default function Home() {
       const storedCart = window.localStorage.getItem(CART_STORAGE_KEY);
       if (!storedCart) return;
       const parsedCart = JSON.parse(storedCart) as CartItem[];
-      if (Array.isArray(parsedCart)) setCartItems(parsedCart);
+      if (Array.isArray(parsedCart)) setCartItems(getPersistableCartItems(parsedCart));
     } catch {
       window.localStorage.removeItem(CART_STORAGE_KEY);
     }
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
+    try {
+      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(getPersistableCartItems(cartItems)));
+    } catch {
+      setCartStatus('Cart is open, but browser storage is full. Original artwork files remain attached by Supabase path.');
+    }
   }, [cartItems]);
 
   useEffect(() => {
@@ -1078,14 +1098,18 @@ export default function Home() {
       const storedOrders = window.localStorage.getItem(TEST_ORDER_STORAGE_KEY);
       if (!storedOrders) return;
       const parsedOrders = JSON.parse(storedOrders) as TestOrder[];
-      if (Array.isArray(parsedOrders)) setTestOrders(parsedOrders);
+      if (Array.isArray(parsedOrders)) setTestOrders(getPersistableTestOrders(parsedOrders));
     } catch {
       window.localStorage.removeItem(TEST_ORDER_STORAGE_KEY);
     }
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(testOrders));
+    try {
+      window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(getPersistableTestOrders(testOrders)));
+    } catch {
+      setCheckoutStatus('Test order history is too large for browser storage. The current submitted order is still shown.');
+    }
   }, [testOrders]);
 
   useEffect(() => {
@@ -1121,11 +1145,12 @@ export default function Home() {
         if (!mounted) return;
         const remoteItems = await Promise.all(libraryResponses
           .flatMap(({ prefix, files }) => files
-          .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder' && file.metadata?.mimetype)
+          .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder' && (file.metadata?.mimetype || isLikelyArtworkPath(file.name)))
           .map(async (file) => {
             const storagePath = `${prefix}/${file.name}`;
             const previewUrl = await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
-            const imageSize = file.metadata?.mimetype?.startsWith('image/')
+            const isImageFile = Boolean(file.metadata?.mimetype?.startsWith('image/') || isLikelyImagePath(file.name));
+            const imageSize = isImageFile
               ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
               : { width: 0, height: 0 };
             return {
@@ -2288,7 +2313,6 @@ export default function Home() {
     artworkUploadInputRef.current?.click();
   };
 
-  const isLikelyImagePath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg)(\?.*)?$/i.test(value);
   const canPlaceImageZoneItem = (item: ImageZoneItem) => Boolean(item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') || isLikelyImagePath(item.name) || isLikelyImagePath(item.dataUrl));
 
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
@@ -3809,7 +3833,7 @@ export default function Home() {
                     {imageZoneItems.length === 0 ? <p className="rounded border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-500">Artwork saved for this session will show here.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
                       return <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
-                        {item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}
+                        {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
                           <span className="mt-1 block text-slate-500">{item.width} x {item.height}px</span>
@@ -4444,7 +4468,7 @@ export default function Home() {
                 const selected = selectedImageZoneId === item.id;
                 return <button key={item.id} type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`grid min-h-32 grid-cols-[112px_minmax(0,1fr)] gap-3 rounded border bg-white p-3 text-left shadow-sm transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
                   <div className="flex h-28 items-center justify-center overflow-hidden rounded border border-slate-200 bg-slate-50">
-                    {item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') ? <img src={item.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
+                    {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
                   </div>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">{item.name}</p>
