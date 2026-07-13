@@ -3,7 +3,9 @@
 --
 -- Current app behavior:
 -- - Guests upload/list files under: test-library/{file}
--- - Signed-in customers upload/list files under: customers/{auth.uid()}/{file}
+-- - Signed-in customers upload/list files under: customers/{auth.uid()}/{email-safe-folder}/{file}
+--   The auth.uid() folder stays second so these policies keep working, while the
+--   email-safe folder makes storage easier to browse in Supabase.
 
 create policy "Hue guest artwork can be uploaded"
 on storage.objects

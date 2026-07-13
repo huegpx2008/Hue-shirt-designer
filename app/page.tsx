@@ -34,6 +34,37 @@ type StoreProductCard = { id: string; category: StoreCategoryId; title: string; 
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
+type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; previewUrl?: string };
+type CartItem = {
+  id: string;
+  addedAt: string;
+  mode: ProductMode;
+  productId: string;
+  productName: string;
+  quantity: number;
+  sizeLabel: string;
+  optionSummary: string[];
+  price: { total: number | null; each: number | null; currency: string; sheetCount?: number; pricePerSheet?: number | null };
+  artworkFiles: CartArtworkFile[];
+  productionSummary: string[];
+  customer: { userId?: string; email?: string; checkoutMode: 'account' | 'quick' };
+};
+type CheckoutFulfillment = 'pickup' | 'direct_ship';
+type TestOrder = {
+  id: string;
+  orderNumber: string;
+  createdAt: string;
+  status: 'test_submitted';
+  paymentMode: 'test_no_payment';
+  customer: { name: string; organization?: string; email: string; phone: string; notes?: string; userId?: string; checkoutMode: 'account' | 'quick' };
+  fulfillment: {
+    method: CheckoutFulfillment;
+    address?: { line1: string; line2: string; city: string; state: string; postalCode: string };
+  };
+  items: CartItem[];
+  subtotal: number;
+  currency: string;
+};
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
 type CategoryChunkSlug = 't-shirts' | 'hoodies' | 'long-sleeve' | 'sweatshirts' | 'polos' | 'bags' | 'caps' | 'other' | 'other-part-3' | 'other-part-4';
 type SizeKey = 'YS' | 'YM' | 'YL' | 'YXL' | 'AS' | 'AM' | 'AL' | 'AXL' | '2XL' | '3XL' | '4XL';
@@ -69,6 +100,8 @@ const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KE
 const SUPABASE_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || 'artwork-files';
 const SUPABASE_LIBRARY_PREFIX = 'test-library';
 const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
+const CART_STORAGE_KEY = 'hue-print-ready-cart';
+const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
 const isSupabaseStorageConfigured = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && SUPABASE_STORAGE_BUCKET);
 
 const getSupabaseStorageHeaders = (accessToken?: string) => ({
@@ -80,12 +113,20 @@ const encodeStoragePath = (path: string) => path.split('/').map((part) => encode
 
 const getSupabasePublicUrl = (path: string) => `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(path)}`;
 
-const getCustomerLibraryPrefix = (session: CustomerSession | null) => session?.user?.id ? `customers/${session.user.id}` : SUPABASE_LIBRARY_PREFIX;
-
 const getSafeStorageFileName = (name: string) => {
   const cleanName = name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   return cleanName || 'artwork-file';
 };
+
+const getSafeStorageFolderName = (name: string, fallback: string) => getSafeStorageFileName(name.toLowerCase()).slice(0, 80) || fallback;
+
+const getCustomerLibraryPrefix = (session: CustomerSession | null) => {
+  if (!session?.user?.id) return SUPABASE_LIBRARY_PREFIX;
+  const customerLabel = getSafeStorageFolderName(session.user.email || 'customer', 'customer');
+  return `customers/${session.user.id}/${customerLabel}`;
+};
+
+const getCustomerLegacyLibraryPrefix = (session: CustomerSession | null) => session?.user?.id ? `customers/${session.user.id}` : null;
 
 const isPreviewableImageFile = (file: File) => file.type.startsWith('image/');
 
@@ -944,6 +985,17 @@ export default function Home() {
   const [customerAuthStatus, setCustomerAuthStatus] = useState('');
   const [isGuestCheckout, setIsGuestCheckout] = useState(false);
   const [isCustomerAuthLoading, setIsCustomerAuthLoading] = useState(false);
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [showCart, setShowCart] = useState(false);
+  const [cartStatus, setCartStatus] = useState('');
+  const [showTestCheckout, setShowTestCheckout] = useState(false);
+  const [testOrders, setTestOrders] = useState<TestOrder[]>([]);
+  const [checkoutStep, setCheckoutStep] = useState<'contact' | 'fulfillment' | 'review' | 'complete'>('contact');
+  const [checkoutStatus, setCheckoutStatus] = useState('');
+  const [checkoutContact, setCheckoutContact] = useState({ name: '', organization: '', email: '', phone: '', notes: '' });
+  const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
+  const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
+  const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
   const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>(null);
   const [isAddingCoroSign, setIsAddingCoroSign] = useState(false);
   const [showCoroSheetWarning, setShowCoroSheetWarning] = useState(false);
@@ -981,6 +1033,36 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    try {
+      const storedCart = window.localStorage.getItem(CART_STORAGE_KEY);
+      if (!storedCart) return;
+      const parsedCart = JSON.parse(storedCart) as CartItem[];
+      if (Array.isArray(parsedCart)) setCartItems(parsedCart);
+    } catch {
+      window.localStorage.removeItem(CART_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
+  }, [cartItems]);
+
+  useEffect(() => {
+    try {
+      const storedOrders = window.localStorage.getItem(TEST_ORDER_STORAGE_KEY);
+      if (!storedOrders) return;
+      const parsedOrders = JSON.parse(storedOrders) as TestOrder[];
+      if (Array.isArray(parsedOrders)) setTestOrders(parsedOrders);
+    } catch {
+      window.localStorage.removeItem(TEST_ORDER_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(testOrders));
+  }, [testOrders]);
+
+  useEffect(() => {
     if (!isSupabaseStorageConfigured) {
       setImageLibraryStatus('Supabase storage is not configured. Uploads will stay in this browser session.');
       return;
@@ -988,28 +1070,34 @@ export default function Home() {
     let mounted = true;
     const loadImageLibrary = async () => {
       const libraryPrefix = getCustomerLibraryPrefix(customerSession);
+      const legacyLibraryPrefix = getCustomerLegacyLibraryPrefix(customerSession);
+      const libraryPrefixes = Array.from(new Set([libraryPrefix, legacyLibraryPrefix].filter(Boolean) as string[]));
       setIsImageLibraryLoading(true);
       try {
-        const response = await fetch(`${SUPABASE_URL}/storage/v1/object/list/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}`, {
-          method: 'POST',
-          headers: {
-            ...getSupabaseStorageHeaders(customerSession?.access_token),
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            prefix: libraryPrefix,
-            limit: 100,
-            offset: 0,
-            sortBy: { column: 'created_at', order: 'desc' }
-          })
-        });
-        if (!response.ok) throw new Error(await getErrorMessage(response));
-        const files = await response.json() as Array<{ id?: string; name: string; updated_at?: string; created_at?: string; metadata?: { size?: number; mimetype?: string } }>;
+        const libraryResponses = await Promise.all(libraryPrefixes.map(async (prefix) => {
+          const response = await fetch(`${SUPABASE_URL}/storage/v1/object/list/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}`, {
+            method: 'POST',
+            headers: {
+              ...getSupabaseStorageHeaders(customerSession?.access_token),
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              prefix,
+              limit: 100,
+              offset: 0,
+              sortBy: { column: 'created_at', order: 'desc' }
+            })
+          });
+          if (!response.ok) throw new Error(await getErrorMessage(response));
+          const files = await response.json() as Array<{ id?: string; name: string; updated_at?: string; created_at?: string; metadata?: { size?: number; mimetype?: string } }>;
+          return { prefix, files };
+        }));
         if (!mounted) return;
-        const remoteItems = files
-          .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder')
+        const remoteItems = libraryResponses
+          .flatMap(({ prefix, files }) => files
+          .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder' && file.metadata?.mimetype)
           .map((file) => {
-            const storagePath = `${libraryPrefix}/${file.name}`;
+            const storagePath = `${prefix}/${file.name}`;
             return {
               id: file.id || storagePath,
               name: file.name,
@@ -1023,7 +1111,7 @@ export default function Home() {
               source: 'supabase' as const,
               mimeType: file.metadata?.mimetype
             };
-          });
+          }));
         setImageZoneItems((prev) => {
           const localItems = prev.filter((item) => item.source !== 'supabase');
           return [...remoteItems, ...localItems];
@@ -1314,6 +1402,78 @@ export default function Home() {
   const coroPricePerFullSheet = coroPricePerSign !== null ? coroPricePerSign * coroSheetLayout.signsPerSheet : null;
   const coroPricingCurrency = signEstimate?.currency || 'USD';
   const coroPricingIsLoaded = isCoroBuilder && signEstimate && signRetailTotal !== null;
+  const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);
+  const canAddCurrentDesignToCart = productMode === 'signage' && Boolean(signEstimate) && signRetailTotal !== null && signArtworkStatusOk;
+  const openTestCheckout = () => {
+    if (cartItems.length === 0) {
+      setCartStatus('Add at least one print-ready item before starting test checkout.');
+      setShowCart(true);
+      return;
+    }
+    setCheckoutContact((current) => ({
+      name: current.name || customerInfo.name,
+      organization: current.organization || customerInfo.organization,
+      email: current.email || customerSession?.user?.email || customerInfo.email,
+      phone: current.phone || customerInfo.phone,
+      notes: current.notes || customerInfo.notes
+    }));
+    setCheckoutStep('contact');
+    setCheckoutStatus('');
+    setShowTestCheckout(true);
+  };
+  const submitTestOrder = () => {
+    const contactName = checkoutContact.name.trim();
+    const contactEmail = checkoutContact.email.trim();
+    if (!contactName || !contactEmail) {
+      setCheckoutStatus('Enter a customer name and email before submitting the test order.');
+      setCheckoutStep('contact');
+      return;
+    }
+    if (checkoutFulfillment === 'direct_ship') {
+      const hasAddress = checkoutAddress.line1.trim() && checkoutAddress.city.trim() && checkoutAddress.state.trim() && checkoutAddress.postalCode.trim();
+      if (!hasAddress) {
+        setCheckoutStatus('Direct shipping needs a street address, city, state, and ZIP code.');
+        setCheckoutStep('fulfillment');
+        return;
+      }
+    }
+    const timestamp = Date.now();
+    const order: TestOrder = {
+      id: `test-order-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+      orderNumber: `TEST-${timestamp.toString().slice(-6)}`,
+      createdAt: new Date(timestamp).toISOString(),
+      status: 'test_submitted',
+      paymentMode: 'test_no_payment',
+      customer: {
+        name: contactName,
+        organization: checkoutContact.organization.trim() || undefined,
+        email: contactEmail,
+        phone: checkoutContact.phone.trim(),
+        notes: checkoutContact.notes.trim() || undefined,
+        userId: customerSession?.user?.id,
+        checkoutMode: customerSession?.user?.id ? 'account' : 'quick'
+      },
+      fulfillment: {
+        method: checkoutFulfillment,
+        address: checkoutFulfillment === 'direct_ship' ? {
+          line1: checkoutAddress.line1.trim(),
+          line2: checkoutAddress.line2.trim(),
+          city: checkoutAddress.city.trim(),
+          state: checkoutAddress.state.trim(),
+          postalCode: checkoutAddress.postalCode.trim()
+        } : undefined
+      },
+      items: cartItems,
+      subtotal: cartSubtotal,
+      currency: 'USD'
+    };
+    setTestOrders((current) => [order, ...current]);
+    setLastTestOrder(order);
+    setCartItems([]);
+    setShowCart(false);
+    setCheckoutStep('complete');
+    setCheckoutStatus(`Test order ${order.orderNumber} submitted. No payment was collected.`);
+  };
   const artworkAnalysisSummary = useMemo(() => {
     if (!artworkAnalysis) return 'No uploaded artwork analysis yet.';
     const warnings = artworkAnalysis.warnings.length ? artworkAnalysis.warnings.join('; ') : 'No first-pass warnings';
@@ -2668,6 +2828,122 @@ export default function Home() {
     }
   };
 
+  const handleAddCurrentDesignToCart = () => {
+    if (productMode !== 'signage') {
+      setCartStatus('Apparel cart support is coming next. Use sign products for this cart test.');
+      setShowCart(true);
+      return;
+    }
+    if (!signEstimate || signRetailTotal === null) {
+      setCartStatus('Run pricing before adding this item to the cart.');
+      setShowCart(true);
+      return;
+    }
+    if (!signArtworkStatusOk) {
+      setCartStatus('Resolve artwork fit or upload missing artwork before adding to cart.');
+      setShowCart(true);
+      return;
+    }
+
+    const findArtworkSource = (name: string | undefined, dataUrl: string | null | undefined) => imageZoneItems.find((item) => (name && item.name === name) || (dataUrl && item.dataUrl === dataUrl));
+    const artworkFiles: CartArtworkFile[] = [];
+    if (isCoroBuilder) {
+      coroSheetArtworkItems.forEach((item, index) => {
+        artworkFiles.push({
+          role: `Artwork set ${index + 1} front`,
+          name: item.name,
+          storagePath: item.storagePath,
+          storageUrl: item.storageUrl,
+          source: item.source,
+          previewUrl: item.dataUrl
+        });
+        if (item.backDataUrl) {
+          const backSource = item.backCopiedFromFront ? item : findArtworkSource(item.backName, item.backDataUrl);
+          artworkFiles.push({
+            role: `Artwork set ${index + 1} back`,
+            name: item.backName || `${item.name} back`,
+            storagePath: backSource?.storagePath,
+            storageUrl: backSource?.storageUrl,
+            source: backSource?.source,
+            previewUrl: item.backDataUrl
+          });
+        }
+      });
+    } else if (isBannerBuilder) {
+      bannerOrderItems.forEach((item, index) => {
+        const source = findArtworkSource(item.name, item.dataUrl);
+        artworkFiles.push({
+          role: `Banner set ${index + 1}`,
+          name: item.name,
+          storagePath: source?.storagePath,
+          storageUrl: source?.storageUrl,
+          source: source?.source,
+          previewUrl: item.dataUrl || undefined
+        });
+      });
+      if (signArtworkPreviewUrl) {
+        const source = findArtworkSource(bannerArtworkName, signArtworkPreviewUrl);
+        const alreadyIncluded = artworkFiles.some((file) => file.previewUrl === signArtworkPreviewUrl && file.name === (bannerArtworkName || source?.name));
+        if (!alreadyIncluded) artworkFiles.push({
+          role: `Banner set ${bannerOrderItems.length + 1}`,
+          name: bannerArtworkName || source?.name || 'Banner artwork',
+          storagePath: source?.storagePath,
+          storageUrl: source?.storageUrl,
+          source: source?.source,
+          previewUrl: signArtworkPreviewUrl
+        });
+      }
+    } else if (signArtworkPreviewUrl) {
+      const source = findArtworkSource(bannerArtworkName, signArtworkPreviewUrl);
+      artworkFiles.push({
+        role: 'Artwork',
+        name: bannerArtworkName || source?.name || `${selectedSignProduct.name} artwork`,
+        storagePath: source?.storagePath,
+        storageUrl: source?.storageUrl,
+        source: source?.source,
+        previewUrl: signArtworkPreviewUrl
+      });
+    }
+
+    const pricePerSheet = isCoroBuilder ? signPricePerSheet : null;
+    const cartItem: CartItem = {
+      id: `cart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      addedAt: new Date().toISOString(),
+      mode: productMode,
+      productId: selectedSignProduct.id,
+      productName: isBannerBuilder ? bannerDisplayName : selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : selectedSignProduct.name,
+      quantity: isCoroBuilder ? effectiveCoroQuantity : designerQuantity,
+      sizeLabel: `${signWidth || 0}" x ${signHeight || 0}"`,
+      optionSummary: [
+        getSignConfigurationText(selectedSignProduct, signValues),
+        isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : '',
+        isBannerBuilder ? `${bannerSquareFeet.toFixed(1)} sqft` : ''
+      ].filter(Boolean),
+      price: {
+        total: signRetailTotal,
+        each: isCoroBuilder ? coroPricePerSign : signEachTotal,
+        currency: signEstimate.currency || 'USD',
+        sheetCount: isCoroBuilder ? coroSheetLayout.sheetCount : undefined,
+        pricePerSheet
+      },
+      artworkFiles,
+      productionSummary: [
+        signArtworkStatusOk ? 'Artwork fit approved' : 'Artwork needs review',
+        isCoroBuilder ? `Sheet layout: ${coroSheetLayout.columns} across x ${coroSheetLayout.rows} down` : '',
+        hasCoroDoubleSided ? 'Double-sided CORO' : '',
+        String(signValues.sides || 'single') === 'double' && isBannerBuilder ? 'Double-sided banner' : ''
+      ].filter(Boolean),
+      customer: {
+        userId: customerSession?.user?.id,
+        email: customerSession?.user?.email,
+        checkoutMode: customerSession?.user?.id ? 'account' : 'quick'
+      }
+    };
+    setCartItems((prev) => [cartItem, ...prev]);
+    setCartStatus(`${cartItem.productName} added to cart with ${artworkFiles.length} artwork file${artworkFiles.length === 1 ? '' : 's'} attached.`);
+    setShowCart(true);
+  };
+
   useEffect(() => {
     if (!isProductionBuilder) return;
     const pricingQuantity = isCoroBuilder ? effectiveCoroQuantity : designerQuantity;
@@ -2983,7 +3259,7 @@ export default function Home() {
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
             {isProductionBuilder ? <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
             <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
-            <button className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart</button>
+            <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart{cartItems.length ? ` (${cartItems.length})` : ''}</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
         </div>
@@ -3210,6 +3486,7 @@ export default function Home() {
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
                   {isBannerBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
                   {hasCoroSheetWarning ? <button type="button" onClick={() => setShowCoroSheetWarning(true)} className="mt-3 rounded bg-red-600 px-3 py-1.5 text-xs font-black text-white shadow-[0_10px_24px_rgba(220,38,38,0.24)] hover:bg-red-500">{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0)} warning{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0) === 1 ? '' : 's'}</button> : null}
+                  {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading} className="mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSignEstimateLoading ? 'Pricing...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
                 </div>
                 <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className={`${isProductionBuilder ? 'hidden' : 'min-h-14'} bg-[#1678b8] px-4 text-sm font-bold uppercase text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70`}>{isSignEstimateLoading ? 'Pricing...' : signEstimate ? 'Update Price' : 'Price It'}</button>
               </div> : null}
@@ -3827,6 +4104,237 @@ export default function Home() {
         </section>
       </div> : null}
 
+      {showCart ? <div className="fixed inset-0 z-50 flex justify-end bg-[#02070d]/70 backdrop-blur-sm">
+        <section className="flex h-full w-[min(560px,96vw)] flex-col border-l border-[#0ea5e9]/30 bg-[#07111f] text-slate-100 shadow-[0_0_80px_rgba(0,0,0,0.55)]">
+          <div className="border-b border-white/10 bg-[linear-gradient(90deg,#07111f,#0b263d)] px-5 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Hue Cart</p>
+                <h2 className="mt-1 text-2xl font-black text-white">Print-ready order</h2>
+                <p className="mt-1 text-sm text-slate-300">{cartItems.length} item{cartItems.length === 1 ? '' : 's'} / {formatSignPrice(cartSubtotal, 'USD')} subtotal</p>
+              </div>
+              <button type="button" onClick={() => setShowCart(false)} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
+            </div>
+            {cartStatus ? <p className="mt-3 rounded border border-[#0ea5e9]/20 bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-300">{cartStatus}</p> : null}
+            {testOrders[0] ? <p className="mt-2 text-xs text-slate-400">Latest test order: <span className="font-bold text-[#9be6ff]">{testOrders[0].orderNumber}</span></p> : null}
+          </div>
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            {cartItems.length === 0 ? <div className="rounded-xl border border-dashed border-white/20 bg-white/[0.04] p-6 text-center">
+              <p className="text-lg font-black text-white">No cart items yet</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">Run pricing, make sure artwork is ready, then add the product to cart.</p>
+            </div> : cartItems.map((item, index) => <article key={item.id} className="rounded-xl border border-white/12 bg-[#0b1018]/92 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.24)]">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#62d4ff]">Item {cartItems.length - index}</p>
+                  <h3 className="mt-1 text-lg font-black text-white">{item.productName}</h3>
+                  <p className="mt-1 text-sm text-slate-300">{item.sizeLabel} / Qty {item.quantity}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xl font-black text-green-400">{item.price.total !== null ? formatSignPrice(item.price.total, item.price.currency) : 'Needs price'}</p>
+                  {item.price.each !== null ? <p className="text-xs text-slate-400">{formatSignPrice(item.price.each, item.price.currency)} each</p> : null}
+                  {item.price.pricePerSheet !== undefined && item.price.pricePerSheet !== null ? <p className="text-xs text-slate-400">{formatSignPrice(item.price.pricePerSheet, item.price.currency)} / sheet</p> : null}
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                <div className="rounded border border-white/10 bg-white/[0.04] p-3">
+                  <p className="font-black uppercase tracking-[0.14em] text-slate-400">Options</p>
+                  <div className="mt-2 space-y-1">
+                    {item.optionSummary.map((line) => <p key={line}>{line}</p>)}
+                  </div>
+                </div>
+                <div className="rounded border border-white/10 bg-white/[0.04] p-3">
+                  <p className="font-black uppercase tracking-[0.14em] text-slate-400">Production</p>
+                  <div className="mt-2 space-y-1">
+                    {item.productionSummary.map((line) => <p key={line}>{line}</p>)}
+                    <p>{item.customer.email || 'Quick checkout customer'}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 rounded border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">Attached artwork</p>
+                  <span className="rounded-full bg-[#0ea5e9]/20 px-2 py-0.5 text-xs font-bold text-[#9be6ff]">{item.artworkFiles.length}</span>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {item.artworkFiles.length === 0 ? <p className="text-xs text-amber-200">No artwork file is attached to this cart item yet.</p> : item.artworkFiles.map((file) => <div key={`${item.id}-${file.role}-${file.name}`} className="flex gap-3 rounded bg-[#02070d]/65 p-2 text-xs">
+                    {file.previewUrl ? <img src={file.previewUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-white/10 bg-white object-contain" /> : null}
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-white">{file.role}</p>
+                      <p className="truncate text-slate-300">{file.name}</p>
+                      <p className="truncate text-slate-500">{file.storagePath || 'Browser preview only'}</p>
+                    </div>
+                  </div>)}
+                </div>
+              </div>
+              <button type="button" onClick={() => setCartItems((prev) => prev.filter((entry) => entry.id !== item.id))} className="mt-3 rounded border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs font-bold uppercase text-red-100 hover:bg-red-500/20">Remove Item</button>
+            </article>)}
+          </div>
+          <div className="border-t border-white/10 bg-[#050b12] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Subtotal</p>
+                <p className="text-2xl font-black text-green-400">{formatSignPrice(cartSubtotal, 'USD')}</p>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setCartItems([]); setCartStatus('Cart cleared.'); }} disabled={cartItems.length === 0} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-red-400/60 disabled:cursor-not-allowed disabled:opacity-40">Clear</button>
+                <button type="button" onClick={openTestCheckout} disabled={cartItems.length === 0} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(14,165,233,0.20)] hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Test Checkout</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div> : null}
+
+      {showTestCheckout ? <div className="fixed inset-0 z-[55] flex items-center justify-center bg-[#02070d]/78 p-4 backdrop-blur-md">
+        <section className="flex max-h-[92vh] w-[min(780px,96vw)] flex-col overflow-hidden rounded-2xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_0_90px_rgba(14,165,233,0.22)]">
+          <div className="border-b border-white/10 bg-[linear-gradient(135deg,#07111f,#0b263d_58%,#102b45)] px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#62d4ff]">Test Checkout</p>
+                <h2 className="mt-1 text-2xl font-black text-white">{checkoutStep === 'complete' ? 'Order submitted' : 'Print-ready checkout'}</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-300">No payment will be collected. This creates a realistic test order for your team to review.</p>
+              </div>
+              <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
+            </div>
+            <div className="mt-5 grid grid-cols-4 gap-2 text-center text-[10px] font-black uppercase tracking-[0.14em]">
+              {(['contact', 'fulfillment', 'review', 'complete'] as const).map((step) => <span key={step} className={`rounded-full border px-2 py-2 ${checkoutStep === step ? 'border-[#62d4ff] bg-[#0ea5e9]/25 text-white' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}>{step === 'fulfillment' ? 'Delivery' : step}</span>)}
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
+            {checkoutStatus ? <p className="mb-4 rounded border border-[#0ea5e9]/25 bg-white/[0.04] px-4 py-3 text-sm leading-6 text-slate-200">{checkoutStatus}</p> : null}
+
+            {checkoutStep === 'contact' ? <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-black text-white">Customer contact</h3>
+                <p className="mt-1 text-sm text-slate-400">This is the info your team will use to identify the test order.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="text-sm font-bold text-slate-200">Name
+                  <input value={checkoutContact.name} onChange={(event) => setCheckoutContact((current) => ({ ...current, name: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200">Email
+                  <input type="email" value={checkoutContact.email} onChange={(event) => setCheckoutContact((current) => ({ ...current, email: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200">Phone
+                  <input value={checkoutContact.phone} onChange={(event) => setCheckoutContact((current) => ({ ...current, phone: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200">Organization
+                  <input value={checkoutContact.organization} onChange={(event) => setCheckoutContact((current) => ({ ...current, organization: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+              </div>
+              <label className="block text-sm font-bold text-slate-200">Order notes
+                <textarea value={checkoutContact.notes} onChange={(event) => setCheckoutContact((current) => ({ ...current, notes: event.target.value }))} rows={3} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+              </label>
+            </div> : null}
+
+            {checkoutStep === 'fulfillment' ? <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-black text-white">Fulfillment</h3>
+                <p className="mt-1 text-sm text-slate-400">Choose how this order should be handled in the test run.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button type="button" onClick={() => setCheckoutFulfillment('pickup')} className={`rounded-xl border px-4 py-4 text-left ${checkoutFulfillment === 'pickup' ? 'border-[#62d4ff] bg-[#0ea5e9]/20' : 'border-white/12 bg-white/[0.04] hover:border-[#0ea5e9]/45'}`}>
+                  <span className="block text-sm font-black uppercase text-white">Local pickup</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-300">Customer picks up from Hue after production.</span>
+                </button>
+                <button type="button" onClick={() => setCheckoutFulfillment('direct_ship')} className={`rounded-xl border px-4 py-4 text-left ${checkoutFulfillment === 'direct_ship' ? 'border-[#62d4ff] bg-[#0ea5e9]/20' : 'border-white/12 bg-white/[0.04] hover:border-[#0ea5e9]/45'}`}>
+                  <span className="block text-sm font-black uppercase text-white">Direct ship</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-300">Ship the finished order directly to the customer.</span>
+                </button>
+              </div>
+              {checkoutFulfillment === 'direct_ship' ? <div className="grid gap-4 rounded-xl border border-white/10 bg-white/[0.04] p-4 sm:grid-cols-2">
+                <label className="text-sm font-bold text-slate-200 sm:col-span-2">Street address
+                  <input value={checkoutAddress.line1} onChange={(event) => setCheckoutAddress((current) => ({ ...current, line1: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200 sm:col-span-2">Apt, suite, or unit
+                  <input value={checkoutAddress.line2} onChange={(event) => setCheckoutAddress((current) => ({ ...current, line2: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200">City
+                  <input value={checkoutAddress.city} onChange={(event) => setCheckoutAddress((current) => ({ ...current, city: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200">State
+                  <input value={checkoutAddress.state} onChange={(event) => setCheckoutAddress((current) => ({ ...current, state: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+                <label className="text-sm font-bold text-slate-200">ZIP code
+                  <input value={checkoutAddress.postalCode} onChange={(event) => setCheckoutAddress((current) => ({ ...current, postalCode: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
+                </label>
+              </div> : null}
+            </div> : null}
+
+            {checkoutStep === 'review' ? <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-black text-white">Review test order</h3>
+                <p className="mt-1 text-sm text-slate-400">This snapshot includes products, pricing, options, and artwork references.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-[#62d4ff]">Customer</p>
+                  <p className="mt-2 font-bold text-white">{checkoutContact.name || 'Name missing'}</p>
+                  <p className="text-sm text-slate-300">{checkoutContact.email || 'Email missing'}</p>
+                  <p className="text-sm text-slate-400">{checkoutContact.phone || 'No phone entered'}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-[#62d4ff]">Fulfillment</p>
+                  <p className="mt-2 font-bold text-white">{checkoutFulfillment === 'pickup' ? 'Local pickup' : 'Direct ship'}</p>
+                  <p className="text-sm text-slate-300">{checkoutFulfillment === 'pickup' ? 'No shipping address needed.' : `${checkoutAddress.line1}, ${checkoutAddress.city}, ${checkoutAddress.state} ${checkoutAddress.postalCode}`}</p>
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-[#62d4ff]">Items</p>
+                  <p className="text-xl font-black text-green-400">{formatSignPrice(cartSubtotal, 'USD')}</p>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {cartItems.map((item) => <div key={`review-${item.id}`} className="rounded border border-white/10 bg-[#02070d]/65 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-black text-white">{item.productName}</p>
+                        <p className="text-sm text-slate-300">{item.sizeLabel} / Qty {item.quantity}</p>
+                      </div>
+                      <p className="font-black text-green-400">{item.price.total !== null ? formatSignPrice(item.price.total, item.price.currency) : 'Needs price'}</p>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">{item.artworkFiles.length} attached artwork file{item.artworkFiles.length === 1 ? '' : 's'}</p>
+                  </div>)}
+                </div>
+              </div>
+              <p className="rounded border border-[#62d4ff]/25 bg-[#0ea5e9]/10 px-4 py-3 text-sm text-[#c8f2ff]">Test checkout only. No card is charged and no production order is sent yet.</p>
+            </div> : null}
+
+            {checkoutStep === 'complete' ? <div className="space-y-4 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#62d4ff]/40 bg-[#0ea5e9]/20 text-2xl font-black text-[#9be6ff]">HX</div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-[#62d4ff]">Test order number</p>
+                <h3 className="mt-2 text-4xl font-black text-white">{lastTestOrder?.orderNumber || 'TEST SAVED'}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">No payment was collected. The cart was cleared and the test order was saved in this browser for workflow testing.</p>
+              </div>
+              {lastTestOrder ? <div className="mx-auto grid max-w-xl gap-3 text-left sm:grid-cols-3">
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-xs text-slate-400">Items</p>
+                  <p className="mt-1 text-2xl font-black text-white">{lastTestOrder.items.length}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-xs text-slate-400">Artwork files</p>
+                  <p className="mt-1 text-2xl font-black text-white">{lastTestOrder.items.reduce((total, item) => total + item.artworkFiles.length, 0)}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-xs text-slate-400">Total</p>
+                  <p className="mt-1 text-2xl font-black text-green-400">{formatSignPrice(lastTestOrder.subtotal, lastTestOrder.currency)}</p>
+                </div>
+              </div> : null}
+            </div> : null}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050b12] p-4">
+            <p className="text-xs leading-5 text-slate-400">Team testing mode. Real payment and final order automation can plug into this same order shape later.</p>
+            <div className="flex gap-2">
+              {checkoutStep !== 'contact' && checkoutStep !== 'complete' ? <button type="button" onClick={() => setCheckoutStep(checkoutStep === 'review' ? 'fulfillment' : 'contact')} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Back</button> : null}
+              {checkoutStep === 'contact' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('fulfillment'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Continue</button> : null}
+              {checkoutStep === 'fulfillment' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('review'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Review Order</button> : null}
+              {checkoutStep === 'review' ? <button type="button" onClick={submitTestOrder} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a]">Submit Test Order</button> : null}
+              {checkoutStep === 'complete' ? <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Done</button> : null}
+            </div>
+          </div>
+        </section>
+      </div> : null}
+
       {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
         <section className="flex h-[min(760px,86vh)] w-[min(1320px,94vw)] flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#f5f7fa] text-slate-950 shadow-[0_28px_80px_rgba(0,0,0,0.45)]">
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-5 py-4">
@@ -3907,7 +4415,7 @@ export default function Home() {
             <p className="truncate text-slate-600">{productMode === 'apparel' ? `${selectedColorName} / Qty: ${totalQuantity} / Est: $${displayedPerShirt.toFixed(2)}/ea` : isCoroBuilder ? `${signWidth}" x ${signHeight}" / Qty ${designerQuantity} / ${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'}` : `Qty: ${designerQuantity} / Est: ${signEstimate ? formatSignPrice(signEstimate.price?.each, signEstimate.currency) + '/ea' : 'Run sign estimate'}`}</p>
           </div>
           <button onClick={saveDraftToLocal} className={`rounded-md border border-[#1678b8] bg-white px-4 py-3 font-bold text-[#1678b8] hover:bg-[#eaf5fb] ${isCoroBuilder ? 'hidden sm:block' : ''}`}>{isCoroBuilder ? 'Save' : 'Save | Share'}</button>
-          <button onClick={productMode === 'apparel' ? requestApparelEstimate : requestSignEstimate} className="rounded-md bg-[#1f73be] px-5 py-3 font-bold text-white hover:bg-[#2a86d8]">{productMode === 'apparel' ? 'Get Price' : isCoroBuilder && signEstimate ? 'Add to Cart' : 'Price It'}</button>
+          <button onClick={productMode === 'apparel' ? requestApparelEstimate : canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} className="rounded-md bg-[#1f73be] px-5 py-3 font-bold text-white hover:bg-[#2a86d8]">{productMode === 'apparel' ? 'Get Price' : canAddCurrentDesignToCart ? 'Add to Cart' : 'Price It'}</button>
         </div>
       </div>
       </>
