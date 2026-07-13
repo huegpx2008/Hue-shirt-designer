@@ -56,13 +56,15 @@ type TestOrder = {
   createdAt: string;
   status: 'test_submitted';
   paymentMode: 'test_no_payment';
-  customer: { name: string; organization?: string; email: string; phone: string; notes?: string; userId?: string; checkoutMode: 'account' | 'quick' };
+  customer: { name: string; organization?: string; email: string; phone: string; notes?: string; taxExempt: boolean; userId?: string; checkoutMode: 'account' | 'quick' };
   fulfillment: {
     method: CheckoutFulfillment;
     address?: { line1: string; line2: string; city: string; state: string; postalCode: string };
   };
   items: CartItem[];
   subtotal: number;
+  tax: { rate: number; amount: number; label: string };
+  total: number;
   currency: string;
 };
 type SanMarPreviewItem = { styleNumber: string; productName: string; brand: string; category?: string; colorName: string; availableSizes: string[]; frontModelImageUrl?: string; backModelImageUrl?: string; frontFlatImageUrl?: string; backFlatImageUrl?: string; productImageUrl?: string; colorSwatchImageUrl?: string };
@@ -102,6 +104,8 @@ const SUPABASE_LIBRARY_PREFIX = 'test-library';
 const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
+const GEORGIA_SALES_TAX_RATE = 0.08;
+const GEORGIA_SALES_TAX_LABEL = 'GA sales tax';
 const isSupabaseStorageConfigured = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && SUPABASE_STORAGE_BUCKET);
 
 const getSupabaseStorageHeaders = (accessToken?: string) => ({
@@ -993,6 +997,7 @@ export default function Home() {
   const [checkoutStep, setCheckoutStep] = useState<'contact' | 'fulfillment' | 'review' | 'complete'>('contact');
   const [checkoutStatus, setCheckoutStatus] = useState('');
   const [checkoutContact, setCheckoutContact] = useState({ name: '', organization: '', email: '', phone: '', notes: '' });
+  const [checkoutTaxExempt, setCheckoutTaxExempt] = useState(false);
   const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
   const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
   const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
@@ -1403,6 +1408,12 @@ export default function Home() {
   const coroPricingCurrency = signEstimate?.currency || 'USD';
   const coroPricingIsLoaded = isCoroBuilder && signEstimate && signRetailTotal !== null;
   const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);
+  const checkoutShipState = checkoutAddress.state.trim().toUpperCase();
+  const checkoutIsGeorgiaOrder = checkoutFulfillment === 'pickup' || checkoutShipState === 'GA' || checkoutShipState === 'GEORGIA';
+  const checkoutTaxRate = checkoutTaxExempt || !checkoutIsGeorgiaOrder ? 0 : GEORGIA_SALES_TAX_RATE;
+  const checkoutTaxAmount = Number((cartSubtotal * checkoutTaxRate).toFixed(2));
+  const checkoutOrderTotal = Number((cartSubtotal + checkoutTaxAmount).toFixed(2));
+  const checkoutTaxLabel = checkoutTaxExempt ? 'Tax exempt' : checkoutIsGeorgiaOrder ? `${GEORGIA_SALES_TAX_LABEL} (${(GEORGIA_SALES_TAX_RATE * 100).toFixed(2)}%)` : 'No GA tax for out-of-state shipping';
   const canAddCurrentDesignToCart = productMode === 'signage' && Boolean(signEstimate) && signRetailTotal !== null && signArtworkStatusOk;
   const openTestCheckout = () => {
     if (cartItems.length === 0) {
@@ -1450,6 +1461,7 @@ export default function Home() {
         email: contactEmail,
         phone: checkoutContact.phone.trim(),
         notes: checkoutContact.notes.trim() || undefined,
+        taxExempt: checkoutTaxExempt,
         userId: customerSession?.user?.id,
         checkoutMode: customerSession?.user?.id ? 'account' : 'quick'
       },
@@ -1465,6 +1477,8 @@ export default function Home() {
       },
       items: cartItems,
       subtotal: cartSubtotal,
+      tax: { rate: checkoutTaxRate, amount: checkoutTaxAmount, label: checkoutTaxLabel },
+      total: checkoutOrderTotal,
       currency: 'USD'
     };
     setTestOrders((current) => [order, ...current]);
@@ -4224,6 +4238,13 @@ export default function Home() {
               <label className="block text-sm font-bold text-slate-200">Order notes
                 <textarea value={checkoutContact.notes} onChange={(event) => setCheckoutContact((current) => ({ ...current, notes: event.target.value }))} rows={3} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
               </label>
+              <label className={`flex gap-3 rounded-xl border p-4 ${checkoutTaxExempt ? 'border-[#62d4ff] bg-[#0ea5e9]/15' : 'border-white/10 bg-white/[0.04]'}`}>
+                <input type="checkbox" checked={checkoutTaxExempt} onChange={(event) => setCheckoutTaxExempt(event.target.checked)} className="mt-1 h-4 w-4 accent-[#1678b8]" />
+                <span>
+                  <span className="block text-sm font-black text-white">Tax exempt customer</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-300">Only use this when Hue has a valid tax exemption form on file. If this is a new tax-exempt customer, they need to email the proper form before the order is processed.</span>
+                </span>
+              </label>
             </div> : null}
 
             {checkoutStep === 'fulfillment' ? <div className="space-y-4">
@@ -4271,6 +4292,7 @@ export default function Home() {
                   <p className="mt-2 font-bold text-white">{checkoutContact.name || 'Name missing'}</p>
                   <p className="text-sm text-slate-300">{checkoutContact.email || 'Email missing'}</p>
                   <p className="text-sm text-slate-400">{checkoutContact.phone || 'No phone entered'}</p>
+                  {checkoutTaxExempt ? <p className="mt-2 rounded bg-[#0ea5e9]/15 px-2 py-1 text-xs font-bold text-[#9be6ff]">Tax exempt pending valid form</p> : null}
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-[#62d4ff]">Fulfillment</p>
@@ -4281,7 +4303,7 @@ export default function Home() {
               <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-[#62d4ff]">Items</p>
-                  <p className="text-xl font-black text-green-400">{formatSignPrice(cartSubtotal, 'USD')}</p>
+                  <p className="text-xl font-black text-green-400">{formatSignPrice(checkoutOrderTotal, 'USD')}</p>
                 </div>
                 <div className="mt-3 space-y-3">
                   {cartItems.map((item) => <div key={`review-${item.id}`} className="rounded border border-white/10 bg-[#02070d]/65 p-3">
@@ -4294,6 +4316,20 @@ export default function Home() {
                     </div>
                     <p className="mt-2 text-xs text-slate-400">{item.artworkFiles.length} attached artwork file{item.artworkFiles.length === 1 ? '' : 's'}</p>
                   </div>)}
+                </div>
+                <div className="mt-4 space-y-2 border-t border-white/10 pt-4 text-sm">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>Subtotal</span>
+                    <span>{formatSignPrice(cartSubtotal, 'USD')}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4 text-slate-300">
+                    <span>{checkoutTaxLabel}</span>
+                    <span>{formatSignPrice(checkoutTaxAmount, 'USD')}</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 text-lg font-black text-white">
+                    <span>Test total</span>
+                    <span className="text-green-400">{formatSignPrice(checkoutOrderTotal, 'USD')}</span>
+                  </div>
                 </div>
               </div>
               <p className="rounded border border-[#62d4ff]/25 bg-[#0ea5e9]/10 px-4 py-3 text-sm text-[#c8f2ff]">Test checkout only. No card is charged and no production order is sent yet.</p>
@@ -4317,7 +4353,8 @@ export default function Home() {
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                   <p className="text-xs text-slate-400">Total</p>
-                  <p className="mt-1 text-2xl font-black text-green-400">{formatSignPrice(lastTestOrder.subtotal, lastTestOrder.currency)}</p>
+                  <p className="mt-1 text-2xl font-black text-green-400">{formatSignPrice(lastTestOrder.total, lastTestOrder.currency)}</p>
+                  <p className="mt-1 text-xs text-slate-400">{lastTestOrder.tax.label}: {formatSignPrice(lastTestOrder.tax.amount, lastTestOrder.currency)}</p>
                 </div>
               </div> : null}
             </div> : null}
