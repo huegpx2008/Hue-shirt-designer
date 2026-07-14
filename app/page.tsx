@@ -1,7 +1,8 @@
 'use client';
 
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { ActiveSelection, Canvas, FabricImage, IText, Object as FabricObject } from 'fabric';
+import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, IText, Line, Object as FabricObject, Path, Rect, Shadow, Triangle, filters } from 'fabric';
+import QRCode from 'qrcode';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
@@ -13,9 +14,12 @@ import catalogAuditData from '@/public/data/catalog/catalog-audit.generated.json
 
 type ShirtView = 'front' | 'back';
 type FontOption = { label: string; value: string };
-type LayerItem = { id: string; name: string; type: string; isActive: boolean };
+type LayerItem = { id: string; name: string; type: string; isActive: boolean; isLocked?: boolean };
+type NewArtworkPreset = { width: number; height: number; label?: string; popular?: boolean };
+type NewArtworkPresetGroup = { id: string; label: string; description: string; sizes: NewArtworkPreset[] };
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string };
+type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type BannerOrderItem = { id: string; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState };
 type CoroArtworkQuantityMap = Record<string, number>;
 type CoroArtworkSide = 'front' | 'back';
@@ -367,13 +371,87 @@ const LOCAL_DRAFT_KEY = 'hue-shirt-designer:draft';
 const MOCKUP_CANVAS_WIDTH = 420;
 const MOCKUP_CANVAS_HEIGHT = 520;
 
+const NEW_ARTWORK_PRESET_GROUPS: NewArtworkPresetGroup[] = [
+  { id: 'yard-signs', label: 'Yard Signs', description: 'Coroplast yard and campaign signs', sizes: [
+    { width: 24, height: 18, popular: true }, { width: 18, height: 12, popular: true }, { width: 24, height: 24 }, { width: 36, height: 24, popular: true }
+  ] },
+  { id: 'aluminum-acm', label: 'Aluminum / ACM', description: 'Rigid outdoor and business signs', sizes: [
+    { width: 18, height: 12, popular: true }, { width: 24, height: 18, popular: true }, { width: 24, height: 24 }, { width: 36, height: 24, popular: true }, { width: 36, height: 36 }, { width: 48, height: 36, popular: true }, { width: 48, height: 48 }
+  ] },
+  { id: 'wall-business', label: 'Wall / Business', description: 'Larger storefront and wall signage', sizes: [
+    { width: 36, height: 24, popular: true }, { width: 48, height: 36, popular: true }, { width: 48, height: 48 }, { width: 72, height: 48 }, { width: 96, height: 48, popular: true }
+  ] },
+  { id: 'real-estate', label: 'Real Estate', description: 'Listing, directional, and open-house signs', sizes: [
+    { width: 24, height: 18, popular: true }, { width: 24, height: 24 }, { width: 36, height: 24, popular: true }
+  ] },
+  { id: 'political', label: 'Political Signs', description: 'Campaign and election yard signs', sizes: [
+    { width: 18, height: 12, popular: true }, { width: 24, height: 18, popular: true }
+  ] },
+  { id: 'parking', label: 'Parking / Regulatory', description: 'Parking, safety, and regulatory signs', sizes: [
+    { width: 18, height: 12, popular: true }, { width: 24, height: 18, popular: true }
+  ] },
+  { id: 'banners', label: 'Banners', description: 'Small through large outdoor banners', sizes: [
+    { width: 36, height: 24, label: `3' × 2'` }, { width: 48, height: 24, label: `4' × 2'`, popular: true }, { width: 72, height: 24, label: `6' × 2'`, popular: true }, { width: 96, height: 24, label: `8' × 2'`, popular: true },
+    { width: 48, height: 36, label: `4' × 3'` }, { width: 72, height: 36, label: `6' × 3'`, popular: true }, { width: 96, height: 36, label: `8' × 3'`, popular: true }, { width: 120, height: 36, label: `10' × 3'`, popular: true }, { width: 144, height: 36, label: `12' × 3'` },
+    { width: 72, height: 48, label: `6' × 4'` }, { width: 96, height: 48, label: `8' × 4'`, popular: true }, { width: 120, height: 48, label: `10' × 4'`, popular: true }, { width: 144, height: 48, label: `12' × 4'`, popular: true }, { width: 192, height: 48, label: `16' × 4'` },
+    { width: 120, height: 60, label: `10' × 5'`, popular: true }, { width: 180, height: 60, label: `15' × 5'` }, { width: 240, height: 60, label: `20' × 5'` }, { width: 144, height: 72, label: `12' × 6'`, popular: true }, { width: 240, height: 72, label: `20' × 6'` }
+  ] }
+];
+
+const getRecommendedBorderSize = (width?: number, height?: number) => {
+  const longestSide = Math.max(Number(width) || 0, Number(height) || 0);
+  if (longestSide > 192) return { inset: 2, thickness: 1.5 };
+  if (longestSide > 120) return { inset: 1.5, thickness: 1.25 };
+  if (longestSide > 72) return { inset: 1, thickness: 1 };
+  if (longestSide > 36) return { inset: 0.75, thickness: 0.75 };
+  return { inset: 0.5, thickness: 0.5 };
+};
+
 const FONT_OPTIONS: FontOption[] = [
+  { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Arial Black', value: 'Arial Black, Arial, sans-serif' },
+  { label: 'Impact', value: 'Impact, Haettenschweiler, Arial Narrow Bold, sans-serif' },
+  { label: 'Franklin Gothic', value: 'Franklin Gothic Medium, Arial Narrow, Arial, sans-serif' },
+  { label: 'Century Gothic', value: 'Century Gothic, Futura, Arial, sans-serif' },
+  { label: 'Trebuchet', value: 'Trebuchet MS, Arial, sans-serif' },
+  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+  { label: 'Tahoma', value: 'Tahoma, Geneva, sans-serif' },
   { label: 'Inter', value: 'Inter, Arial, sans-serif' },
   { label: 'Poppins', value: 'Poppins, Arial, sans-serif' },
   { label: 'Montserrat', value: 'Montserrat, Arial, sans-serif' },
   { label: 'Georgia', value: 'Georgia, serif' },
-  { label: 'Courier New', value: 'Courier New, monospace' }
+  { label: 'Times New Roman', value: 'Times New Roman, Times, serif' },
+  { label: 'Garamond', value: 'Garamond, Baskerville, Georgia, serif' },
+  { label: 'Palatino', value: 'Palatino Linotype, Book Antiqua, Palatino, serif' },
+  { label: 'Rockwell', value: 'Rockwell, Rockwell Extra Bold, Georgia, serif' },
+  { label: 'Copperplate', value: 'Copperplate, Copperplate Gothic Light, serif' },
+  { label: 'Courier New', value: 'Courier New, Courier, monospace' },
+  { label: 'Lucida Console', value: 'Lucida Console, Monaco, monospace' },
+  { label: 'Brush Script', value: 'Brush Script MT, Segoe Script, cursive' },
+  { label: 'Comic Sans', value: 'Comic Sans MS, Comic Sans, cursive' }
 ];
+
+const ARTWORK_EDITOR_TEMPLATES = [
+  { id: 'yard-sale', label: 'Yard Sale', headline: 'YARD SALE', detail: 'SATURDAY 8 AM – 2 PM', color: '#dc2626', accent: '#facc15' },
+  { id: 'open-house', label: 'Open House', headline: 'OPEN HOUSE', detail: 'TODAY • 12 PM – 4 PM', color: '#0b1f44', accent: '#0ea5e9' },
+  { id: 'grand-opening', label: 'Grand Opening', headline: 'GRAND OPENING', detail: 'JOIN US THIS WEEKEND', color: '#7c2d12', accent: '#fb923c' },
+  { id: 'now-hiring', label: 'Now Hiring', headline: 'NOW HIRING', detail: 'APPLY INSIDE', color: '#0f172a', accent: '#16a34a' },
+  { id: 'for-sale', label: 'For Sale', headline: 'FOR SALE', detail: 'CALL FOR DETAILS', color: '#991b1b', accent: '#1d4ed8' },
+  { id: 'no-parking', label: 'No Parking', headline: 'NO PARKING', detail: 'AUTHORIZED VEHICLES ONLY', color: '#b91c1c', accent: '#111827' },
+  { id: 'directional', label: 'Directional', headline: 'THIS WAY →', detail: 'WELCOME', color: '#0b1f44', accent: '#0ea5e9' },
+  { id: 'vote', label: 'Campaign', headline: 'VOTE', detail: 'ELECTION DAY', color: '#1e3a8a', accent: '#dc2626' }
+] as const;
+
+const ARTWORK_EDITOR_ICONS = [
+  ['★', 'Star', 'favorite rating'], ['☆', 'Outline Star', 'favorite rating'], ['➜', 'Right Arrow', 'direction arrow'], ['←', 'Left Arrow', 'direction arrow'],
+  ['↑', 'Up Arrow', 'direction arrow'], ['↓', 'Down Arrow', 'direction arrow'], ['✓', 'Check', 'approved yes'], ['✕', 'X Mark', 'no close'],
+  ['●', 'Dot', 'circle bullet'], ['◆', 'Diamond', 'shape'], ['♥', 'Heart', 'love'], ['⌂', 'Home', 'house real estate'],
+  ['☎', 'Phone', 'call contact'], ['✉', 'Mail', 'email contact'], ['⌖', 'Location', 'map pin'], ['ⓘ', 'Information', 'info'],
+  ['⚠', 'Warning', 'caution'], ['♿', 'Accessible', 'accessibility handicap'], ['Ⓟ', 'Parking', 'parking'], ['⊘', 'Prohibited', 'no prohibited'],
+  ['$', 'Dollar', 'sale price'], ['%', 'Percent', 'sale discount'], ['☀', 'Sun', 'weather'], ['☁', 'Cloud', 'weather'],
+  ['✦', 'Sparkle', 'shine'], ['⚑', 'Flag', 'banner'], ['✂', 'Scissors', 'cut'], ['☕', 'Coffee', 'food drink'],
+  ['⚙', 'Gear', 'service'], ['♻', 'Recycle', 'green'], ['◀', 'Left Chevron', 'direction'], ['▶', 'Right Chevron', 'direction']
+] as const;
 
 const SIZE_FIELDS: SizeKey[] = ['YS', 'YM', 'YL', 'YXL', 'AS', 'AM', 'AL', 'AXL', '2XL', '3XL', '4XL'];
 
@@ -430,7 +508,8 @@ const getArtworkPrintSize = (width: number, height: number) => ({
   height: Math.max(1, Number((height / BANNER_PREVIEW_DPI).toFixed(2)))
 });
 
-const formatArtworkInches = (width: number, height: number) => {
+const formatArtworkInches = (width: number, height: number, signWidth?: number, signHeight?: number) => {
+  if (signWidth && signHeight) return `${signWidth}\u2033 \u00d7 ${signHeight}\u2033`;
   if (!width || !height) return 'Size unavailable';
   const printSize = getArtworkPrintSize(width, height);
   return `${printSize.width}\u2033 \u00d7 ${printSize.height}\u2033`;
@@ -1166,6 +1245,76 @@ export default function Home() {
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
+  const [showAiImageEditor, setShowAiImageEditor] = useState(false);
+  const [aiEditPrompt, setAiEditPrompt] = useState('');
+  const [aiEditAction, setAiEditAction] = useState<'restore' | 'remove-background' | 'remove' | 'background' | 'recolor' | 'replace'>('restore');
+  const [aiEditTargetColor, setAiEditTargetColor] = useState('#0ea5e9');
+  const [aiEditQuality, setAiEditQuality] = useState<'low' | 'medium' | 'high'>('low');
+  const [aiEditStatus, setAiEditStatus] = useState('');
+  const [isAiEditing, setIsAiEditing] = useState(false);
+  const [aiEditPreview, setAiEditPreview] = useState<{ dataUrl: string; width: number; height: number; source: ImageZoneItem } | null>(null);
+  const [showArtworkEditor, setShowArtworkEditor] = useState(false);
+  const [showNewArtworkDialog, setShowNewArtworkDialog] = useState(false);
+  const [newArtworkPresetGroupId, setNewArtworkPresetGroupId] = useState('yard-signs');
+  const [newArtworkPresetKey, setNewArtworkPresetKey] = useState('24x18');
+  const [newArtworkUseCustomSize, setNewArtworkUseCustomSize] = useState(false);
+  const [newArtworkCustomWidth, setNewArtworkCustomWidth] = useState(24);
+  const [newArtworkCustomHeight, setNewArtworkCustomHeight] = useState(18);
+  const [newArtworkError, setNewArtworkError] = useState('');
+  const [artworkEditorSource, setArtworkEditorSource] = useState<ImageZoneItem | null>(null);
+  const [artworkEditorSide, setArtworkEditorSide] = useState<CoroArtworkSide>('front');
+  const [artworkEditorHasBackSide, setArtworkEditorHasBackSide] = useState(false);
+  const [artworkEditorStatus, setArtworkEditorStatus] = useState('');
+  const [isArtworkEditorSaving, setIsArtworkEditorSaving] = useState(false);
+  const [artworkEditorLayers, setArtworkEditorLayers] = useState<LayerItem[]>([]);
+  const [artworkEditorActiveObject, setArtworkEditorActiveObject] = useState<FabricObject | null>(null);
+  const [artworkEditorText, setArtworkEditorText] = useState('Your text');
+  const [artworkEditorFont, setArtworkEditorFont] = useState(FONT_OPTIONS[0].value);
+  const [artworkEditorFontSize, setArtworkEditorFontSize] = useState(54);
+  const [artworkEditorCharSpacing, setArtworkEditorCharSpacing] = useState(0);
+  const [artworkEditorLineHeight, setArtworkEditorLineHeight] = useState(1.16);
+  const [artworkEditorFill, setArtworkEditorFill] = useState('#0b1f44');
+  const [artworkEditorStroke, setArtworkEditorStroke] = useState('#ffffff');
+  const [artworkEditorStrokeWidth, setArtworkEditorStrokeWidth] = useState(0);
+  const [artworkEditorOpacity, setArtworkEditorOpacity] = useState(100);
+  const [artworkEditorBackground, setArtworkEditorBackground] = useState('#ffffff');
+  const [artworkEditorBorderInset, setArtworkEditorBorderInset] = useState(0.5);
+  const [artworkEditorBorderThickness, setArtworkEditorBorderThickness] = useState(0.5);
+  const [artworkEditorBorderColor, setArtworkEditorBorderColor] = useState('#0b1f44');
+  const [artworkEditorZoom, setArtworkEditorZoom] = useState(1);
+  const [artworkEditorSnapToCenter, setArtworkEditorSnapToCenter] = useState(true);
+  const [artworkEditorShowGuides, setArtworkEditorShowGuides] = useState(true);
+  const [artworkEditorVerticalGuides, setArtworkEditorVerticalGuides] = useState<number[]>([]);
+  const [artworkEditorHorizontalGuides, setArtworkEditorHorizontalGuides] = useState<number[]>([]);
+  const [artworkEditorTextCurve, setArtworkEditorTextCurve] = useState(0);
+  const [artworkEditorTextBoxColor, setArtworkEditorTextBoxColor] = useState('#ffffff');
+  const [artworkEditorTextBoxPadding, setArtworkEditorTextBoxPadding] = useState(18);
+  const [artworkEditorOuterOutlineColor, setArtworkEditorOuterOutlineColor] = useState('#0ea5e9');
+  const [artworkEditorOuterOutlineWidth, setArtworkEditorOuterOutlineWidth] = useState(8);
+  const [artworkEditorShadowColor, setArtworkEditorShadowColor] = useState('#000000');
+  const [artworkEditorShadowOpacity, setArtworkEditorShadowOpacity] = useState(45);
+  const [artworkEditorShadowBlur, setArtworkEditorShadowBlur] = useState(12);
+  const [artworkEditorShadowOffsetX, setArtworkEditorShadowOffsetX] = useState(8);
+  const [artworkEditorShadowOffsetY, setArtworkEditorShadowOffsetY] = useState(8);
+  const [artworkEditorRecentColors, setArtworkEditorRecentColors] = useState<string[]>([]);
+  const [artworkEditorBrandColors, setArtworkEditorBrandColors] = useState<string[]>(['#0b1f44', '#0ea5e9', '#ffffff']);
+  const [artworkEditorIconSearch, setArtworkEditorIconSearch] = useState('');
+  const [artworkEditorCrop, setArtworkEditorCrop] = useState({ left: 0, right: 0, top: 0, bottom: 0 });
+  const [artworkEditorGradientStart, setArtworkEditorGradientStart] = useState('#0ea5e9');
+  const [artworkEditorGradientEnd, setArtworkEditorGradientEnd] = useState('#0b1f44');
+  const [artworkEditorQrValue, setArtworkEditorQrValue] = useState('https://huegraphics.cc');
+  const [artworkEditorBrightness, setArtworkEditorBrightness] = useState(0);
+  const [artworkEditorContrast, setArtworkEditorContrast] = useState(0);
+  const [artworkEditorSaturation, setArtworkEditorSaturation] = useState(0);
+  const [artworkEditorExactX, setArtworkEditorExactX] = useState(0);
+  const [artworkEditorExactY, setArtworkEditorExactY] = useState(0);
+  const [artworkEditorExactWidth, setArtworkEditorExactWidth] = useState(0);
+  const [artworkEditorExactHeight, setArtworkEditorExactHeight] = useState(0);
+  const [artworkEditorExactRotation, setArtworkEditorExactRotation] = useState(0);
+  const [artworkEditorVersions, setArtworkEditorVersions] = useState<Array<{ id: string; label: string; front: string | null; back: string | null }>>([]);
+  const [artworkEditorReloadKey, setArtworkEditorReloadKey] = useState(0);
+  const [artworkEditorCanUndo, setArtworkEditorCanUndo] = useState(false);
+  const [artworkEditorCanRedo, setArtworkEditorCanRedo] = useState(false);
   const [customerSession, setCustomerSession] = useState<CustomerSession | null>(null);
   const [showCustomerLogin, setShowCustomerLogin] = useState(false);
   const [customerAuthMode, setCustomerAuthMode] = useState<'signin' | 'signup'>('signin');
@@ -1204,8 +1353,31 @@ export default function Home() {
   const importQuotePackageInputRef = useRef<HTMLInputElement | null>(null);
   const artworkUploadInputRef = useRef<HTMLInputElement | null>(null);
   const imageZoneUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const artworkEditorCanvasElRef = useRef<HTMLCanvasElement | null>(null);
+  const artworkEditorViewportRef = useRef<HTMLDivElement | null>(null);
+  const artworkEditorImageInputRef = useRef<HTMLInputElement | null>(null);
+  const artworkEditorCanvasRef = useRef<Canvas | null>(null);
+  const artworkEditorHistoryRef = useRef<string[]>([]);
+  const artworkEditorHistoryIndexRef = useRef(-1);
+  const artworkEditorRestoringRef = useRef(false);
+  const artworkEditorObjectUrlsRef = useRef<string[]>([]);
+  const artworkEditorSnapToCenterRef = useRef(true);
+  const artworkEditorSideRef = useRef<CoroArtworkSide>('front');
+  const artworkEditorSideSnapshotsRef = useRef<Record<CoroArtworkSide, string | null>>({ front: null, back: null });
+  const artworkEditorClipboardRef = useRef<FabricObject | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
+
+  useEffect(() => {
+    try {
+      const recent = JSON.parse(window.localStorage.getItem('hue-artwork-recent-colors') || '[]') as string[];
+      const brand = JSON.parse(window.localStorage.getItem('hue-artwork-brand-colors') || '[]') as string[];
+      if (Array.isArray(recent)) setArtworkEditorRecentColors(recent.slice(0, 10));
+      if (Array.isArray(brand) && brand.length) setArtworkEditorBrandColors(brand.slice(0, 16));
+    } catch {
+      // Keep the built-in Hue palette if saved color data is malformed.
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -1291,7 +1463,7 @@ export default function Home() {
           return { prefix, files };
         }));
         if (!mounted) return;
-        const remoteItems = await Promise.all(libraryResponses
+        const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all(libraryResponses
           .flatMap(({ prefix, files }) => files
           .filter((file) => file.name && file.name !== '.emptyFolderPlaceholder' && (file.metadata?.mimetype || isLikelyArtworkPath(file.name)))
           .map(async (file) => {
@@ -1301,6 +1473,10 @@ export default function Home() {
             const imageSize = isImageFile
               ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
               : { width: 0, height: 0 };
+            const isEditorProject = /-huedesign-\d+-project\.json$/i.test(file.name);
+            const editorProject = isEditorProject
+              ? await fetch(previewUrl).then((projectResponse) => projectResponse.ok ? projectResponse.json() as Promise<ArtworkEditorProject> : null).catch(() => null)
+              : undefined;
             return {
               id: file.id || storagePath,
               name: file.name,
@@ -1312,9 +1488,33 @@ export default function Home() {
               storagePath,
               storageUrl: previewUrl,
               source: 'supabase' as const,
-              mimeType: file.metadata?.mimetype
+              mimeType: file.metadata?.mimetype,
+              editorProject: editorProject || undefined
             };
           })));
+        const pairedSides = new Map<string, { front?: ImageZoneItem; back?: ImageZoneItem }>();
+        ungroupedRemoteItems.forEach((item) => {
+          const pairMatch = item.name.match(/-huepair-(\d+)-(front|back)\.png$/i);
+          if (!pairMatch) return;
+          const pair = pairedSides.get(pairMatch[1]) || {};
+          pair[pairMatch[2].toLowerCase() as CoroArtworkSide] = item;
+          pairedSides.set(pairMatch[1], pair);
+        });
+        const remoteItems = ungroupedRemoteItems.flatMap((item) => {
+          const designMatch = item.name.match(/-huedesign-(\d+)-(front|back|project)\.(png|json)$/i);
+          if (designMatch) {
+            if (designMatch[2].toLowerCase() !== 'front') return [];
+            const designId = designMatch[1];
+            const back = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-back\\.png$`, 'i').test(entry.name));
+            const project = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-project\\.json$`, 'i').test(entry.name));
+            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
+          }
+          const pairMatch = item.name.match(/-huepair-(\d+)-(front|back)\.png$/i);
+          if (!pairMatch) return [item];
+          if (pairMatch[2].toLowerCase() === 'back') return [];
+          const back = pairedSides.get(pairMatch[1])?.back;
+          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
+        });
         setImageZoneItems((prev) => {
           const localItems = prev.filter((item) => item.source !== 'supabase');
           return [...remoteItems, ...localItems];
@@ -2788,6 +2988,1185 @@ export default function Home() {
     setImageLibraryStatus(fitState === 'fit' ? 'Artwork fit accepted for this sign.' : 'Artwork stretch accepted for this sign.');
   };
 
+  const refreshArtworkEditorLayers = (canvas: Canvas) => {
+    const active = canvas.getActiveObject();
+    const items = canvas.getObjects().filter((object) => (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole !== 'base').map((object, index) => {
+      const editableObject = object as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean } };
+      if (!editableObject.data) editableObject.data = {};
+      if (!editableObject.data.layerId) editableObject.data.layerId = `artwork-editor-${Date.now()}-${index}`;
+      const fallbackName = object.type === 'i-text' ? `Text ${index + 1}` : object.type === 'line' ? `Line ${index + 1}` : `Shape ${index + 1}`;
+      return { id: editableObject.data.layerId, name: editableObject.data.layerName || fallbackName, type: object.type, isActive: active === object, isLocked: Boolean(editableObject.data.locked) };
+    }).reverse();
+    setArtworkEditorLayers(items);
+  };
+
+  const updateArtworkEditorHistoryButtons = () => {
+    setArtworkEditorCanUndo(artworkEditorHistoryIndexRef.current > 0);
+    setArtworkEditorCanRedo(artworkEditorHistoryIndexRef.current >= 0 && artworkEditorHistoryIndexRef.current < artworkEditorHistoryRef.current.length - 1);
+  };
+
+  const captureArtworkEditorHistory = (canvas: Canvas) => {
+    if (artworkEditorRestoringRef.current) return;
+    const json = JSON.stringify(canvas.toObject(['data']));
+    artworkEditorSideSnapshotsRef.current[artworkEditorSideRef.current] = json;
+    if (artworkEditorHistoryRef.current[artworkEditorHistoryIndexRef.current] === json) return;
+    artworkEditorHistoryRef.current = artworkEditorHistoryRef.current.slice(0, artworkEditorHistoryIndexRef.current + 1);
+    artworkEditorHistoryRef.current.push(json);
+    if (artworkEditorHistoryRef.current.length > 30) artworkEditorHistoryRef.current.shift();
+    artworkEditorHistoryIndexRef.current = artworkEditorHistoryRef.current.length - 1;
+    updateArtworkEditorHistoryButtons();
+  };
+
+  const restoreArtworkEditorHistory = async (offset: number) => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    const nextIndex = artworkEditorHistoryIndexRef.current + offset;
+    if (nextIndex < 0 || nextIndex >= artworkEditorHistoryRef.current.length) return;
+    artworkEditorRestoringRef.current = true;
+    artworkEditorHistoryIndexRef.current = nextIndex;
+    await canvas.loadFromJSON(artworkEditorHistoryRef.current[nextIndex]);
+    canvas.getObjects().forEach((object) => {
+      object.set(FABRIC_CONTROL_STYLE);
+      const objectData = (object as FabricObject & { data?: { editorRole?: string; locked?: boolean } }).data;
+      if (objectData?.editorRole === 'base') object.set({ selectable: false, evented: false, hasControls: false });
+      else if (objectData?.locked) object.set({ selectable: false, evented: false, lockMovementX: true, lockMovementY: true, lockScalingX: true, lockScalingY: true, lockRotation: true });
+    });
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    setArtworkEditorActiveObject(null);
+    refreshArtworkEditorLayers(canvas);
+    artworkEditorRestoringRef.current = false;
+    updateArtworkEditorHistoryButtons();
+  };
+
+  const syncArtworkEditorControls = (object: FabricObject | null) => {
+    setArtworkEditorActiveObject(object);
+    if (!object) return;
+    if (object.type === 'i-text') {
+      const textObject = object as IText;
+      setArtworkEditorText(textObject.text || '');
+      setArtworkEditorFont(textObject.fontFamily || FONT_OPTIONS[0].value);
+      setArtworkEditorFontSize(Math.round(textObject.fontSize || 54));
+      setArtworkEditorCharSpacing(Math.round(textObject.charSpacing || 0));
+      setArtworkEditorLineHeight(Number((textObject.lineHeight || 1.16).toFixed(2)));
+    }
+    if (typeof object.fill === 'string') setArtworkEditorFill(object.fill);
+    const objectData = (object as FabricObject & { data?: { layerName?: string; qrValue?: string; qrColor?: string } }).data;
+    if (objectData?.layerName === 'QR Code') {
+      if (objectData.qrValue) setArtworkEditorQrValue(objectData.qrValue);
+      if (objectData.qrColor) setArtworkEditorFill(objectData.qrColor);
+    }
+    if (typeof object.stroke === 'string') setArtworkEditorStroke(object.stroke);
+    setArtworkEditorStrokeWidth(Number(object.strokeWidth || 0));
+    setArtworkEditorOpacity(Math.round((object.opacity ?? 1) * 100));
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    if (canvas && source) {
+      const printSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
+      const center = object.getCenterPoint();
+      setArtworkEditorExactX(Number(((center.x / canvas.getWidth()) * printSize.width).toFixed(2)));
+      setArtworkEditorExactY(Number(((center.y / canvas.getHeight()) * printSize.height).toFixed(2)));
+      setArtworkEditorExactWidth(Number(((object.getScaledWidth() / canvas.getWidth()) * printSize.width).toFixed(2)));
+      setArtworkEditorExactHeight(Number(((object.getScaledHeight() / canvas.getHeight()) * printSize.height).toFixed(2)));
+      setArtworkEditorExactRotation(Number((object.angle || 0).toFixed(1)));
+    }
+  };
+
+  const startArtworkEditor = (source: ImageZoneItem, status: string) => {
+    const borderPrintSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
+    const recommendedBorder = getRecommendedBorderSize(borderPrintSize.width, borderPrintSize.height);
+    setArtworkEditorSource(source);
+    setArtworkEditorSide('front');
+    artworkEditorSideRef.current = 'front';
+    setArtworkEditorHasBackSide(Boolean(source.backDataUrl || source.editorProject?.back));
+    artworkEditorSideSnapshotsRef.current = source.editorProject ? { front: source.editorProject.front, back: source.editorProject.back } : { front: null, back: null };
+    setArtworkEditorText('Your text');
+    setArtworkEditorFont(FONT_OPTIONS[0].value);
+    setArtworkEditorFontSize(54);
+    setArtworkEditorCharSpacing(0);
+    setArtworkEditorLineHeight(1.16);
+    setArtworkEditorFill('#0b1f44');
+    setArtworkEditorStroke('#ffffff');
+    setArtworkEditorStrokeWidth(0);
+    setArtworkEditorOpacity(100);
+    setArtworkEditorBackground('#ffffff');
+    setArtworkEditorBorderInset(recommendedBorder.inset);
+    setArtworkEditorBorderThickness(recommendedBorder.thickness);
+    setArtworkEditorBorderColor('#0b1f44');
+    setArtworkEditorZoom(1);
+    setArtworkEditorSnapToCenter(true);
+    artworkEditorSnapToCenterRef.current = true;
+    setArtworkEditorShowGuides(true);
+    setArtworkEditorBrightness(0);
+    setArtworkEditorContrast(0);
+    setArtworkEditorSaturation(0);
+    setArtworkEditorVersions([]);
+    setArtworkEditorReloadKey(0);
+    setArtworkEditorStatus(status);
+    setShowArtworkEditor(true);
+  };
+
+  const openArtworkEditor = async () => {
+    const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+    if (!source || !canPlaceImageZoneItem(source)) {
+      setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening the artwork editor.');
+      return;
+    }
+    try {
+      const hydratedSource = await hydrateImageZoneItemSize(source);
+      startArtworkEditor(hydratedSource, 'Original artwork loaded. Add text or shapes, then save a new copy when you are ready.');
+    } catch (error) {
+      setImageLibraryStatus(error instanceof Error ? error.message : 'The selected artwork could not be opened in the editor.');
+    }
+  };
+
+  const buildNewArtwork = () => {
+    const group = NEW_ARTWORK_PRESET_GROUPS.find((entry) => entry.id === newArtworkPresetGroupId) || NEW_ARTWORK_PRESET_GROUPS[0];
+    const selectedPreset = group.sizes.find((size) => `${size.width}x${size.height}` === newArtworkPresetKey) || group.sizes[0];
+    const width = newArtworkUseCustomSize ? Number(newArtworkCustomWidth) : selectedPreset.width;
+    const height = newArtworkUseCustomSize ? Number(newArtworkCustomHeight) : selectedPreset.height;
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || width > 240 || height > 240) {
+      setNewArtworkError('Enter a width and height between 1 and 240 inches.');
+      return;
+    }
+    const exportDpi = Math.max(25, Math.min(150, 6000 / Math.max(width, height)));
+    const blankCanvas = document.createElement('canvas');
+    blankCanvas.width = 16;
+    blankCanvas.height = 16;
+    const context = blankCanvas.getContext('2d');
+    if (!context) {
+      setNewArtworkError('The blank artwork canvas could not be created in this browser.');
+      return;
+    }
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, blankCanvas.width, blankCanvas.height);
+    const categoryName = newArtworkUseCustomSize ? 'custom-sign' : group.id;
+    const source: ImageZoneItem = {
+      id: `new-artwork-${Date.now()}`,
+      name: `${categoryName}-${width}x${height}.png`,
+      dataUrl: blankCanvas.toDataURL('image/png'),
+      width: Math.max(1, Math.round(width * exportDpi)),
+      height: Math.max(1, Math.round(height * exportDpi)),
+      dpi: Math.round(exportDpi),
+      uploadedAt: new Date().toLocaleString(),
+      source: 'local',
+      mimeType: 'image/png',
+      signWidth: width,
+      signHeight: height
+    };
+    setNewArtworkError('');
+    setShowNewArtworkDialog(false);
+    startArtworkEditor(source, `Blank ${width}\" × ${height}\" artboard ready. Add text and shapes, then save it into Image Zone.`);
+  };
+
+  const commitArtworkEditorChange = (object?: FabricObject | null) => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    object?.setCoords();
+    canvas.requestRenderAll();
+    refreshArtworkEditorLayers(canvas);
+    captureArtworkEditorHistory(canvas);
+  };
+
+  const toggleArtworkEditorLayerLock = (layerId: string) => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getObjects().find((entry) => (entry as FabricObject & { data?: { layerId?: string } }).data?.layerId === layerId);
+    if (!canvas || !object) return;
+    const editableObject = object as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean } };
+    if (!editableObject.data) editableObject.data = { layerId };
+    const locked = !editableObject.data.locked;
+    editableObject.data.locked = locked;
+    object.set({ selectable: !locked, evented: !locked, lockMovementX: locked, lockMovementY: locked, lockScalingX: locked, lockScalingY: locked, lockRotation: locked, hasControls: !locked });
+    if (locked && canvas.getActiveObject() === object) {
+      canvas.discardActiveObject();
+      setArtworkEditorActiveObject(null);
+    }
+    object.setCoords();
+    canvas.requestRenderAll();
+    refreshArtworkEditorLayers(canvas);
+    captureArtworkEditorHistory(canvas);
+    setArtworkEditorStatus(`${editableObject.data.layerName || 'Layer'} ${locked ? 'locked. Clicks now pass through it.' : 'unlocked and ready to edit.'}`);
+  };
+
+  const addArtworkEditorText = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    const text = new IText(artworkEditorText.trim() || 'Your text', {
+      left: canvas.getWidth() / 2,
+      top: canvas.getHeight() / 2,
+      originX: 'center',
+      originY: 'center',
+      fontFamily: artworkEditorFont,
+      fontSize: artworkEditorFontSize,
+      charSpacing: artworkEditorCharSpacing,
+      lineHeight: artworkEditorLineHeight,
+      fill: artworkEditorFill,
+      stroke: artworkEditorStrokeWidth > 0 ? artworkEditorStroke : undefined,
+      strokeWidth: artworkEditorStrokeWidth,
+      paintFirst: 'stroke',
+      opacity: artworkEditorOpacity / 100,
+      shadow: new Shadow({ color: 'rgba(0,0,0,0.18)', blur: 4, offsetX: 2, offsetY: 2 }),
+      ...FABRIC_CONTROL_STYLE
+    });
+    (text as FabricObject & { data?: { layerId?: string; layerName?: string } }).data = { layerId: `artwork-editor-${Date.now()}`, layerName: artworkEditorText.trim() || 'Text' };
+    canvas.add(text);
+    canvas.setActiveObject(text);
+    syncArtworkEditorControls(text);
+    commitArtworkEditorChange(text);
+  };
+
+  const addArtworkEditorImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const canvas = artworkEditorCanvasRef.current;
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!canvas || !file) return;
+    if (!file.type.startsWith('image/')) {
+      setArtworkEditorStatus('Choose a PNG, JPG, WEBP, or other browser-supported image file.');
+      return;
+    }
+    setArtworkEditorStatus(`Adding ${file.name} to the artboard...`);
+    const objectUrl = URL.createObjectURL(file);
+    artworkEditorObjectUrlsRef.current.push(objectUrl);
+    try {
+      const image = await FabricImage.fromURL(objectUrl);
+      const scale = Math.min((canvas.getWidth() * 0.7) / Math.max(1, image.width || 1), (canvas.getHeight() * 0.7) / Math.max(1, image.height || 1), 1);
+      image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, ...FABRIC_CONTROL_STYLE });
+      (image as FabricObject & { data?: { layerId?: string; layerName?: string; editorTool?: string } }).data = { layerId: `artwork-editor-image-${Date.now()}`, layerName: file.name, editorTool: 'uploaded-image' };
+      canvas.add(image);
+      canvas.setActiveObject(image);
+      syncArtworkEditorControls(image);
+      commitArtworkEditorChange(image);
+      setArtworkEditorStatus(`${file.name} added as an editable image layer.`);
+    } catch (error) {
+      URL.revokeObjectURL(objectUrl);
+      artworkEditorObjectUrlsRef.current = artworkEditorObjectUrlsRef.current.filter((url) => url !== objectUrl);
+      setArtworkEditorStatus(`The image could not be added: ${error instanceof Error ? error.message : 'unsupported image file'}.`);
+    }
+  };
+
+  const fitArtworkEditorSelectedImage = (mode: 'fit' | 'fill' | 'stretch') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object || object.type !== 'image' || (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') return;
+    const image = object as FabricImage;
+    const imageWidth = Math.max(1, image.width || 1);
+    const imageHeight = Math.max(1, image.height || 1);
+    if (mode === 'stretch') image.set({ scaleX: canvas.getWidth() / imageWidth, scaleY: canvas.getHeight() / imageHeight });
+    else {
+      const scale = mode === 'fit' ? Math.min(canvas.getWidth() / imageWidth, canvas.getHeight() / imageHeight) : Math.max(canvas.getWidth() / imageWidth, canvas.getHeight() / imageHeight);
+      image.set({ scaleX: scale, scaleY: scale });
+    }
+    image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', angle: 0 });
+    if (mode === 'fill') {
+      canvas.sendObjectToBack(image);
+      const originalArtwork = canvas.getObjects().find((entry) => (entry as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base');
+      if (originalArtwork) canvas.sendObjectToBack(originalArtwork);
+    }
+    image.setCoords();
+    commitArtworkEditorChange(image);
+    setArtworkEditorStatus(mode === 'fill' ? 'Image filled the artboard as a background; excess artwork is cropped at the edges.' : mode === 'stretch' ? 'Image stretched to every edge of the artboard.' : 'Image fit completely inside the artboard.');
+  };
+
+  const addArtworkEditorShape = (shape: 'rectangle' | 'circle' | 'triangle' | 'line') => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    const common = { left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center' as const, originY: 'center' as const, fill: artworkEditorFill, stroke: artworkEditorStroke, strokeWidth: Math.max(0, artworkEditorStrokeWidth), opacity: artworkEditorOpacity / 100, ...FABRIC_CONTROL_STYLE };
+    const object = shape === 'rectangle'
+      ? new Rect({ ...common, width: 220, height: 130, rx: 10, ry: 10 })
+      : shape === 'circle'
+        ? new Circle({ ...common, radius: 85 })
+        : shape === 'triangle'
+          ? new Triangle({ ...common, width: 190, height: 165 })
+          : new Line([-110, 0, 110, 0], { ...common, fill: undefined, stroke: artworkEditorFill, strokeWidth: Math.max(4, artworkEditorStrokeWidth || 8) });
+    (object as FabricObject & { data?: { layerId?: string; layerName?: string } }).data = { layerId: `artwork-editor-${Date.now()}`, layerName: shape[0].toUpperCase() + shape.slice(1) };
+    canvas.add(object);
+    canvas.setActiveObject(object);
+    syncArtworkEditorControls(object);
+    commitArtworkEditorChange(object);
+  };
+
+  const addOrUpdateArtworkEditorBorder = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    if (!canvas || !source) return;
+    const printSize = source.signWidth && source.signHeight
+      ? { width: source.signWidth, height: source.signHeight }
+      : getArtworkPrintSize(source.width, source.height);
+    const shortestSide = Math.max(1, Math.min(printSize.width, printSize.height));
+    const thickness = Math.max(0.0625, Math.min(Number(artworkEditorBorderThickness) || 0.5, shortestSide / 3));
+    const inset = Math.max(0, Math.min(Number(artworkEditorBorderInset) || 0, (shortestSide - thickness) / 2));
+    const pixelsPerInchX = canvas.getWidth() / Math.max(1, printSize.width);
+    const pixelsPerInchY = canvas.getHeight() / Math.max(1, printSize.height);
+    const strokeWidth = thickness * Math.min(pixelsPerInchX, pixelsPerInchY);
+    const width = Math.max(1, canvas.getWidth() - (inset * pixelsPerInchX * 2) - strokeWidth);
+    const height = Math.max(1, canvas.getHeight() - (inset * pixelsPerInchY * 2) - strokeWidth);
+    const existing = canvas.getObjects().find((entry) => (entry as FabricObject & { data?: { editorTool?: string } }).data?.editorTool === 'automatic-border') as Rect | undefined;
+    const border = existing || new Rect({ ...FABRIC_CONTROL_STYLE });
+    border.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, width, height, scaleX: 1, scaleY: 1, angle: 0, originX: 'center', originY: 'center', fill: 'transparent', stroke: artworkEditorBorderColor, strokeWidth, strokeUniform: true, rx: 0, ry: 0, opacity: 1, selectable: false, evented: false, lockMovementX: true, lockMovementY: true, lockScalingX: true, lockScalingY: true, lockRotation: true, hasControls: false, ...FABRIC_CONTROL_STYLE });
+    (border as FabricObject & { data?: { layerId?: string; layerName?: string; editorTool?: string; locked?: boolean } }).data = {
+      ...((border as FabricObject & { data?: { layerId?: string; layerName?: string; editorTool?: string; locked?: boolean } }).data || {}),
+      layerId: (border as FabricObject & { data?: { layerId?: string } }).data?.layerId || `artwork-editor-border-${Date.now()}`,
+      layerName: 'Automatic Border',
+      editorTool: 'automatic-border',
+      locked: true
+    };
+    if (!existing) canvas.add(border);
+    canvas.bringObjectToFront(border);
+    canvas.discardActiveObject();
+    setArtworkEditorActiveObject(null);
+    commitArtworkEditorChange(border);
+    setArtworkEditorBorderInset(inset);
+    setArtworkEditorBorderThickness(thickness);
+    setArtworkEditorStatus(`Border centered at ${inset}\" inside the edge and ${thickness}\" thick. The border layer is locked so you can select artwork beneath it.`);
+  };
+
+  const updateArtworkEditorSelected = (updates: Partial<FabricObject>) => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object || (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') return;
+    object.set(updates);
+    commitArtworkEditorChange(object);
+  };
+
+  const applyArtworkEditorText = () => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type !== 'i-text') return;
+    const textObject = object as IText & { data?: { layerName?: string; layerId?: string } };
+    textObject.set({ text: artworkEditorText || 'Your text', fontFamily: artworkEditorFont, fontSize: artworkEditorFontSize, charSpacing: artworkEditorCharSpacing, lineHeight: artworkEditorLineHeight, fill: artworkEditorFill, stroke: artworkEditorStrokeWidth > 0 ? artworkEditorStroke : undefined, strokeWidth: artworkEditorStrokeWidth, opacity: artworkEditorOpacity / 100 });
+    if (!textObject.data) textObject.data = {};
+    textObject.data.layerName = artworkEditorText || 'Text';
+    commitArtworkEditorChange(textObject);
+  };
+
+  const deleteArtworkEditorSelected = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object || (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') return;
+    canvas.remove(object);
+    canvas.discardActiveObject();
+    setArtworkEditorActiveObject(null);
+    commitArtworkEditorChange(null);
+  };
+
+  const duplicateArtworkEditorSelected = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object || (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') return;
+    const clone = await object.clone() as FabricObject & { data?: { layerId?: string; layerName?: string } };
+    clone.set({ left: (object.left || 0) + 24, top: (object.top || 0) + 24 });
+    clone.data = { ...(clone.data || {}), layerId: `artwork-editor-${Date.now()}`, layerName: `${clone.data?.layerName || 'Object'} copy` };
+    canvas.add(clone);
+    canvas.setActiveObject(clone);
+    syncArtworkEditorControls(clone);
+    commitArtworkEditorChange(clone);
+  };
+
+  const moveArtworkEditorLayer = (direction: 'front' | 'back' | 'forward' | 'backward') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object) return;
+    if (direction === 'front') canvas.bringObjectToFront(object);
+    if (direction === 'forward') canvas.bringObjectForward(object);
+    if (direction === 'backward') canvas.sendObjectBackwards(object);
+    if (direction === 'back') canvas.sendObjectToBack(object);
+    const background = canvas.getObjects().find((entry) => (entry as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base');
+    if (background) canvas.sendObjectToBack(background);
+    commitArtworkEditorChange(object);
+  };
+
+  const moveArtworkEditorLayerById = (layerId: string, direction: 'up' | 'down') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getObjects().find((entry) => (entry as FabricObject & { data?: { layerId?: string } }).data?.layerId === layerId);
+    if (!canvas || !object) return;
+    if (direction === 'up') canvas.bringObjectForward(object);
+    else canvas.sendObjectBackwards(object);
+    const originalArtwork = canvas.getObjects().find((entry) => (entry as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base');
+    if (originalArtwork) canvas.sendObjectToBack(originalArtwork);
+    canvas.requestRenderAll();
+    refreshArtworkEditorLayers(canvas);
+    captureArtworkEditorHistory(canvas);
+    const layerName = (object as FabricObject & { data?: { layerName?: string } }).data?.layerName || 'Layer';
+    setArtworkEditorStatus(`${layerName} moved ${direction === 'up' ? 'up' : 'down'} one layer.`);
+  };
+
+  const centerArtworkEditorSelected = (axis: 'horizontal' | 'vertical' | 'both') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object) return;
+    if (axis === 'horizontal' || axis === 'both') object.set({ left: canvas.getWidth() / 2, originX: 'center' });
+    if (axis === 'vertical' || axis === 'both') object.set({ top: canvas.getHeight() / 2, originY: 'center' });
+    commitArtworkEditorChange(object);
+  };
+
+  const transformArtworkEditorSelected = (action: 'rotate' | 'flip-horizontal' | 'flip-vertical' | 'shadow' | 'uppercase') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object) return;
+    if (action === 'rotate') object.rotate(((object.angle || 0) + 90) % 360);
+    if (action === 'flip-horizontal') object.set({ flipX: !object.flipX });
+    if (action === 'flip-vertical') object.set({ flipY: !object.flipY });
+    if (action === 'shadow') object.set({ shadow: object.shadow ? null : new Shadow({ color: 'rgba(0,0,0,0.38)', blur: 10, offsetX: 5, offsetY: 5 }) });
+    if (action === 'uppercase' && object.type === 'i-text') {
+      const textObject = object as IText;
+      const uppercaseText = (textObject.text || '').toUpperCase();
+      textObject.set({ text: uppercaseText });
+      setArtworkEditorText(uppercaseText);
+      const editableText = textObject as IText & { data?: { layerName?: string } };
+      if (editableText.data) editableText.data.layerName = uppercaseText || 'Text';
+    }
+    object.setCoords();
+    commitArtworkEditorChange(object);
+  };
+
+  const updateArtworkEditorExactTransform = (field: 'x' | 'y' | 'width' | 'height' | 'rotation', value: number) => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !source || !object || !Number.isFinite(value)) return;
+    const printSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
+    if (field === 'x' || field === 'y') {
+      const center = object.getCenterPoint();
+      const target = field === 'x' ? (value / printSize.width) * canvas.getWidth() : (value / printSize.height) * canvas.getHeight();
+      object.set(field === 'x' ? { left: (object.left || 0) + target - center.x } : { top: (object.top || 0) + target - center.y });
+    }
+    if (field === 'width') object.scaleX = object.scaleX * (((value / printSize.width) * canvas.getWidth()) / Math.max(1, object.getScaledWidth()));
+    if (field === 'height') object.scaleY = object.scaleY * (((value / printSize.height) * canvas.getHeight()) / Math.max(1, object.getScaledHeight()));
+    if (field === 'rotation') object.rotate(value);
+    object.setCoords();
+    syncArtworkEditorControls(object);
+    commitArtworkEditorChange(object);
+  };
+
+  const groupArtworkEditorSelection = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const active = canvas?.getActiveObject();
+    if (!canvas || !active) return;
+    if (active.type === 'activeSelection') {
+      const selection = active as ActiveSelection;
+      const objects = selection.removeAll();
+      canvas.discardActiveObject();
+      objects.forEach((object) => canvas.remove(object));
+      const group = new Group(objects, { ...FABRIC_CONTROL_STYLE });
+      (group as FabricObject & { data?: { layerId?: string; layerName?: string } }).data = { layerId: `artwork-editor-group-${Date.now()}`, layerName: 'Grouped elements' };
+      canvas.add(group);
+      canvas.setActiveObject(group);
+      syncArtworkEditorControls(group);
+      commitArtworkEditorChange(group);
+      return;
+    }
+    if (active.type === 'group') {
+      const group = active as Group;
+      const objects = group.removeAll();
+      canvas.remove(group);
+      objects.forEach((object) => canvas.add(object));
+      const selection = new ActiveSelection(objects, { canvas });
+      canvas.setActiveObject(selection);
+      syncArtworkEditorControls(selection);
+      commitArtworkEditorChange(selection);
+    }
+  };
+
+  const alignArtworkEditorSelection = (mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom' | 'distribute-x' | 'distribute-y') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const objects = canvas?.getActiveObjects() || [];
+    if (!canvas || objects.length < 2) return;
+    const bounds = objects.map((object) => ({ object, rect: object.getBoundingRect(), center: object.getCenterPoint() }));
+    const left = Math.min(...bounds.map((entry) => entry.rect.left));
+    const right = Math.max(...bounds.map((entry) => entry.rect.left + entry.rect.width));
+    const top = Math.min(...bounds.map((entry) => entry.rect.top));
+    const bottom = Math.max(...bounds.map((entry) => entry.rect.top + entry.rect.height));
+    if (mode === 'distribute-x' || mode === 'distribute-y') {
+      const sorted = [...bounds].sort((a, b) => mode === 'distribute-x' ? a.center.x - b.center.x : a.center.y - b.center.y);
+      const first = mode === 'distribute-x' ? sorted[0].center.x : sorted[0].center.y;
+      const last = mode === 'distribute-x' ? sorted[sorted.length - 1].center.x : sorted[sorted.length - 1].center.y;
+      sorted.forEach((entry, index) => {
+        const target = first + ((last - first) * index) / Math.max(1, sorted.length - 1);
+        entry.object.set(mode === 'distribute-x' ? { left: (entry.object.left || 0) + target - entry.center.x } : { top: (entry.object.top || 0) + target - entry.center.y });
+        entry.object.setCoords();
+      });
+    } else bounds.forEach((entry) => {
+      const targetX = mode === 'left' ? left + entry.rect.width / 2 : mode === 'right' ? right - entry.rect.width / 2 : (left + right) / 2;
+      const targetY = mode === 'top' ? top + entry.rect.height / 2 : mode === 'bottom' ? bottom - entry.rect.height / 2 : (top + bottom) / 2;
+      if (mode === 'left' || mode === 'center' || mode === 'right') entry.object.set({ left: (entry.object.left || 0) + targetX - entry.center.x });
+      else entry.object.set({ top: (entry.object.top || 0) + targetY - entry.center.y });
+      entry.object.setCoords();
+    });
+    canvas.requestRenderAll();
+    captureArtworkEditorHistory(canvas);
+  };
+
+  const applyArtworkEditorGradient = () => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type === 'image') return;
+    object.set({ fill: new Gradient({ type: 'linear', gradientUnits: 'percentage', coords: { x1: 0, y1: 0, x2: 1, y2: 1 }, colorStops: [{ offset: 0, color: artworkEditorGradientStart }, { offset: 1, color: artworkEditorGradientEnd }] }) });
+    commitArtworkEditorChange(object);
+  };
+
+  const applyArtworkEditorImageFilters = () => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type !== 'image') return;
+    const image = object as FabricImage;
+    image.filters = [new filters.Brightness({ brightness: artworkEditorBrightness }), new filters.Contrast({ contrast: artworkEditorContrast }), new filters.Saturation({ saturation: artworkEditorSaturation })];
+    image.applyFilters();
+    commitArtworkEditorChange(image);
+  };
+
+  const applyArtworkEditorImageMask = (mask: 'none' | 'circle' | 'rounded') => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type !== 'image') return;
+    const image = object as FabricImage;
+    image.clipPath = mask === 'circle' ? new Circle({ radius: Math.min(image.width || 1, image.height || 1) / 2, originX: 'center', originY: 'center' }) : mask === 'rounded' ? new Rect({ width: image.width || 1, height: image.height || 1, rx: Math.min(image.width || 1, image.height || 1) * 0.12, ry: Math.min(image.width || 1, image.height || 1) * 0.12, originX: 'center', originY: 'center' }) : undefined;
+    commitArtworkEditorChange(image);
+  };
+
+  const applyArtworkEditorFreeCrop = () => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type !== 'image') return;
+    const image = object as FabricImage;
+    const left = Math.max(0, Math.min(90, artworkEditorCrop.left));
+    const right = Math.max(0, Math.min(90 - left, artworkEditorCrop.right));
+    const top = Math.max(0, Math.min(90, artworkEditorCrop.top));
+    const bottom = Math.max(0, Math.min(90 - top, artworkEditorCrop.bottom));
+    const width = Math.max(1, (image.width || 1) * (1 - (left + right) / 100));
+    const height = Math.max(1, (image.height || 1) * (1 - (top + bottom) / 100));
+    image.clipPath = new Rect({ width, height, left: ((left - right) / 200) * (image.width || 1), top: ((top - bottom) / 200) * (image.height || 1), originX: 'center', originY: 'center' });
+    commitArtworkEditorChange(image);
+    setArtworkEditorStatus('Custom crop applied. The original image pixels are still preserved in this editable design.');
+  };
+
+  const rememberArtworkEditorColor = (color: string) => {
+    setArtworkEditorRecentColors((current) => {
+      const next = [color, ...current.filter((entry) => entry.toLowerCase() !== color.toLowerCase())].slice(0, 10);
+      window.localStorage.setItem('hue-artwork-recent-colors', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const addArtworkEditorBrandColor = () => {
+    setArtworkEditorBrandColors((current) => {
+      const next = [artworkEditorFill, ...current.filter((entry) => entry.toLowerCase() !== artworkEditorFill.toLowerCase())].slice(0, 16);
+      window.localStorage.setItem('hue-artwork-brand-colors', JSON.stringify(next));
+      return next;
+    });
+    rememberArtworkEditorColor(artworkEditorFill);
+  };
+
+  const applyArtworkEditorTextCurve = (amount = artworkEditorTextCurve) => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type !== 'i-text') return;
+    const text = object as IText;
+    if (amount === 0) text.set({ path: undefined } as Partial<IText>);
+    else {
+      const width = Math.max(180, text.getScaledWidth() * 1.15);
+      const bend = (amount / 100) * Math.max(50, width * 0.35);
+      text.set({ path: new Path(`M 0 100 Q ${width / 2} ${100 - bend} ${width} 100`, { visible: false }), pathAlign: 'center', pathSide: 'left' } as Partial<IText>);
+    }
+    commitArtworkEditorChange(text);
+  };
+
+  const addArtworkEditorTextBackground = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object || object.type !== 'i-text') return;
+    const bounds = object.getBoundingRect();
+    const box = new Rect({ left: bounds.left + bounds.width / 2, top: bounds.top + bounds.height / 2, originX: 'center', originY: 'center', width: bounds.width + artworkEditorTextBoxPadding * 2, height: bounds.height + artworkEditorTextBoxPadding * 2, rx: 10, ry: 10, fill: artworkEditorTextBoxColor, selectable: false, evented: false });
+    (box as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean } }).data = { layerId: `text-box-${Date.now()}`, layerName: 'Text Background', locked: true };
+    const textIndex = canvas.getObjects().indexOf(object);
+    canvas.add(box);
+    canvas.moveObjectTo(box, Math.max(0, textIndex));
+    canvas.setActiveObject(object);
+    commitArtworkEditorChange(object);
+  };
+
+  const addArtworkEditorOuterOutline = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object || object.type !== 'i-text') return;
+    const outline = await (object as IText).clone();
+    outline.set({ fill: 'transparent', stroke: artworkEditorOuterOutlineColor, strokeWidth: artworkEditorOuterOutlineWidth, paintFirst: 'stroke', selectable: false, evented: false });
+    (outline as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean } }).data = { layerId: `text-outline-${Date.now()}`, layerName: 'Outer Text Outline', locked: true };
+    const textIndex = canvas.getObjects().indexOf(object);
+    canvas.add(outline);
+    canvas.moveObjectTo(outline, Math.max(0, textIndex));
+    canvas.setActiveObject(object);
+    commitArtworkEditorChange(object);
+  };
+
+  const applyArtworkEditorShadow = (remove = false) => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object) return;
+    const alpha = Math.max(0, Math.min(1, artworkEditorShadowOpacity / 100));
+    const rgb = artworkEditorShadowColor.match(/[a-f\d]{2}/gi)?.map((part) => parseInt(part, 16)) || [0, 0, 0];
+    object.set({ shadow: remove ? undefined : new Shadow({ color: `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`, blur: artworkEditorShadowBlur, offsetX: artworkEditorShadowOffsetX, offsetY: artworkEditorShadowOffsetY }) });
+    commitArtworkEditorChange(object);
+  };
+
+  const beginArtworkEditorGuideDrag = (axis: 'vertical' | 'horizontal', index: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const viewport = artworkEditorViewportRef.current;
+    if (!viewport) return;
+    const move = (pointerEvent: PointerEvent) => {
+      const rect = viewport.getBoundingClientRect();
+      const percent = axis === 'vertical' ? ((pointerEvent.clientX - rect.left) / rect.width) * 100 : ((pointerEvent.clientY - rect.top) / rect.height) * 100;
+      const next = Math.max(0, Math.min(100, percent));
+      const setter = axis === 'vertical' ? setArtworkEditorVerticalGuides : setArtworkEditorHorizontalGuides;
+      setter((current) => current.map((value, guideIndex) => guideIndex === index ? next : value));
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+  };
+
+  const addArtworkEditorIcon = (symbol: string, name: string) => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    const icon = new IText(symbol, { left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', fontFamily: 'Arial, sans-serif', fontSize: 96, fill: artworkEditorFill, ...FABRIC_CONTROL_STYLE });
+    (icon as FabricObject & { data?: { layerId?: string; layerName?: string } }).data = { layerId: `artwork-editor-icon-${Date.now()}`, layerName: name };
+    canvas.add(icon);
+    canvas.setActiveObject(icon);
+    syncArtworkEditorControls(icon);
+    commitArtworkEditorChange(icon);
+  };
+
+  const addArtworkEditorQrCode = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas || artworkEditorQrValue.trim().length < 3) return;
+    try {
+      const dataUrl = await QRCode.toDataURL(artworkEditorQrValue.trim(), { width: 1200, margin: 2, color: { dark: artworkEditorFill, light: '#ffffff00' } });
+      const image = await FabricImage.fromURL(dataUrl);
+      const scale = Math.min(220 / Math.max(1, image.width || 1), 220 / Math.max(1, image.height || 1));
+      image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, ...FABRIC_CONTROL_STYLE });
+      (image as FabricObject & { data?: { layerId?: string; layerName?: string; qrValue?: string; qrColor?: string } }).data = { layerId: `artwork-editor-qr-${Date.now()}`, layerName: 'QR Code', qrValue: artworkEditorQrValue.trim(), qrColor: artworkEditorFill };
+      canvas.add(image);
+      canvas.setActiveObject(image);
+      syncArtworkEditorControls(image);
+      commitArtworkEditorChange(image);
+    } catch (error) {
+      setArtworkEditorStatus(`QR code could not be created: ${error instanceof Error ? error.message : 'invalid value'}.`);
+    }
+  };
+
+  const updateArtworkEditorQrCode = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const selected = canvas?.getActiveObject() as (FabricImage & { data?: { layerId?: string; layerName?: string; qrValue?: string; qrColor?: string } }) | undefined;
+    if (!canvas || !selected || selected.type !== 'image' || selected.data?.layerName !== 'QR Code') {
+      setArtworkEditorStatus('Select a QR Code layer before changing its color.');
+      return;
+    }
+    const value = (selected.data.qrValue || artworkEditorQrValue).trim();
+    if (value.length < 3) return;
+    try {
+      const dataUrl = await QRCode.toDataURL(value, { width: 1200, margin: 2, color: { dark: artworkEditorFill, light: '#ffffff00' } });
+      const replacement = await FabricImage.fromURL(dataUrl);
+      replacement.set({ left: selected.left, top: selected.top, originX: selected.originX, originY: selected.originY, scaleX: selected.getScaledWidth() / Math.max(1, replacement.width || 1), scaleY: selected.getScaledHeight() / Math.max(1, replacement.height || 1), angle: selected.angle, flipX: selected.flipX, flipY: selected.flipY, opacity: selected.opacity, ...FABRIC_CONTROL_STYLE });
+      (replacement as FabricImage & { data?: { layerId?: string; layerName?: string; qrValue?: string; qrColor?: string } }).data = { ...selected.data, qrValue: value, qrColor: artworkEditorFill };
+      const index = canvas.getObjects().indexOf(selected);
+      canvas.remove(selected);
+      canvas.add(replacement);
+      canvas.moveObjectTo(replacement, Math.max(0, index));
+      canvas.setActiveObject(replacement);
+      rememberArtworkEditorColor(artworkEditorFill);
+      syncArtworkEditorControls(replacement);
+      commitArtworkEditorChange(replacement);
+      setArtworkEditorStatus(`QR Code color updated to ${artworkEditorFill}.`);
+    } catch (error) {
+      setArtworkEditorStatus(`QR Code could not be updated: ${error instanceof Error ? error.message : 'invalid value'}.`);
+    }
+  };
+
+  const applyArtworkEditorTemplate = (template: string) => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    canvas.getObjects().filter((object) => (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole !== 'base').forEach((object) => canvas.remove(object));
+    const templateCopy = ARTWORK_EDITOR_TEMPLATES.find((entry) => entry.id === template) || ARTWORK_EDITOR_TEMPLATES[0];
+    canvas.backgroundColor = '#ffffff';
+    setArtworkEditorBackground('#ffffff');
+    const border = new Rect({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', width: canvas.getWidth() - 34, height: canvas.getHeight() - 34, fill: 'transparent', stroke: templateCopy.color, strokeWidth: 14, selectable: false, evented: false });
+    (border as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean } }).data = { layerId: `template-border-${Date.now()}`, layerName: 'Template Border', locked: true };
+    const headline = new IText(templateCopy.headline, { left: canvas.getWidth() / 2, top: canvas.getHeight() * 0.4, originX: 'center', originY: 'center', fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(38, canvas.getWidth() * 0.09), fontWeight: 'bold', fill: templateCopy.color, textAlign: 'center', ...FABRIC_CONTROL_STYLE });
+    const detail = new IText(templateCopy.detail, { left: canvas.getWidth() / 2, top: canvas.getHeight() * 0.65, originX: 'center', originY: 'center', fontFamily: 'Arial, sans-serif', fontSize: Math.max(20, canvas.getWidth() * 0.04), fontWeight: 'bold', fill: templateCopy.accent, textAlign: 'center', ...FABRIC_CONTROL_STYLE });
+    (headline as FabricObject & { data?: { layerId?: string; layerName?: string } }).data = { layerId: `template-headline-${Date.now()}`, layerName: 'Headline' };
+    (detail as FabricObject & { data?: { layerId?: string; layerName?: string } }).data = { layerId: `template-detail-${Date.now()}`, layerName: 'Details' };
+    canvas.add(border, headline, detail);
+    canvas.setActiveObject(headline);
+    syncArtworkEditorControls(headline);
+    commitArtworkEditorChange(headline);
+    setArtworkEditorStatus(`${templateCopy.headline} starter template added. Replace the sample wording with your own.`);
+  };
+
+  const setArtworkEditorCanvasBackground = (color: string) => {
+    const canvas = artworkEditorCanvasRef.current;
+    setArtworkEditorBackground(color);
+    if (!canvas) return;
+    canvas.backgroundColor = color;
+    commitArtworkEditorChange(null);
+  };
+
+  const adjustArtworkEditorBase = (mode: 'fit' | 'fill' | 'stretch' | 'center') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const image = canvas?.getObjects().find((entry) => (entry as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') as FabricImage | undefined;
+    if (!canvas || !image) return;
+    const imageWidth = Math.max(1, image.width || canvas.getWidth());
+    const imageHeight = Math.max(1, image.height || canvas.getHeight());
+    if (mode === 'fit' || mode === 'fill') {
+      const scale = mode === 'fit'
+        ? Math.min(canvas.getWidth() / imageWidth, canvas.getHeight() / imageHeight)
+        : Math.max(canvas.getWidth() / imageWidth, canvas.getHeight() / imageHeight);
+      image.set({ scaleX: scale, scaleY: scale });
+    }
+    if (mode === 'stretch') image.set({ scaleX: canvas.getWidth() / imageWidth, scaleY: canvas.getHeight() / imageHeight });
+    image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center' });
+    image.setCoords();
+    canvas.sendObjectToBack(image);
+    canvas.requestRenderAll();
+    captureArtworkEditorHistory(canvas);
+    setArtworkEditorStatus(mode === 'fill' ? 'Artwork filled the canvas; artwork outside the edge is cropped.' : mode === 'center' ? 'Artwork centered on the canvas.' : `Artwork ${mode === 'fit' ? 'fit inside' : 'stretched to'} the canvas.`);
+  };
+
+  const switchArtworkEditorSide = (side: CoroArtworkSide) => {
+    if (side === artworkEditorSideRef.current) return;
+    const canvas = artworkEditorCanvasRef.current;
+    if (canvas) captureArtworkEditorHistory(canvas);
+    if (side === 'back') setArtworkEditorHasBackSide(true);
+    artworkEditorSideRef.current = side;
+    setArtworkEditorSide(side);
+    setArtworkEditorActiveObject(null);
+    setArtworkEditorStatus(side === 'back' ? 'Back side ready. Upload separate artwork or build the layout with text and shapes.' : 'Front side restored.');
+  };
+
+  const copyArtworkEditorFrontToBack = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (canvas && artworkEditorSideRef.current === 'front') captureArtworkEditorHistory(canvas);
+    const frontSnapshot = artworkEditorSideSnapshotsRef.current.front;
+    if (!frontSnapshot) {
+      setArtworkEditorStatus('The front side is still loading. Try copying it again in a moment.');
+      return;
+    }
+    artworkEditorSideSnapshotsRef.current.back = frontSnapshot;
+    setArtworkEditorHasBackSide(true);
+    artworkEditorSideRef.current = 'back';
+    setArtworkEditorSide('back');
+    setArtworkEditorActiveObject(null);
+    setArtworkEditorStatus('Front design copied to the back. You can now make the back side different if needed.');
+  };
+
+  const removeArtworkEditorBackSide = () => {
+    artworkEditorSideSnapshotsRef.current.back = null;
+    setArtworkEditorHasBackSide(false);
+    artworkEditorSideRef.current = 'front';
+    setArtworkEditorSide('front');
+    setArtworkEditorActiveObject(null);
+    setArtworkEditorStatus('Back side removed. This artwork will save as single-sided.');
+  };
+
+  const saveArtworkEditorVersion = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (canvas) captureArtworkEditorHistory(canvas);
+    const version = { id: `version-${Date.now()}`, label: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), front: artworkEditorSideSnapshotsRef.current.front, back: artworkEditorSideSnapshotsRef.current.back };
+    setArtworkEditorVersions((previous) => [version, ...previous].slice(0, 10));
+    setArtworkEditorStatus(`Version saved at ${version.label}.`);
+  };
+
+  const restoreArtworkEditorVersion = (versionId: string) => {
+    const version = artworkEditorVersions.find((entry) => entry.id === versionId);
+    if (!version) return;
+    artworkEditorSideSnapshotsRef.current = { front: version.front, back: version.back };
+    setArtworkEditorHasBackSide(Boolean(version.back));
+    artworkEditorSideRef.current = 'front';
+    setArtworkEditorSide('front');
+    setArtworkEditorReloadKey((value) => value + 1);
+    setArtworkEditorStatus(`Version from ${version.label} restored.`);
+  };
+
+  const saveArtworkEditorCopy = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    if (!canvas || !source) return;
+    setIsArtworkEditorSaving(true);
+    const isNewArtwork = source.id.startsWith('new-artwork-');
+    setArtworkEditorStatus(`Rendering a high-resolution ${isNewArtwork ? 'design' : 'copy'} and saving it to Image Zone...`);
+    try {
+      captureArtworkEditorHistory(canvas);
+      const makeSnapshotPortable = async (snapshot: string | null) => {
+        if (!snapshot) return null;
+        const projectData = JSON.parse(snapshot) as Record<string, unknown>;
+        const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('A design asset could not be saved.'));
+          reader.onerror = () => reject(new Error('A design asset could not be saved.'));
+          reader.readAsDataURL(blob);
+        });
+        const makeImagesPortable = async (value: unknown): Promise<void> => {
+          if (!value || typeof value !== 'object') return;
+          if (Array.isArray(value)) {
+            for (const entry of value) await makeImagesPortable(entry);
+            return;
+          }
+          const object = value as Record<string, unknown>;
+          if (typeof object.src === 'string' && !object.src.startsWith('data:')) {
+            const response = await fetch(object.src);
+            if (!response.ok) throw new Error('One of the design images could not be embedded into the editable project.');
+            object.src = await blobToDataUrl(await response.blob());
+          }
+          for (const entry of Object.values(object)) await makeImagesPortable(entry);
+        };
+        await makeImagesPortable(projectData);
+        return JSON.stringify(projectData);
+      };
+      const multiplier = Math.max(0.1, Math.min(source.width / canvas.getWidth(), source.height / canvas.getHeight()));
+      const renderSideSnapshot = async (snapshot: string) => {
+        const exportElement = document.createElement('canvas');
+        const exportCanvas = new Canvas(exportElement, { width: canvas.getWidth(), height: canvas.getHeight(), backgroundColor: '#ffffff' });
+        await exportCanvas.loadFromJSON(snapshot);
+        exportCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        exportCanvas.discardActiveObject();
+        exportCanvas.requestRenderAll();
+        const rendered = exportCanvas.toDataURL({ format: 'png', quality: 1, multiplier });
+        exportCanvas.dispose();
+        return rendered;
+      };
+      const frontSnapshot = artworkEditorSideSnapshotsRef.current.front;
+      const backSnapshot = artworkEditorSideSnapshotsRef.current.back;
+      const portableFrontSnapshot = await makeSnapshotPortable(frontSnapshot);
+      const portableBackSnapshot = artworkEditorHasBackSide ? await makeSnapshotPortable(backSnapshot) : null;
+      const dataUrl = frontSnapshot ? await renderSideSnapshot(frontSnapshot) : source.dataUrl;
+      const backDataUrl = artworkEditorHasBackSide
+        ? backSnapshot ? await renderSideSnapshot(backSnapshot) : source.backDataUrl || null
+        : null;
+      const dimensions = await getImageNaturalSize(dataUrl);
+      const backDimensions = backDataUrl ? await getImageNaturalSize(backDataUrl) : null;
+      const blob = await (await fetch(dataUrl)).blob();
+      const backBlob = backDataUrl ? await (await fetch(backDataUrl)).blob() : null;
+      const originalBaseName = source.name.replace(/\.[^.]+$/, '') || 'artwork';
+      const saveId = Date.now();
+      const isDoubleSided = Boolean(backDataUrl && backBlob);
+      const fileName = `${originalBaseName}-huedesign-${saveId}-front.png`;
+      const backFileName = isDoubleSided ? `${originalBaseName}-huedesign-${saveId}-back.png` : undefined;
+      const projectFileName = `${originalBaseName}-huedesign-${saveId}-project.json`;
+      const file = new File([blob], fileName, { type: 'image/png' });
+      const backFile = backBlob && backFileName ? new File([backBlob], backFileName, { type: 'image/png' }) : null;
+      const printSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
+      const editorProject: ArtworkEditorProject = { version: 1, front: portableFrontSnapshot, back: portableBackSnapshot, width: dimensions.width, height: dimensions.height, signWidth: printSize.width, signHeight: printSize.height, dpi: source.dpi || 300, updatedAt: new Date().toISOString() };
+      const projectFile = new File([JSON.stringify(editorProject)], projectFileName, { type: 'application/json' });
+      const localId = `${Date.now()}-${fileName}`;
+      const item: ImageZoneItem = { id: localId, name: fileName, dataUrl, width: dimensions.width, height: dimensions.height, dpi: source.dpi || 300, uploadedAt: new Date().toLocaleString(), source: 'local', mimeType: 'image/png', signWidth: printSize.width, signHeight: printSize.height, backDataUrl: backDataUrl || undefined, backName: backFileName, backWidth: backDimensions?.width, backHeight: backDimensions?.height, backCopiedFromFront: false, editorProject };
+      setImageZoneItems((previous) => [item, ...previous]);
+      setSelectedImageZoneId(localId);
+      if (isSupabaseStorageConfigured) {
+        const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
+        setImageZoneItems((previous) => previous.map((entry) => entry.id === localId ? { ...entry, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || entry.backDataUrl, backName: backFileName || entry.backName, projectStoragePath: projectStorageInfo.storagePath } : entry));
+        setSelectedImageZoneId(storageInfo.storagePath);
+        setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
+      } else {
+        setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved in this browser session.${isNewArtwork ? '' : ' Original preserved.'}`);
+      }
+      setShowArtworkEditor(false);
+    } catch (error) {
+      setArtworkEditorStatus(`The edited copy could not be saved: ${error instanceof Error ? error.message : 'unknown error'}.`);
+    } finally {
+      setIsArtworkEditorSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showArtworkEditor || !artworkEditorSource || !artworkEditorCanvasElRef.current) return;
+    const source = artworkEditorSource;
+    const sourceWidth = Math.max(1, source.width);
+    const sourceHeight = Math.max(1, source.height);
+    const workspaceScale = Math.min(940 / sourceWidth, 620 / sourceHeight);
+    const workspaceWidth = Math.max(1, Math.round(sourceWidth * workspaceScale));
+    const workspaceHeight = Math.max(1, Math.round(sourceHeight * workspaceScale));
+    const canvas = new Canvas(artworkEditorCanvasElRef.current, {
+      width: workspaceWidth,
+      height: workspaceHeight,
+      backgroundColor: artworkEditorBackground,
+      preserveObjectStacking: true,
+      selectionColor: 'rgba(14,165,233,0.10)',
+      selectionBorderColor: '#38bdf8'
+    });
+    artworkEditorCanvasRef.current = canvas;
+    artworkEditorHistoryRef.current = [];
+    artworkEditorHistoryIndexRef.current = -1;
+    artworkEditorRestoringRef.current = true;
+    let disposed = false;
+    let isPanning = false;
+    let lastPointer = { x: 0, y: 0 };
+
+    const updateSelection = () => {
+      const object = canvas.getActiveObject() || null;
+      syncArtworkEditorControls(object);
+      refreshArtworkEditorLayers(canvas);
+    };
+    const captureChange = () => {
+      if (artworkEditorRestoringRef.current) return;
+      captureArtworkEditorHistory(canvas);
+      refreshArtworkEditorLayers(canvas);
+    };
+    canvas.on('selection:created', updateSelection);
+    canvas.on('selection:updated', updateSelection);
+    canvas.on('selection:cleared', () => { setArtworkEditorActiveObject(null); refreshArtworkEditorLayers(canvas); });
+    canvas.on('object:added', captureChange);
+    canvas.on('object:modified', captureChange);
+    canvas.on('object:removed', captureChange);
+    canvas.on('object:moving', (event) => {
+      const object = event.target;
+      if (!artworkEditorSnapToCenterRef.current || !object) return;
+      const objectCenter = object.getCenterPoint();
+      const canvasCenterX = canvas.getWidth() / 2;
+      const canvasCenterY = canvas.getHeight() / 2;
+      if (Math.abs(objectCenter.x - canvasCenterX) <= 8) object.set({ left: (object.left || 0) + canvasCenterX - objectCenter.x });
+      if (Math.abs(objectCenter.y - canvasCenterY) <= 8) object.set({ top: (object.top || 0) + canvasCenterY - objectCenter.y });
+    });
+    canvas.on('mouse:down', (event) => {
+      const pointerEvent = event.e as MouseEvent;
+      if (!pointerEvent.altKey) return;
+      isPanning = true;
+      lastPointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
+      canvas.selection = false;
+      canvas.setCursor('grabbing');
+    });
+    canvas.on('mouse:move', (event) => {
+      if (!isPanning || !canvas.viewportTransform) return;
+      const pointerEvent = event.e as MouseEvent;
+      canvas.viewportTransform[4] += pointerEvent.clientX - lastPointer.x;
+      canvas.viewportTransform[5] += pointerEvent.clientY - lastPointer.y;
+      lastPointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
+      canvas.requestRenderAll();
+    });
+    canvas.on('mouse:up', () => {
+      isPanning = false;
+      canvas.selection = true;
+      canvas.setCursor('default');
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT') return;
+      const command = navigator.platform.toUpperCase().includes('MAC') ? event.metaKey : event.ctrlKey;
+      if (command && event.key.toLowerCase() === 'c') {
+        const active = canvas.getActiveObject();
+        if (active) void active.clone().then((clone) => { artworkEditorClipboardRef.current = clone; });
+      }
+      if (command && event.key.toLowerCase() === 'v' && artworkEditorClipboardRef.current) {
+        event.preventDefault();
+        void artworkEditorClipboardRef.current.clone().then((clone) => {
+          const pasted = clone as FabricObject & { data?: { layerId?: string; layerName?: string } };
+          pasted.set({ left: (pasted.left || 0) + 18, top: (pasted.top || 0) + 18, selectable: true, evented: true });
+          pasted.data = { ...(pasted.data || {}), layerId: `artwork-editor-paste-${Date.now()}`, layerName: `${pasted.data?.layerName || 'Object'} copy` };
+          canvas.add(pasted);
+          canvas.setActiveObject(pasted);
+          syncArtworkEditorControls(pasted);
+          commitArtworkEditorChange(pasted);
+        });
+      }
+      if (command && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        const editable = canvas.getObjects().filter((object) => { const data = (object as FabricObject & { data?: { editorRole?: string; locked?: boolean } }).data; return data?.editorRole !== 'base' && !data?.locked; });
+        if (editable.length) canvas.setActiveObject(new ActiveSelection(editable, { canvas }));
+        canvas.requestRenderAll();
+        updateSelection();
+      }
+      if (command && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        void restoreArtworkEditorHistory(event.shiftKey ? 1 : -1);
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        deleteArtworkEditorSelected();
+      }
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        const active = canvas.getActiveObject();
+        if (!active) return;
+        event.preventDefault();
+        const distance = event.shiftKey ? 10 : 1;
+        if (event.key === 'ArrowLeft') active.set({ left: (active.left || 0) - distance });
+        if (event.key === 'ArrowRight') active.set({ left: (active.left || 0) + distance });
+        if (event.key === 'ArrowUp') active.set({ top: (active.top || 0) - distance });
+        if (event.key === 'ArrowDown') active.set({ top: (active.top || 0) + distance });
+        active.setCoords();
+        commitArtworkEditorChange(active);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+
+    const finishSideLoad = () => {
+      if (disposed) return;
+      canvas.getObjects().forEach((object) => {
+        object.set(FABRIC_CONTROL_STYLE);
+        const objectData = (object as FabricObject & { data?: { editorRole?: string; locked?: boolean } }).data;
+        if (objectData?.editorRole === 'base') object.set({ selectable: false, evented: false, hasControls: false });
+        else if (objectData?.locked) object.set({ selectable: false, evented: false, hasControls: false, lockMovementX: true, lockMovementY: true, lockScalingX: true, lockScalingY: true, lockRotation: true });
+      });
+      if (typeof canvas.backgroundColor === 'string') setArtworkEditorBackground(canvas.backgroundColor);
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+      artworkEditorRestoringRef.current = false;
+      captureArtworkEditorHistory(canvas);
+      refreshArtworkEditorLayers(canvas);
+    };
+    const savedSideSnapshot = artworkEditorSideSnapshotsRef.current[artworkEditorSide];
+    const sideImageUrl = artworkEditorSide === 'front'
+      ? (source.id.startsWith('new-artwork-') ? null : source.dataUrl)
+      : source.backDataUrl || null;
+    if (savedSideSnapshot) void (async () => {
+      try {
+        await canvas.loadFromJSON(savedSideSnapshot);
+        finishSideLoad();
+      } catch (error) {
+        artworkEditorRestoringRef.current = false;
+        setArtworkEditorStatus(`The ${artworkEditorSide} side could not be restored: ${error instanceof Error ? error.message : 'unknown error'}.`);
+      }
+    })();
+    else if (!sideImageUrl) finishSideLoad();
+    else void (async () => {
+      try {
+        const image = await FabricImage.fromURL(sideImageUrl, { crossOrigin: 'anonymous' });
+        if (disposed) return;
+        image.set({
+          left: 0,
+          top: 0,
+          originX: 'left',
+          originY: 'top',
+          scaleX: workspaceWidth / Math.max(1, image.width || sourceWidth),
+          scaleY: workspaceHeight / Math.max(1, image.height || sourceHeight),
+          selectable: false,
+          evented: false,
+          hasControls: false
+        });
+        (image as FabricObject & { data?: { editorRole?: string; layerId?: string; layerName?: string } }).data = { editorRole: 'base', layerId: `artwork-editor-base-${artworkEditorSide}`, layerName: `Original ${artworkEditorSide} artwork` };
+        canvas.add(image);
+        canvas.sendObjectToBack(image);
+        finishSideLoad();
+      } catch (error) {
+        artworkEditorRestoringRef.current = false;
+        setArtworkEditorStatus(`The editor could not load the ${artworkEditorSide} artwork: ${error instanceof Error ? error.message : 'image failed to load'}.`);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      window.removeEventListener('keydown', onKeyDown);
+      canvas.dispose();
+      artworkEditorCanvasRef.current = null;
+      artworkEditorHistoryRef.current = [];
+      artworkEditorHistoryIndexRef.current = -1;
+    };
+  }, [showArtworkEditor, artworkEditorSource, artworkEditorSide, artworkEditorReloadKey]);
+
+  useEffect(() => {
+    if (showArtworkEditor) return;
+    artworkEditorObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    artworkEditorObjectUrlsRef.current = [];
+  }, [showArtworkEditor]);
+
+  const openAiEditor = () => {
+    const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+    if (!source || !canPlaceImageZoneItem(source)) {
+      setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening AI Edit.');
+      return;
+    }
+    setAiEditPrompt('');
+    setAiEditAction('restore');
+    setAiEditQuality('low');
+    setAiEditStatus('Describe the change you want. Your original artwork will remain untouched.');
+    setAiEditPreview(null);
+    setShowAiImageEditor(true);
+  };
+
+  const generateAiImageEdit = async () => {
+    const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+    const prompt = aiEditPrompt.trim();
+    if (!source || !canPlaceImageZoneItem(source)) {
+      setAiEditStatus('The selected artwork cannot be edited. Choose an image file and try again.');
+      return;
+    }
+    if (!['restore', 'remove-background'].includes(aiEditAction) && prompt.length < 2) {
+      setAiEditStatus('Add a short description of the change you want.');
+      return;
+    }
+    setIsAiEditing(true);
+    setAiEditPreview(null);
+    setAiEditStatus('Hue AI is preparing a new proof. This may take a moment...');
+    try {
+      const sourceResponse = await fetch(source.dataUrl);
+      if (!sourceResponse.ok) throw new Error('The original artwork could not be downloaded. Please reopen the library and try again.');
+      const sourceBlob = await sourceResponse.blob();
+      const formData = new FormData();
+      formData.append('image', new File([sourceBlob], source.name, { type: sourceBlob.type || source.mimeType || 'image/png' }));
+      formData.append('prompt', prompt);
+      formData.append('action', aiEditAction);
+      formData.append('targetColor', aiEditTargetColor);
+      formData.append('quality', aiEditQuality);
+      const response = await fetch('/api/image-zone/ai-edit', { method: 'POST', body: formData });
+      const result = await response.json() as { imageDataUrl?: string; error?: string };
+      if (!response.ok || !result.imageDataUrl) throw new Error(result.error || 'The AI edit could not be generated.');
+      const dimensions = await getImageNaturalSize(result.imageDataUrl);
+      setAiEditPreview({ dataUrl: result.imageDataUrl, width: dimensions.width, height: dimensions.height, source });
+      setAiEditStatus('Proof ready. Review it carefully, then save it as a new image if you want to keep it.');
+    } catch (error) {
+      setAiEditStatus(error instanceof Error ? error.message : 'The AI edit could not be generated.');
+    } finally {
+      setIsAiEditing(false);
+    }
+  };
+
+  const saveAiImageEdit = async () => {
+    if (!aiEditPreview) return;
+    setIsAiEditing(true);
+    setAiEditStatus('Saving the edited proof as a new library image...');
+    try {
+      const response = await fetch(aiEditPreview.dataUrl);
+      const blob = await response.blob();
+      const originalBaseName = aiEditPreview.source.name.replace(/\.[^.]+$/, '') || 'artwork';
+      const fileName = `${originalBaseName}-ai-edit-${Date.now()}.png`;
+      const file = new File([blob], fileName, { type: 'image/png' });
+      const inheritedPrintSize = aiEditPreview.source.signWidth && aiEditPreview.source.signHeight
+        ? { width: aiEditPreview.source.signWidth, height: aiEditPreview.source.signHeight }
+        : getArtworkPrintSize(aiEditPreview.source.width, aiEditPreview.source.height);
+      const localId = `${Date.now()}-${fileName}`;
+      const item: ImageZoneItem = {
+        id: localId,
+        name: fileName,
+        dataUrl: aiEditPreview.dataUrl,
+        width: aiEditPreview.width,
+        height: aiEditPreview.height,
+        dpi: aiEditPreview.source.dpi || 300,
+        uploadedAt: new Date().toLocaleString(),
+        source: 'local',
+        mimeType: 'image/png',
+        signWidth: inheritedPrintSize.width,
+        signHeight: inheritedPrintSize.height
+      };
+      setImageZoneItems((prev) => [item, ...prev]);
+      setSelectedImageZoneId(localId);
+
+      if (isSupabaseStorageConfigured) {
+        const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
+        setImageZoneItems((prev) => prev.map((entry) => entry.id === localId ? {
+          ...entry,
+          id: storageInfo.storagePath,
+          storagePath: storageInfo.storagePath,
+          storageUrl: storageInfo.storageUrl,
+          source: 'supabase'
+        } : entry));
+        setSelectedImageZoneId(storageInfo.storagePath);
+        setImageLibraryStatus(`AI edit saved as a new image${customerSession?.user?.email ? ` in ${customerSession.user.email}'s library` : ''}.`);
+      } else {
+        setImageLibraryStatus('AI edit saved as a new browser image. Connect storage to keep it for future sessions.');
+      }
+      setShowAiImageEditor(false);
+      setAiEditPreview(null);
+      setAiEditPrompt('');
+    } catch (error) {
+      setAiEditStatus(`The proof was generated but could not be saved: ${error instanceof Error ? error.message : 'unknown error'}.`);
+    } finally {
+      setIsAiEditing(false);
+    }
+  };
+
   const useImageZoneItem = async (item: ImageZoneItem) => {
     setSelectedImageZoneId(item.id);
     if (!canPlaceImageZoneItem(item)) {
@@ -2817,11 +4196,18 @@ export default function Home() {
       if (isAutoSidedRigidBuilder) {
         setRigidArtworkTarget('front');
         setRigidPreviewSide('front');
-        setSignValues((prev) => ({ ...prev, sides: rigidBackArtwork ? 'double' : 'single' }));
+        const pairedBack = imageItem.backDataUrl ? { ...imageItem, id: `${imageItem.id}-back`, name: imageItem.backName || `${imageItem.name} back`, dataUrl: imageItem.backDataUrl, width: imageItem.backWidth || imageItem.width, height: imageItem.backHeight || imageItem.height, backDataUrl: undefined } : null;
+        if (pairedBack) setRigidBackArtwork(pairedBack);
+        setSignValues((prev) => ({ ...prev, sides: pairedBack || rigidBackArtwork ? 'double' : 'single' }));
       }
       setSignArtworkPreviewUrl(imageItem.dataUrl);
       setBannerArtworkName(imageItem.name);
-      const printSize = applySignSizeFromPixels(imageItem.width, imageItem.height) || getArtworkPrintSize(imageItem.width, imageItem.height);
+      const savedPrintSize = imageItem.signWidth && imageItem.signHeight ? { width: imageItem.signWidth, height: imageItem.signHeight } : null;
+      const printSize = savedPrintSize || applySignSizeFromPixels(imageItem.width, imageItem.height) || getArtworkPrintSize(imageItem.width, imageItem.height);
+      if (savedPrintSize) {
+        setSignValues((prev) => ({ ...prev, width: String(savedPrintSize.width), height: String(savedPrintSize.height) }));
+        setSignArtworkSize(savedPrintSize);
+      }
       setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height, printWidth: printSize.width, printHeight: printSize.height });
       setImageLibraryStatus(`${imageItem.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       setShowImageZone(false);
@@ -3644,7 +5030,7 @@ export default function Home() {
             <button onClick={() => setStoreView('store')} className={`${isProductionBuilder ? 'rounded border border-white/15 bg-[#0b1018] px-4 py-2 font-semibold text-slate-400 hover:border-slate-500 hover:text-slate-100' : 'rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50'}`}>Products</button>
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
-            {isProductionBuilder ? <button type="button" onClick={openArtworkLibrary} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
+            {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') setShowImageZone(true); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
             <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
             <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart{cartItems.length ? ` (${cartItems.length})` : ''}</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
@@ -3652,7 +5038,7 @@ export default function Home() {
         </div>
       </header>
 
-      {storeView === 'store' ? (
+      {storeView === 'store' && !showImageZone && !showCustomerLogin && !showCart ? (
         <section className="mx-auto max-w-[1800px] px-4 py-5 md:px-6">
           <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className={`rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
@@ -3689,6 +5075,12 @@ export default function Home() {
                     <div className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-amber-400">
                       <strong className="block">Need design help or changes?</strong>
                       <span className="text-amber-300/75">Submit a quote request on the main website.</span>
+                    </div>
+                    <div className="mt-4 overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(7,24,39,0.92))] p-4 shadow-[0_0_28px_rgba(14,165,233,0.10)]">
+                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Artwork Studio</p>
+                      <h3 className="mt-2 text-lg font-black leading-tight text-white">Have an idea? Give it some Hue.</h3>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">Build a simple sign or banner, create a quick layout, or make basic artwork changes—all right in your browser.</p>
+                      <button type="button" onClick={() => { setShowImageZone(true); setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Try the online editor <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
                 </div>
@@ -4027,7 +5419,7 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
               </aside> : null}
@@ -4097,7 +5489,7 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
               </aside> : null}
@@ -4241,7 +5633,7 @@ export default function Home() {
                         {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
-                          <span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height)}</span>
+<span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span>
                           <span className="mt-1 block text-slate-400">{item.source === 'supabase' ? 'Stored in Supabase' : 'Browser preview'}</span>
                         </span>
                         <span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span>
@@ -4570,8 +5962,8 @@ export default function Home() {
         <section className="w-[min(520px,94vw)] overflow-hidden rounded-xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_30px_90px_rgba(0,0,0,0.68),0_0_54px_rgba(14,165,233,0.20)]">
           <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-5">
             <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Customer Account</p>
-            <h3 className="mt-1 text-2xl font-black text-white">{customerSession ? 'Artwork Library' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-300">Create an account to save your artwork library, or continue as a guest for a one-time order.</p>
+            <h3 className="mt-1 text-2xl font-black text-white">{customerSession ? 'My Account' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-300">{customerSession ? 'Manage your saved artwork and Hue customer session.' : 'Create an account to save your artwork library, or continue as a guest for a one-time order.'}</p>
           </div>
           <div className="space-y-4 px-6 py-6">
             {!customerSession ? <div className="grid gap-3 sm:grid-cols-2">
@@ -4584,10 +5976,16 @@ export default function Home() {
                 <p className="mt-2 text-sm leading-6 text-slate-300">Place a one-time order without saving files to an account. You can still upload artwork and complete checkout.</p>
               </div>
             </div> : null}
-            {customerSession ? <div className="rounded-lg border border-[#0ea5e9]/25 bg-[#0b263d]/60 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Signed In</p>
-              <p className="mt-2 break-all text-lg font-black text-white">{customerSession.user?.email || 'Customer account'}</p>
-              <p className="mt-2 text-sm text-slate-300">Uploads save to this customer library when Supabase storage policies allow it.</p>
+            {customerSession ? <div className="space-y-3">
+              <div className="rounded-lg border border-[#0ea5e9]/25 bg-[#0b263d]/60 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Signed In</p>
+                <p className="mt-2 break-all text-lg font-black text-white">{customerSession.user?.email || 'Customer account'}</p>
+                <p className="mt-2 text-sm text-slate-300">Uploads and AI-edited copies save to this customer library when cloud storage is available.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button type="button" onClick={() => { setShowCustomerLogin(false); setShowImageZone(true); }} className="rounded-lg border border-[#38bdf8]/30 bg-[#0c2a40] p-4 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="block text-xs font-black uppercase tracking-[0.18em] text-[#67d8ff]">Saved Artwork</span><span className="mt-2 block text-2xl font-black text-white">{imageZoneItems.length}</span><span className="mt-1 block text-xs text-slate-300">Open Image Zone</span></button>
+                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><span className="block text-xs font-black uppercase tracking-[0.18em] text-slate-400">Account Status</span><span className="mt-2 block text-lg font-black text-emerald-300">Active</span><span className="mt-1 block text-xs text-slate-400">Cloud library connected</span></div>
+              </div>
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
               <label className="block text-sm font-bold text-slate-200">Email
                 <input type="email" value={customerAuthEmail} onChange={(event) => setCustomerAuthEmail(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete="email" />
@@ -4600,7 +5998,7 @@ export default function Home() {
             {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
             <div className="flex flex-wrap gap-2">
               {!customerSession ? <button type="button" onClick={() => setCustomerAuthMode((current) => current === 'signin' ? 'signup' : 'signin')} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">{customerAuthMode === 'signin' ? 'Create Account' : 'Sign In Instead'}</button> : null}
-              <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue as Guest</button>
+              {!customerSession ? <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue as Guest</button> : null}
               {customerSession ? <button type="button" onClick={() => { void handleCustomerSignOut(); }} className="flex-1 rounded border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20">Sign Out</button> : null}
               <button type="button" onClick={() => setShowCustomerLogin(false)} className="flex-1 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-4 py-3 text-sm font-black text-white hover:bg-[#103656]">Close</button>
             </div>
@@ -4885,6 +6283,193 @@ export default function Home() {
         </section>
       </div> : null}
 
+      {showNewArtworkDialog ? (() => {
+        const activeGroup = NEW_ARTWORK_PRESET_GROUPS.find((group) => group.id === newArtworkPresetGroupId) || NEW_ARTWORK_PRESET_GROUPS[0];
+        return <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[#02070d]/90 p-4 backdrop-blur-lg">
+          <section className="flex max-h-[min(820px,94vh)] w-[min(1080px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_36px_130px_rgba(0,0,0,0.78),0_0_70px_rgba(14,165,233,0.18)]">
+            <header className="flex items-center gap-4 border-b border-white/10 bg-[#071522] px-6 py-5">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-2xl font-black text-[#67d8ff]">+</span>
+              <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Artwork Studio</p><h2 className="mt-1 text-2xl font-black">Build New Artwork</h2><p className="mt-1 text-sm text-slate-400">Choose a common production size or enter your own dimensions.</p></div>
+              <button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
+            </header>
+            <div className="grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)]">
+              <aside className="min-h-0 overflow-y-auto border-r border-white/10 bg-[#06101b] p-4">
+                <p className="px-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork type</p>
+                <div className="mt-2 space-y-1.5">{NEW_ARTWORK_PRESET_GROUPS.map((group) => <button key={group.id} type="button" onClick={() => { setNewArtworkPresetGroupId(group.id); setNewArtworkPresetKey(`${group.sizes[0].width}x${group.sizes[0].height}`); setNewArtworkUseCustomSize(false); setNewArtworkError(''); }} className={`w-full rounded-xl border px-3 py-3 text-left transition ${!newArtworkUseCustomSize && activeGroup.id === group.id ? 'border-[#38bdf8]/65 bg-[#0c2a40] shadow-[0_0_22px_rgba(14,165,233,0.10)]' : 'border-white/8 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.05]'}`}><span className={`block text-sm font-black ${!newArtworkUseCustomSize && activeGroup.id === group.id ? 'text-[#9be8ff]' : 'text-slate-200'}`}>{group.label}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{group.description}</span></button>)}</div>
+                <button type="button" onClick={() => { setNewArtworkUseCustomSize(true); setNewArtworkError(''); }} className={`mt-3 w-full rounded-xl border px-3 py-3 text-left ${newArtworkUseCustomSize ? 'border-amber-300/55 bg-amber-400/10' : 'border-dashed border-white/15 bg-white/[0.025] hover:border-amber-300/30'}`}><span className={`block text-sm font-black ${newArtworkUseCustomSize ? 'text-amber-200' : 'text-slate-200'}`}>Custom Size</span><span className="mt-1 block text-[10px] text-slate-500">Enter width × height in inches</span></button>
+              </aside>
+              <main className="min-h-0 overflow-y-auto p-5 sm:p-6">
+                {!newArtworkUseCustomSize ? <>
+                  <div className="flex flex-wrap items-end justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Select a size</p><h3 className="mt-1 text-xl font-black">{activeGroup.label}</h3></div><span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-bold text-slate-400">Dimensions shown in inches</span></div>
+                  <div className={`mt-5 grid gap-3 ${activeGroup.id === 'banners' ? 'sm:grid-cols-2 lg:grid-cols-3' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>{activeGroup.sizes.map((size) => {
+                    const key = `${size.width}x${size.height}`;
+                    const selected = newArtworkPresetKey === key;
+                    return <button key={key} type="button" onClick={() => { setNewArtworkPresetKey(key); setNewArtworkError(''); }} className={`relative min-h-24 rounded-2xl border p-4 text-left transition ${selected ? 'border-[#67d8ff] bg-[linear-gradient(135deg,rgba(14,165,233,0.20),rgba(59,130,246,0.08))] shadow-[0_0_30px_rgba(14,165,233,0.14)]' : 'border-white/10 bg-white/[0.035] hover:border-[#38bdf8]/40 hover:bg-white/[0.055]'}`}>
+                      {size.popular ? <span className="absolute right-3 top-3 rounded-full bg-amber-300/15 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-amber-200">★ Popular</span> : null}
+                      <span className={`block text-xl font-black ${selected ? 'text-white' : 'text-slate-200'}`}>{size.width}&quot; × {size.height}&quot;</span>
+                      {size.label ? <span className="mt-1 block text-xs font-bold text-[#67d8ff]">{size.label}</span> : <span className="mt-1 block text-xs text-slate-500">{size.width < size.height ? 'Portrait' : size.width > size.height ? 'Landscape' : 'Square'} artboard</span>}
+                      {selected ? <span className="mt-3 inline-flex items-center gap-1 text-[10px] font-black uppercase text-emerald-300">✓ Selected</span> : null}
+                    </button>;
+                  })}<button type="button" onClick={() => { setNewArtworkUseCustomSize(true); setNewArtworkError(''); }} className="relative min-h-24 rounded-2xl border border-dashed border-amber-300/35 bg-[linear-gradient(135deg,rgba(251,191,36,0.09),rgba(255,255,255,0.025))] p-4 text-left transition hover:border-amber-200/65 hover:bg-amber-300/10"><span className="absolute right-3 top-3 rounded-full bg-amber-300/15 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-amber-200">Any size</span><span className="block text-xl font-black text-white">Custom Size</span><span className="mt-1 block text-xs text-amber-100/70">Enter your own width × height</span><span className="mt-3 inline-flex text-[10px] font-black uppercase text-amber-200">Create custom artboard →</span></button></div>
+                </> : <div className="mx-auto max-w-xl">
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-200">Custom artboard</p><h3 className="mt-1 text-2xl font-black">Enter your finished size</h3><p className="mt-2 text-sm leading-6 text-slate-400">Use the exact finished dimensions you plan to order. You can build artboards up to 240 inches per side.</p>
+                  <div className="mt-6 grid grid-cols-[1fr_auto_1fr] items-end gap-3"><label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Width (inches)<input type="number" min="1" max="240" step="0.25" value={newArtworkCustomWidth} onChange={(event) => setNewArtworkCustomWidth(Number(event.target.value))} className="mt-2 h-14 w-full rounded-xl border border-white/15 bg-black/25 px-4 text-xl font-black text-white outline-none focus:border-[#38bdf8]" /></label><span className="pb-4 text-xl font-black text-slate-500">×</span><label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Height (inches)<input type="number" min="1" max="240" step="0.25" value={newArtworkCustomHeight} onChange={(event) => setNewArtworkCustomHeight(Number(event.target.value))} className="mt-2 h-14 w-full rounded-xl border border-white/15 bg-black/25 px-4 text-xl font-black text-white outline-none focus:border-[#38bdf8]" /></label></div>
+                  <div className="mt-6 rounded-2xl border border-[#38bdf8]/20 bg-[#0c2a40]/45 p-4 text-sm text-slate-300"><strong className="text-[#9be8ff]">Artboard preview:</strong> {Number(newArtworkCustomWidth) || 0}&quot; × {Number(newArtworkCustomHeight) || 0}&quot; · {newArtworkCustomWidth > newArtworkCustomHeight ? 'Landscape' : newArtworkCustomWidth < newArtworkCustomHeight ? 'Portrait' : 'Square'}</div>
+                </div>}
+              </main>
+            </div>
+            <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4"><p className={`min-w-0 flex-1 text-xs ${newArtworkError ? 'font-bold text-amber-300' : 'text-slate-500'}`}>{newArtworkError || 'A blank print-ready artboard will open in the editor. Nothing is saved until you choose Save as new image.'}</p><button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1]">Cancel</button><button type="button" onClick={buildNewArtwork} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Start Designing</button></footer>
+          </section>
+        </div>;
+      })() : null}
+
+      {showArtworkEditor ? <div className="fixed inset-0 z-[80] flex bg-[#02070d]/95 p-3 backdrop-blur-lg">
+        <section className="flex min-h-0 w-full flex-col overflow-hidden rounded-[22px] border border-[#38bdf8]/25 bg-[#07111f] text-white shadow-[0_36px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.18)]">
+          <header className="flex flex-wrap items-center gap-3 border-b border-white/10 bg-[#071522] px-5 py-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#67d8ff]/25 bg-[#0c2a40] text-xl text-[#67d8ff]">✎</span>
+            <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Artwork Studio</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Build New Artwork' : `Edit a copy of ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
+            <div className="flex items-center gap-1 rounded-xl border border-[#38bdf8]/25 bg-black/25 p-1"><button type="button" onClick={() => switchArtworkEditorSide('front')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'front' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>Front</button><button type="button" onClick={() => switchArtworkEditorSide('back')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'back' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{artworkEditorHasBackSide ? 'Back' : '+ Add Back'}</button></div>
+            <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <select value="" onChange={(event) => restoreArtworkEditorVersion(event.target.value)} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-2 text-[10px] text-slate-200"><option value="" disabled>Restore…</option>{artworkEditorVersions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}</select> : null}</div>
+            <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
+              <button type="button" disabled={!artworkEditorCanUndo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(-1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">↶ Undo</button>
+              <button type="button" disabled={!artworkEditorCanRedo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">Redo ↷</button>
+            </div>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => setShowArtworkEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
+          </header>
+          <div className="grid min-h-0 flex-1 lg:grid-cols-[220px_minmax(0,1fr)_310px]">
+            <aside className="min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Add elements</p>
+              <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
+              <button type="button" onClick={() => artworkEditorImageInputRef.current?.click()} className="mt-3 flex w-full items-center gap-3 rounded-xl border border-dashed border-[#38bdf8]/45 bg-[#0c2a40]/55 p-3 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#1686c9] text-lg font-black text-white">+</span><span><strong className="block text-xs font-black text-white">Upload image or logo</strong><span className="mt-0.5 block text-[10px] text-slate-400">Add a movable, resizable image layer</span></span></button>
+              {artworkEditorSide === 'front' ? <button type="button" onClick={copyArtworkEditorFrontToBack} className="mt-2 w-full rounded-xl border border-[#38bdf8]/25 bg-white/[0.04] px-3 py-2.5 text-xs font-bold text-[#9be8ff] hover:border-[#67d8ff]/60 hover:bg-[#0c2a40]">Copy Front → Back</button> : <button type="button" onClick={removeArtworkEditorBackSide} className="mt-2 w-full rounded-xl border border-red-400/20 bg-red-500/[0.06] px-3 py-2.5 text-xs font-bold text-red-200 hover:bg-red-500/10">Remove Back Side</button>}
+              <div className="mt-3 space-y-2">
+                <textarea value={artworkEditorText} onChange={(event) => setArtworkEditorText(event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" placeholder="Enter replacement text" />
+                <button type="button" onClick={artworkEditorActiveObject?.type === 'i-text' ? applyArtworkEditorText : addArtworkEditorText} className="w-full rounded-xl bg-[#1686c9] px-3 py-3 text-xs font-black uppercase text-white hover:bg-[#0f6da8]">{artworkEditorActiveObject?.type === 'i-text' ? 'Apply text changes' : '+ Add text'}</button>
+              </div>
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Starter templates</p>
+              <div className="mt-2 grid grid-cols-2 gap-1.5">{ARTWORK_EDITOR_TEMPLATES.map((template) => <button key={template.id} type="button" onClick={() => applyArtworkEditorTemplate(template.id)} className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-left text-[9px] font-bold text-slate-300 hover:border-[#38bdf8]/45 hover:text-white">{template.label}</button>)}</div>
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Shapes</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => addArtworkEditorShape('rectangle')} className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">▭<span className="mt-1 block">Rectangle</span></button>
+                <button type="button" onClick={() => addArtworkEditorShape('circle')} className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">●<span className="mt-1 block">Circle</span></button>
+                <button type="button" onClick={() => addArtworkEditorShape('triangle')} className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">▲<span className="mt-1 block">Triangle</span></button>
+                <button type="button" onClick={() => addArtworkEditorShape('line')} className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">━<span className="mt-1 block">Line</span></button>
+              </div>
+              <input value={artworkEditorIconSearch} onChange={(event) => setArtworkEditorIconSearch(event.target.value)} placeholder="Search icons (arrow, parking, phone…)" className="mt-2 h-9 w-full rounded-lg border border-white/15 bg-black/25 px-2 text-[10px] text-white outline-none focus:border-[#38bdf8]" />
+              <div className="mt-2 grid max-h-36 grid-cols-4 gap-1 overflow-y-auto pr-1">{ARTWORK_EDITOR_ICONS.filter(([, label, tags]) => `${label} ${tags}`.toLowerCase().includes(artworkEditorIconSearch.toLowerCase())).map(([symbol, label]) => <button key={label} type="button" title={`Add ${label}`} onClick={() => addArtworkEditorIcon(symbol, label)} className="rounded-lg border border-white/10 bg-white/[0.04] py-2 text-lg text-slate-200 hover:border-[#38bdf8]/45">{symbol}</button>)}</div>
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">QR Code</p>
+              <input value={artworkEditorQrValue} onChange={(event) => setArtworkEditorQrValue(event.target.value)} placeholder="Website, phone, or text" className="mt-2 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-xs text-white outline-none focus:border-[#38bdf8]" />
+              <label className="mt-2 flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[9px] font-bold uppercase text-slate-400">QR color<input type="color" value={artworkEditorFill} onChange={(event) => { setArtworkEditorFill(event.target.value); rememberArtworkEditorColor(event.target.value); }} className="h-8 w-12 cursor-pointer bg-transparent" /></label>
+              <button type="button" onClick={() => { void addArtworkEditorQrCode(); }} className="mt-2 w-full rounded-lg border border-[#38bdf8]/30 bg-[#0c2a40] px-3 py-2.5 text-[10px] font-black uppercase text-[#9be8ff] hover:border-[#67d8ff]">Generate QR Code</button>
+              <button type="button" onClick={() => { void updateArtworkEditorQrCode(); }} className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[9px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Update selected QR color</button>
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Colors & Gradient</p>
+              <p className="mt-2 text-[8px] font-black uppercase tracking-wide text-slate-500">Hue + brand palette</p><div className="mt-1 flex flex-wrap gap-2">{['#111827', '#dc2626', '#facc15', '#16a34a', '#7c3aed', ...artworkEditorBrandColors].filter((color, index, colors) => colors.indexOf(color) === index).map((color) => <button key={color} type="button" title={color} onClick={() => { setArtworkEditorFill(color); rememberArtworkEditorColor(color); if (artworkEditorCanvasRef.current?.getActiveObject()) updateArtworkEditorSelected({ fill: color }); else setArtworkEditorCanvasBackground(color); }} className="h-7 w-7 rounded-full border-2 border-white/20 shadow" style={{ backgroundColor: color }} />)}</div>
+              <button type="button" onClick={addArtworkEditorBrandColor} className="mt-2 w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Save current color to brand palette</button>
+              {artworkEditorRecentColors.length ? <><p className="mt-3 text-[8px] font-black uppercase tracking-wide text-slate-500">Recent colors</p><div className="mt-1 flex flex-wrap gap-2">{artworkEditorRecentColors.map((color) => <button key={color} type="button" title={color} onClick={() => { setArtworkEditorFill(color); if (artworkEditorCanvasRef.current?.getActiveObject()) updateArtworkEditorSelected({ fill: color }); }} className="h-6 w-6 rounded-full border border-white/25" style={{ backgroundColor: color }} />)}</div></> : null}
+              <div className="mt-2 grid grid-cols-[1fr_1fr_auto] items-center gap-1"><input type="color" value={artworkEditorGradientStart} onChange={(event) => setArtworkEditorGradientStart(event.target.value)} className="h-9 w-full rounded bg-transparent" /><input type="color" value={artworkEditorGradientEnd} onChange={(event) => setArtworkEditorGradientEnd(event.target.value)} className="h-9 w-full rounded bg-transparent" /><button type="button" onClick={applyArtworkEditorGradient} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[9px] font-bold text-slate-200">Apply</button></div>
+              <div className="mt-6 min-w-0 rounded-2xl border border-[#38bdf8]/25 bg-[#0c2a40]/45 p-3 shadow-[0_0_24px_rgba(14,165,233,0.07)]">
+                <div className="flex min-w-0 items-start justify-between gap-2"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.17em] text-[#67d8ff]">Automatic Border</p><p className="mt-1 text-[10px] leading-4 text-slate-400">Measured from the finished sign edge.</p></div><span className="shrink-0 rounded-full bg-[#38bdf8]/10 px-2 py-1 text-[8px] font-black uppercase text-[#8be3ff]">Easy</span></div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><label className="text-[9px] font-black uppercase tracking-wide text-slate-500">Inset<input type="number" min="0" max="12" step="0.125" value={artworkEditorBorderInset} onChange={(event) => setArtworkEditorBorderInset(Math.max(0, Number(event.target.value) || 0))} className="mt-1 h-10 w-full rounded-lg border border-white/15 bg-black/25 px-2 text-sm font-bold text-white outline-none focus:border-[#38bdf8]" /><span className="mt-1 block normal-case text-slate-500">inches</span></label><label className="text-[9px] font-black uppercase tracking-wide text-slate-500">Thickness<input type="number" min="0.0625" max="12" step="0.125" value={artworkEditorBorderThickness} onChange={(event) => setArtworkEditorBorderThickness(Math.max(0.0625, Number(event.target.value) || 0.5))} className="mt-1 h-10 w-full rounded-lg border border-white/15 bg-black/25 px-2 text-sm font-bold text-white outline-none focus:border-[#38bdf8]" /><span className="mt-1 block normal-case text-slate-500">inches</span></label></div>
+                <label className="mt-2 flex items-center justify-between rounded-lg border border-white/10 bg-black/15 px-3 py-2 text-[10px] font-bold uppercase text-slate-400">Border color<input type="color" value={artworkEditorBorderColor} onChange={(event) => setArtworkEditorBorderColor(event.target.value)} className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent" /></label>
+                <div className="mt-3 grid gap-2"><button type="button" onClick={addOrUpdateArtworkEditorBorder} className="w-full rounded-lg bg-[#1686c9] px-3 py-2.5 text-[10px] font-black uppercase text-white hover:bg-[#0f75b5]">Add / Update Border</button><button type="button" onClick={() => { const recommended = getRecommendedBorderSize(artworkEditorSource?.signWidth, artworkEditorSource?.signHeight); setArtworkEditorBorderInset(recommended.inset); setArtworkEditorBorderThickness(recommended.thickness); }} className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-bold text-slate-300 hover:border-white/25">Use Recommended Size</button></div>
+              </div>
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Canvas</p>
+              <label className="mt-2 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-slate-300">Background<input type="color" value={artworkEditorBackground} onChange={(event) => setArtworkEditorCanvasBackground(event.target.value)} className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent" /></label>
+              <button type="button" onClick={() => { const next = !artworkEditorSnapToCenter; setArtworkEditorSnapToCenter(next); artworkEditorSnapToCenterRef.current = next; }} className={`mt-2 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-bold ${artworkEditorSnapToCenter ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}><span>Snap to center</span><span>{artworkEditorSnapToCenter ? 'ON' : 'OFF'}</span></button>
+              <button type="button" onClick={() => setArtworkEditorShowGuides((value) => !value)} className={`mt-2 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-bold ${artworkEditorShowGuides ? 'border-[#38bdf8]/25 bg-[#38bdf8]/10 text-[#9be8ff]' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}><span>Bleed & safe guides</span><span>{artworkEditorShowGuides ? 'ON' : 'OFF'}</span></button>
+              <div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => setArtworkEditorVerticalGuides((current) => [...current, 50])} className="rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Vertical guide</button><button type="button" onClick={() => setArtworkEditorHorizontalGuides((current) => [...current, 50])} className="rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Horizontal guide</button><button type="button" onClick={() => { setArtworkEditorVerticalGuides([]); setArtworkEditorHorizontalGuides([]); }} className="col-span-2 rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] text-slate-400">Clear draggable guides</button></div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => adjustArtworkEditorBase('fit')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">Fit artwork</button>
+                <button type="button" onClick={() => adjustArtworkEditorBase('fill')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">Fill / crop</button>
+                <button type="button" onClick={() => adjustArtworkEditorBase('stretch')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">Stretch</button>
+                <button type="button" onClick={() => adjustArtworkEditorBase('center')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">Center</button>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
+                <button type="button" onClick={() => { const next = Math.max(0.5, Number((artworkEditorZoom - 0.1).toFixed(1))); setArtworkEditorZoom(next); artworkEditorCanvasRef.current?.setZoom(next); artworkEditorCanvasRef.current?.requestRenderAll(); }} className="rounded-lg py-2 text-sm font-black hover:bg-white/10">−</button>
+                <button type="button" onClick={() => { setArtworkEditorZoom(1); artworkEditorCanvasRef.current?.setViewportTransform([1, 0, 0, 1, 0, 0]); artworkEditorCanvasRef.current?.requestRenderAll(); }} className="rounded-lg py-2 text-xs font-bold hover:bg-white/10">{Math.round(artworkEditorZoom * 100)}%</button>
+                <button type="button" onClick={() => { const next = Math.min(2.5, Number((artworkEditorZoom + 0.1).toFixed(1))); setArtworkEditorZoom(next); artworkEditorCanvasRef.current?.setZoom(next); artworkEditorCanvasRef.current?.requestRenderAll(); }} className="rounded-lg py-2 text-sm font-black hover:bg-white/10">+</button>
+              </div>
+              <p className="mt-2 text-[10px] leading-4 text-slate-500">Hold Alt and drag the canvas to pan while zoomed.</p>
+              <div className="mt-6 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/55 p-3 text-xs leading-5 text-slate-300"><strong className="text-[#8be3ff]">Next phase:</strong> smart removal, background replacement, recoloring, and restoration through Cloudinary.</div>
+            </aside>
+            <main className="relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-5">
+              <div ref={artworkEditorViewportRef} className="relative max-h-full max-w-full overflow-auto rounded-lg border border-[#67d8ff]/35 bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)]"><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute left-0 top-0 z-20 h-4 w-full border-b border-sky-400/40 bg-[repeating-linear-gradient(90deg,rgba(14,165,233,.75)_0_1px,transparent_1px_10px)] bg-slate-950/75" /><div className="absolute left-0 top-0 z-20 h-full w-4 border-r border-sky-400/40 bg-[repeating-linear-gradient(0deg,rgba(14,165,233,.75)_0_1px,transparent_1px_10px)] bg-slate-950/75" /><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}</div>
+              <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#02070d]/75 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{artworkEditorSide} side · Drag handles to resize · Double-click text to edit</span>
+            </main>
+            <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-[#07131f] p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Properties</p>
+              {artworkEditorActiveObject ? <div className="mt-3 space-y-3">
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Exact position & size (inches)</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] font-bold uppercase text-slate-500">Center X<input type="number" step="0.01" value={artworkEditorExactX} onChange={(event) => setArtworkEditorExactX(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('x', artworkEditorExactX)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Center Y<input type="number" step="0.01" value={artworkEditorExactY} onChange={(event) => setArtworkEditorExactY(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('y', artworkEditorExactY)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Width<input type="number" min="0.01" step="0.01" value={artworkEditorExactWidth} onChange={(event) => setArtworkEditorExactWidth(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('width', artworkEditorExactWidth)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Height<input type="number" min="0.01" step="0.01" value={artworkEditorExactHeight} onChange={(event) => setArtworkEditorExactHeight(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('height', artworkEditorExactHeight)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="col-span-2 text-[8px] font-bold uppercase text-slate-500">Rotation<input type="number" step="1" value={artworkEditorExactRotation} onChange={(event) => setArtworkEditorExactRotation(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('rotation', artworkEditorExactRotation)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label></div></div>
+                {artworkEditorActiveObject.type === 'activeSelection' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><div className="grid grid-cols-3 gap-1">{(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((mode) => <button key={mode} type="button" onClick={() => alignArtworkEditorSelection(mode)} className="rounded-lg border border-white/10 bg-white/[0.05] px-1 py-2 text-[9px] font-bold capitalize text-slate-200">{mode}</button>)}</div><div className="mt-1 grid grid-cols-2 gap-1"><button type="button" onClick={() => alignArtworkEditorSelection('distribute-x')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Space X</button><button type="button" onClick={() => alignArtworkEditorSelection('distribute-y')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Space Y</button></div><button type="button" onClick={groupArtworkEditorSelection} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[10px] font-black uppercase text-white">Group selection</button></div> : artworkEditorActiveObject.type === 'group' ? <button type="button" onClick={groupArtworkEditorSelection} className="w-full rounded-lg border border-[#38bdf8]/30 bg-[#0c2a40] py-2 text-[10px] font-black uppercase text-[#9be8ff]">Ungroup elements</button> : null}
+                {artworkEditorActiveObject.type === 'i-text' ? <>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Font<select value={artworkEditorFont} onChange={(event) => { setArtworkEditorFont(event.target.value); updateArtworkEditorSelected({ fontFamily: event.target.value } as Partial<FabricObject>); }} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#0a1928] px-3 text-sm normal-case text-white outline-none">{FONT_OPTIONS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Font size<input type="number" min="8" max="400" value={artworkEditorFontSize} onChange={(event) => { const value = Math.max(8, Number(event.target.value) || 8); setArtworkEditorFontSize(value); updateArtworkEditorSelected({ fontSize: value } as Partial<FabricObject>); }} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none" /></label>
+                  <div className="grid grid-cols-2 gap-2"><label className="block text-[9px] font-bold uppercase tracking-wide text-slate-500">Letter spacing<input type="number" min="-100" max="500" step="10" value={artworkEditorCharSpacing} onChange={(event) => { const value = Math.max(-100, Math.min(500, Number(event.target.value) || 0)); setArtworkEditorCharSpacing(value); updateArtworkEditorSelected({ charSpacing: value } as Partial<FabricObject>); }} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none" /></label><label className="block text-[9px] font-bold uppercase tracking-wide text-slate-500">Line height<input type="number" min="0.6" max="3" step="0.05" value={artworkEditorLineHeight} onChange={(event) => { const value = Math.max(0.6, Math.min(3, Number(event.target.value) || 1)); setArtworkEditorLineHeight(value); updateArtworkEditorSelected({ lineHeight: value } as Partial<FabricObject>); }} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none" /></label></div>
+                  <div className="grid grid-cols-5 gap-1"><button type="button" onClick={() => { const object = artworkEditorCanvasRef.current?.getActiveObject() as IText | undefined; if (!object) return; object.set({ fontWeight: object.fontWeight === 'bold' ? 'normal' : 'bold' }); commitArtworkEditorChange(object); }} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 font-black">B</button><button type="button" onClick={() => { const object = artworkEditorCanvasRef.current?.getActiveObject() as IText | undefined; if (!object) return; object.set({ fontStyle: object.fontStyle === 'italic' ? 'normal' : 'italic' }); commitArtworkEditorChange(object); }} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 font-serif italic">I</button>{(['left', 'center', 'right'] as const).map((alignment) => <button key={alignment} type="button" title={`Align ${alignment}`} onClick={() => { const object = artworkEditorCanvasRef.current?.getActiveObject() as IText | undefined; if (!object) return; object.set({ textAlign: alignment }); commitArtworkEditorChange(object); }} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">{alignment === 'left' ? '≡' : alignment === 'center' ? '☰' : '≣'}</button>)}</div>
+                  <button type="button" onClick={() => transformArtworkEditorSelected('uppercase')} className="w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-200 hover:border-[#38bdf8]/40">Convert to uppercase</button>
+                  <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-[#8be3ff]">Curved / arched text</p><label className="mt-2 block text-[8px] text-slate-400">Curve <span className="float-right">{artworkEditorTextCurve}</span><input type="range" min="-100" max="100" value={artworkEditorTextCurve} onChange={(event) => setArtworkEditorTextCurve(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => applyArtworkEditorTextCurve()} className="rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase">Apply curve</button><button type="button" onClick={() => { setArtworkEditorTextCurve(0); applyArtworkEditorTextCurve(0); }} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px]">Straight</button></div></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-wide text-slate-500">Text box + second outline</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] uppercase text-slate-500">Box color<input type="color" value={artworkEditorTextBoxColor} onChange={(event) => setArtworkEditorTextBoxColor(event.target.value)} className="mt-1 h-8 w-full bg-transparent" /></label><label className="text-[8px] uppercase text-slate-500">Padding<input type="number" min="0" max="100" value={artworkEditorTextBoxPadding} onChange={(event) => setArtworkEditorTextBoxPadding(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label></div><button type="button" onClick={addArtworkEditorTextBackground} className="mt-2 w-full rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] font-bold">Add background box</button><div className="mt-2 grid grid-cols-2 gap-2"><input type="color" value={artworkEditorOuterOutlineColor} onChange={(event) => setArtworkEditorOuterOutlineColor(event.target.value)} className="h-8 w-full bg-transparent" /><input type="number" min="1" max="50" value={artworkEditorOuterOutlineWidth} onChange={(event) => setArtworkEditorOuterOutlineWidth(Number(event.target.value))} className="h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></div><button type="button" onClick={() => { void addArtworkEditorOuterOutline(); }} className="mt-2 w-full rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] font-bold">Add second outline layer</button></div>
+                </> : null}
+                {artworkEditorActiveObject.type === 'image' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/45 p-3"><p className="text-[10px] font-black uppercase tracking-[0.15em] text-[#8be3ff]">Image placement</p><div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => fitArtworkEditorSelectedImage('fit')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/50">Fit</button><button type="button" onClick={() => fitArtworkEditorSelectedImage('fill')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/50">Background</button><button type="button" onClick={() => fitArtworkEditorSelectedImage('stretch')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/50">Stretch</button></div><p className="mt-3 text-[9px] font-black uppercase tracking-wide text-slate-500">Crop frame</p><div className="mt-1 grid grid-cols-3 gap-1"><button type="button" onClick={() => applyArtworkEditorImageMask('none')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">None</button><button type="button" onClick={() => applyArtworkEditorImageMask('circle')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Circle</button><button type="button" onClick={() => applyArtworkEditorImageMask('rounded')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Rounded</button></div><p className="mt-3 text-[9px] font-black uppercase tracking-wide text-slate-500">Image adjustments</p><label className="mt-1 block text-[8px] text-slate-400">Brightness<input type="range" min="-1" max="1" step="0.05" value={artworkEditorBrightness} onChange={(event) => setArtworkEditorBrightness(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><label className="block text-[8px] text-slate-400">Contrast<input type="range" min="-1" max="1" step="0.05" value={artworkEditorContrast} onChange={(event) => setArtworkEditorContrast(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><label className="block text-[8px] text-slate-400">Saturation<input type="range" min="-1" max="1" step="0.05" value={artworkEditorSaturation} onChange={(event) => setArtworkEditorSaturation(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><button type="button" onClick={applyArtworkEditorImageFilters} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase text-white">Apply adjustments</button></div> : <>
+                  <div className="grid grid-cols-2 gap-2"><label className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-[10px] font-bold uppercase text-slate-500">Fill<input type="color" value={artworkEditorFill} onChange={(event) => { setArtworkEditorFill(event.target.value); updateArtworkEditorSelected({ fill: event.target.value }); }} className="mt-1 h-8 w-full cursor-pointer rounded bg-transparent" /></label><label className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-[10px] font-bold uppercase text-slate-500">Outline<input type="color" value={artworkEditorStroke} onChange={(event) => { setArtworkEditorStroke(event.target.value); updateArtworkEditorSelected({ stroke: event.target.value }); }} className="mt-1 h-8 w-full cursor-pointer rounded bg-transparent" /></label></div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Outline width <span className="float-right text-slate-300">{artworkEditorStrokeWidth}px</span><input type="range" min="0" max="20" value={artworkEditorStrokeWidth} onChange={(event) => { const value = Number(event.target.value); setArtworkEditorStrokeWidth(value); updateArtworkEditorSelected({ strokeWidth: value, stroke: value > 0 ? artworkEditorStroke : undefined }); }} className="mt-2 w-full accent-[#38bdf8]" /></label>
+                </>}
+                {artworkEditorActiveObject.type === 'image' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-[#8be3ff]">Advanced freeform crop (%)</p><p className="mt-1 text-[8px] leading-4 text-slate-500">Trim each edge independently without deleting the original pixels.</p><div className="mt-2 grid grid-cols-2 gap-1">{(['left', 'right', 'top', 'bottom'] as const).map((edge) => <label key={edge} className="text-[8px] capitalize text-slate-400">{edge}<input type="number" min="0" max="90" value={artworkEditorCrop[edge]} onChange={(event) => setArtworkEditorCrop((current) => ({ ...current, [edge]: Number(event.target.value) }))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label>)}</div><button type="button" onClick={applyArtworkEditorFreeCrop} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase text-white">Apply custom crop</button></div> : null}
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-wide text-slate-500">Adjustable shadow</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] uppercase text-slate-500">Color<input type="color" value={artworkEditorShadowColor} onChange={(event) => setArtworkEditorShadowColor(event.target.value)} className="mt-1 h-8 w-full bg-transparent" /></label><label className="text-[8px] uppercase text-slate-500">Opacity<input type="number" min="0" max="100" value={artworkEditorShadowOpacity} onChange={(event) => setArtworkEditorShadowOpacity(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] uppercase text-slate-500">Blur<input type="number" min="0" max="100" value={artworkEditorShadowBlur} onChange={(event) => setArtworkEditorShadowBlur(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] uppercase text-slate-500">Offset X<input type="number" min="-100" max="100" value={artworkEditorShadowOffsetX} onChange={(event) => setArtworkEditorShadowOffsetX(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] uppercase text-slate-500">Offset Y<input type="number" min="-100" max="100" value={artworkEditorShadowOffsetY} onChange={(event) => setArtworkEditorShadowOffsetY(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label></div><div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => applyArtworkEditorShadow()} className="rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase">Apply</button><button type="button" onClick={() => applyArtworkEditorShadow(true)} className="rounded-lg border border-white/10 py-2 text-[9px]">Remove</button></div></div>
+                <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Opacity <span className="float-right text-slate-300">{artworkEditorOpacity}%</span><input type="range" min="10" max="100" value={artworkEditorOpacity} onChange={(event) => { const value = Number(event.target.value); setArtworkEditorOpacity(value); updateArtworkEditorSelected({ opacity: value / 100 }); }} className="mt-2 w-full accent-[#38bdf8]" /></label>
+                <div><p className="mb-2 text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Quick effects</p><div className="grid grid-cols-4 gap-1"><button type="button" title="Rotate 90 degrees" onClick={() => transformArtworkEditorSelected('rotate')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">↻ 90°</button><button type="button" title="Flip horizontally" onClick={() => transformArtworkEditorSelected('flip-horizontal')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">⇆</button><button type="button" title="Flip vertically" onClick={() => transformArtworkEditorSelected('flip-vertical')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">⇅</button><button type="button" title="Toggle drop shadow" onClick={() => transformArtworkEditorSelected('shadow')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">Shadow</button></div></div>
+                <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => centerArtworkEditorSelected('horizontal')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs">Center X</button><button type="button" onClick={() => centerArtworkEditorSelected('vertical')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs">Center Y</button><button type="button" onClick={() => { void duplicateArtworkEditorSelected(); }} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs">Duplicate</button><button type="button" onClick={deleteArtworkEditorSelected} className="rounded-lg border border-red-400/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">Delete</button><button type="button" onClick={() => { const layerId = (artworkEditorCanvasRef.current?.getActiveObject() as FabricObject & { data?: { layerId?: string } } | undefined)?.data?.layerId; if (layerId) toggleArtworkEditorLayerLock(layerId); }} className="col-span-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-2 py-2 text-xs font-bold text-amber-100">🔒 Lock selected layer</button></div>
+                <div className="grid grid-cols-4 gap-1"><button type="button" title="Send to back" onClick={() => moveArtworkEditorLayer('back')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">⇊</button><button type="button" title="Move backward" onClick={() => moveArtworkEditorLayer('backward')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">↓</button><button type="button" title="Move forward" onClick={() => moveArtworkEditorLayer('forward')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">↑</button><button type="button" title="Bring to front" onClick={() => moveArtworkEditorLayer('front')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">⇈</button></div>
+              </div> : <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400">Select text or a shape on the artwork to edit its properties.</div>}
+              <div className="mt-6 flex items-center justify-between"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Layers</p><span className="rounded-full bg-[#0c2a40] px-2 py-1 text-[10px] font-bold text-[#8be3ff]">{artworkEditorLayers.length}</span></div>
+              <div className="mt-2 space-y-1">{artworkEditorLayers.length === 0 ? <p className="rounded-xl border border-dashed border-white/10 p-3 text-xs text-slate-500">Add an image, text, shape, or border to create layers.</p> : artworkEditorLayers.map((layer) => <div key={layer.id} className={`flex min-w-0 items-center rounded-lg border ${layer.isActive ? 'border-[#38bdf8]/60 bg-[#0c2a40]' : layer.isLocked ? 'border-amber-300/20 bg-amber-300/[0.04]' : 'border-white/10 bg-white/[0.035] hover:border-white/20'}`}><button type="button" onClick={() => { if (layer.isLocked) { setArtworkEditorStatus(`${layer.name} is locked. Use the lock button to make it editable.`); return; } const canvas = artworkEditorCanvasRef.current; const object = canvas?.getObjects().find((entry) => (entry as FabricObject & { data?: { layerId?: string } }).data?.layerId === layer.id); if (!canvas || !object) return; canvas.setActiveObject(object); canvas.requestRenderAll(); syncArtworkEditorControls(object); refreshArtworkEditorLayers(canvas); }} className={`flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left text-xs ${layer.isActive ? 'text-white' : 'text-slate-300'}`}><span className="truncate font-bold">{layer.name}</span><span className="ml-2 shrink-0 text-[9px] uppercase text-slate-500">{layer.type}</span></button><button type="button" onClick={() => moveArtworkEditorLayerById(layer.id, 'up')} title="Move layer up" aria-label={`Move ${layer.name} up`} className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md text-xs text-slate-400 hover:bg-white/10 hover:text-white">↑</button><button type="button" onClick={() => moveArtworkEditorLayerById(layer.id, 'down')} title="Move layer down" aria-label={`Move ${layer.name} down`} className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md text-xs text-slate-400 hover:bg-white/10 hover:text-white">↓</button><button type="button" onClick={() => toggleArtworkEditorLayerLock(layer.id)} title={layer.isLocked ? 'Unlock layer' : 'Lock layer'} aria-label={layer.isLocked ? `Unlock ${layer.name}` : `Lock ${layer.name}`} className={`mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs ${layer.isLocked ? 'bg-amber-300/15 text-amber-200 hover:bg-amber-300/25' : 'text-slate-500 hover:bg-white/10 hover:text-white'}`}>{layer.isLocked ? '🔒' : '🔓'}</button></div>)}</div>
+            </aside>
+          </div>
+          <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-5 py-3">
+            <p className={`min-w-0 flex-1 text-xs leading-5 ${artworkEditorStatus.toLowerCase().includes('could not') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{artworkEditorStatus}</p>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => setShowArtworkEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Saving design...' : 'Save Editable Design'}</button>
+          </footer>
+        </section>
+      </div> : null}
+
+      {showAiImageEditor ? (() => {
+        const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+        const quickPrompts = aiEditAction === 'remove' ? ['text', 'small mark in the upper-right corner', 'background clutter', 'person'] : aiEditAction === 'background' ? ['clean white studio background', 'subtle dark blue gradient', 'outdoor storefront wall'] : aiEditAction === 'recolor' ? ['logo', 'background', 'main graphic'] : aiEditAction === 'replace' ? ['old logo => new circular logo', 'left arrow => right arrow', 'red shape => blue shape'] : [];
+        return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#01050a]/90 p-4 backdrop-blur-lg">
+          <section className="flex max-h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_40px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.2)]">
+            <header className="flex items-center gap-4 border-b border-white/10 bg-[#071522] px-6 py-5">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-xl shadow-[0_0_28px_rgba(14,165,233,0.2)]">✦</span>
+              <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Creative Lab · Cloudinary</p><h2 className="mt-1 text-2xl font-black">AI Artwork Edit</h2><p className="mt-1 text-xs text-slate-400">Generate a temporary proof, then save it as a new image. Your original stays untouched.</p></div>
+              <button type="button" disabled={isAiEditing} onClick={() => setShowAiImageEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-6">
+              <div className="grid gap-5 lg:grid-cols-[1fr_1fr_390px]">
+                <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Original</p><div className="flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white">{source ? <img src={source.dataUrl} alt="Original artwork" className="max-h-full max-w-full object-contain" /> : null}</div><p className="mt-2 truncate text-xs text-slate-400">{source?.name}</p></div>
+                <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">AI proof</p><div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-[#38bdf8]/25 bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.12),transparent_65%)]">{aiEditPreview ? <img src={aiEditPreview.dataUrl} alt="AI edited proof" className="max-h-full max-w-full object-contain" /> : <div className="max-w-52 text-center"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[#0c2a40] text-2xl text-[#67d8ff]">✦</span><p className="mt-4 text-sm font-bold text-slate-300">Your generated proof will appear here</p></div>}{isAiEditing ? <div className="absolute inset-0 flex items-center justify-center bg-[#04101c]/80"><div className="text-center"><span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-[#67d8ff]/25 border-t-[#67d8ff]" /><p className="mt-3 text-xs font-bold text-[#a9ecff]">Working on your proof...</p></div></div> : null}</div></div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
+                  <label className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Cloudinary tool</label><select value={aiEditAction} onChange={(event) => { setAiEditAction(event.target.value as typeof aiEditAction); setAiEditPrompt(''); setAiEditPreview(null); }} className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-[#0a1928] px-3 text-sm font-bold text-white outline-none focus:border-[#38bdf8]"><option value="restore">Restore and sharpen</option><option value="remove-background">Remove background</option><option value="remove">Remove object or text</option><option value="background">Generate new background</option><option value="recolor">Recolor an object</option><option value="replace">Replace an object</option></select>
+                  <label className="text-xs font-black uppercase tracking-[0.14em] text-[#8be3ff]">What should Hue AI change?</label>
+                  {!['restore', 'remove-background'].includes(aiEditAction) ? <textarea value={aiEditPrompt} onChange={(event) => setAiEditPrompt(event.target.value)} maxLength={500} rows={4} placeholder={aiEditAction === 'replace' ? 'Use: what to replace => what should replace it' : aiEditAction === 'recolor' ? 'Describe the object to recolor, such as: logo' : aiEditAction === 'background' ? 'Describe the new background' : 'Describe exactly what should be removed'} className="mt-3 w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" /> : <p className="mt-3 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/35 p-3 text-xs leading-5 text-slate-300">{aiEditAction === 'restore' ? 'Cloudinary will reduce compression artifacts, sharpen edges, and improve the image.' : 'Cloudinary will isolate the main foreground and create a transparent background.'}</p>}
+                  {aiEditAction === 'recolor' ? <label className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] font-black uppercase text-slate-400">New color<input type="color" value={aiEditTargetColor} onChange={(event) => setAiEditTargetColor(event.target.value)} className="h-9 w-14 bg-transparent" /></label> : null}
+                  {quickPrompts.length ? <><p className="mt-4 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Quick instructions</p><div className="mt-2 flex flex-wrap gap-2">{quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setAiEditPrompt(prompt)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2.5 py-2 text-left text-[11px] leading-4 text-slate-300 hover:border-[#38bdf8]/50 hover:text-white">{prompt}</button>)}</div></> : null}
+                  <label className="mt-5 block text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Proof quality</label>
+                  <select value={aiEditQuality} onChange={(event) => setAiEditQuality(event.target.value as 'low' | 'medium' | 'high')} className="mt-2 h-10 w-full rounded-xl border border-white/15 bg-[#0a1928] px-3 text-sm text-white outline-none focus:border-[#38bdf8]"><option value="low">Draft — fastest test</option><option value="medium">Standard — better detail</option><option value="high">Final — highest detail</option></select>
+                  <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.06] p-3 text-xs leading-5 text-amber-100/80"><strong className="text-amber-200">Review before print.</strong> AI can alter text, logos, colors, or fine details. This is an editing proof, not production approval.</div>
+                </div>
+              </div>
+              {aiEditStatus ? <p className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">{aiEditStatus}</p> : null}
+            </div>
+            <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4">
+              <p className={`min-w-0 flex-1 text-xs leading-5 ${aiEditStatus.includes('CLOUDINARY_') || aiEditStatus.toLowerCase().includes('could not') || aiEditStatus.toLowerCase().includes('failed') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{aiEditStatus}</p>
+              <button type="button" disabled={isAiEditing} onClick={() => setShowAiImageEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
+              <button type="button" disabled={isAiEditing || (!['restore', 'remove-background'].includes(aiEditAction) && aiEditPrompt.trim().length < 2)} onClick={generateAiImageEdit} className="rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:bg-[#10364f] disabled:cursor-not-allowed disabled:opacity-35">{aiEditPreview ? 'Generate again' : 'Generate edit'}</button>
+              <button type="button" disabled={isAiEditing || !aiEditPreview} onClick={saveAiImageEdit} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Save as new image</button>
+            </footer>
+          </section>
+        </div>;
+      })() : null}
+
       {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/80 p-4 backdrop-blur-md">
         <section className="hue-image-library flex h-[min(800px,90vh)] w-[min(1380px,96vw)] flex-col overflow-hidden rounded-[22px] border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)]">
           <div className="relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
@@ -4898,6 +6483,9 @@ export default function Home() {
               <option>CORO Orders</option>
             </select>
             <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</label>
+            <button type="button" onClick={() => { setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Build New</button>
+            <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit Artwork</button>
+            <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={openAiEditor} className="h-10 rounded-xl border border-violet-300/30 bg-violet-500/10 px-4 text-xs font-black uppercase text-violet-100 hover:border-violet-300/60 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-35">AI Tools</button>
             <button type="button" className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Image setup</button>
             <div className="order-last flex w-full items-center gap-2 pt-2"><span className="text-lg text-[#67d8ff]">⌕</span><input className="h-10 min-w-56 flex-1 rounded-xl border border-white/15 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" placeholder="Search your artwork library" />
             <select className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
@@ -4927,10 +6515,12 @@ export default function Home() {
                   <div className={`relative flex h-32 items-center justify-center overflow-hidden rounded-xl border ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
                     {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
                     {selected ? <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1686c9] text-xs font-black text-white shadow-md">✓</span> : null}
+                    {item.backDataUrl ? <span className="absolute bottom-2 left-2 rounded-full bg-[#071827]/90 px-2 py-1 text-[9px] font-black uppercase text-[#8be3ff] shadow">Front + Back</span> : null}
+                    {item.editorProject ? <span className="absolute bottom-2 right-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[9px] font-black uppercase text-white shadow">Editable</span> : null}
                   </div>
                   <div className="min-w-0">
                     <p className={`truncate text-sm font-black ${selected ? 'text-slate-950' : 'text-white'}`}>{item.name}</p>
-                    <p className={`mt-2 text-xs font-bold ${selected ? 'text-slate-600' : 'text-slate-300'}`}>{formatArtworkInches(item.width, item.height)}</p>
+                    <p className={`mt-2 text-xs font-bold ${selected ? 'text-slate-600' : 'text-slate-300'}`}>{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</p>
                     <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
                     <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</p>
                     <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
