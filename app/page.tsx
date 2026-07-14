@@ -3672,6 +3672,7 @@ export default function Home() {
                     <p className="text-xs font-black uppercase tracking-[0.24em] text-white/90">Hue Graphics online store</p>
                     <h2 className="mt-3 max-w-2xl text-4xl font-black tracking-tight text-white md:text-5xl">Art-ready online ordering</h2>
                     <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">This tool is for print-ready files that are already approved and ready to produce. We print what you submit and do not perform a full proofing or design review, so please confirm size, spelling, bleed, resolution, and layout before checkout.</p>
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">We do a basic production check before printing and will reach out when possible if we notice a file issue that may affect print quality. Final spelling, layout, sizing, and design approval remain the customer&apos;s responsibility.</p>
                     <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">Self-service orders use streamlined art-ready pricing, so many items are priced lower than standard custom-quoted jobs. Most orders are completed in 3-4 business days. Local pickup and US shipping are available for just $10.</p>
                   </div>
                   <div className="rounded-lg border border-white/50 bg-white/85 p-4 shadow-[0_18px_40px_rgba(7,17,31,0.18)]">
@@ -3679,6 +3680,7 @@ export default function Home() {
                     <div className="mt-3 grid gap-2 text-sm text-slate-700">
                       <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Artwork is final and print-ready</span>
                       <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Size, bleed, and spelling are approved</span>
+                      <span className="rounded-md bg-blue-50 px-3 py-2 text-[#0f5f94]">Basic production check before printing</span>
                       <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Streamlined pricing for self-service orders</span>
                       <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Most orders finish in 3-4 business days</span>
                       <span className="rounded-md bg-blue-50 px-3 py-2 text-[#0f5f94]">Local pickup or US shipping: $10</span>
@@ -4562,9 +4564,19 @@ export default function Home() {
           <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-5">
             <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Customer Account</p>
             <h3 className="mt-1 text-2xl font-black text-white">{customerSession ? 'Artwork Library' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-300">Create an account to keep artwork ready for reorders, or continue without an account for a quick checkout.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Create an account to save your artwork library, or continue as a guest for a one-time order.</p>
           </div>
           <div className="space-y-4 px-6 py-6">
+            {!customerSession ? <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-[#38bdf8]/25 bg-[#0b263d]/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-[#62d4ff]">Create an account</p>
+                <p className="mt-2 text-sm leading-6 text-slate-200">Keep approved print-ready files in your personal Hue Studio artwork library, reuse them for future orders, and make repeat jobs faster.</p>
+              </div>
+              <div className="rounded-lg border border-white/12 bg-white/[0.04] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-300">Continue as guest</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">Place a one-time order without saving files to an account. You can still upload artwork and complete checkout.</p>
+              </div>
+            </div> : null}
             {customerSession ? <div className="rounded-lg border border-[#0ea5e9]/25 bg-[#0b263d]/60 p-4">
               <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Signed In</p>
               <p className="mt-2 break-all text-lg font-black text-white">{customerSession.user?.email || 'Customer account'}</p>
@@ -4581,7 +4593,7 @@ export default function Home() {
             {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
             <div className="flex flex-wrap gap-2">
               {!customerSession ? <button type="button" onClick={() => setCustomerAuthMode((current) => current === 'signin' ? 'signup' : 'signin')} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">{customerAuthMode === 'signin' ? 'Create Account' : 'Sign In Instead'}</button> : null}
-              <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue Without Account</button>
+              <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue as Guest</button>
               {customerSession ? <button type="button" onClick={() => { void handleCustomerSignOut(); }} className="flex-1 rounded border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20">Sign Out</button> : null}
               <button type="button" onClick={() => setShowCustomerLogin(false)} className="flex-1 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-4 py-3 text-sm font-black text-white hover:bg-[#103656]">Close</button>
             </div>
