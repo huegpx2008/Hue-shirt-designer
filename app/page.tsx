@@ -402,7 +402,7 @@ const STORE_CATEGORIES: { id: StoreCategoryId; label: string; description: strin
   { id: 'misc', label: 'More', description: 'Additional print-ready products' }
 ];
 const STORE_PRODUCTS: StoreProductCard[] = [
-  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Indoor / outdoor banner', description: 'Upload finished banner art, check fit, and price online.', mode: 'signage', signProductId: 'banner', badge: 'Online order', initialSignValues: { material: '15-single', sides: 'single' } },
+  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Indoor / outdoor banner', description: 'Upload finished banner art, check fit, and price online.', mode: 'signage', signProductId: 'banner', badge: 'Online order', initialSignValues: { material: '13-single', sides: 'single' } },
   { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: 'Air-flow perforated banner', description: 'Use the banner layout tool for finished mesh banner artwork.', mode: 'signage', signProductId: 'mesh-banner', badge: 'Mesh', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
   { id: 'coro-sheet', category: 'coro', title: 'CORO', subtitle: '48 x 96 sheet-based signs', description: 'Choose a cut size, upload finished art, and see sheet usage before ordering.', mode: 'signage', signProductId: 'yard-sign', badge: 'Sheet price' },
   { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: 'Printed rigid panels', description: 'Upload finished acrylic art, set size, and pull Hue API pricing.', mode: 'signage', signProductId: 'acrylic', badge: 'Online order' },
@@ -517,7 +517,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
         name: 'material',
         label: 'Material',
         type: 'select',
-        defaultValue: '15-single',
+        defaultValue: '13-single',
         options: BANNER_MATERIAL_OPTIONS
       },
       {
@@ -793,7 +793,7 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
   if (product.preview === 'banner') {
     const sides = String(values.sides || 'single');
     const isDoubleSided = sides === 'double';
-    const material = String(values.material || '15-single');
+    const material = String(values.material || '13-single');
     const isCustomMagnet = product.id === 'vehicle-magnet' && Boolean(values.customCut);
     const presetSize = product.id === 'vehicle-magnet' && !isCustomMagnet ? parsePresetSize(values.size) : null;
     return {
@@ -3536,7 +3536,7 @@ export default function Home() {
       setSignValues((prev) => ({
         ...prev,
         sides: value,
-        material: value === 'double' ? '18-single' : prev.material
+        material: value === 'double' ? '18-single' : '13-single'
       }));
       setSignEstimate(null);
       setActiveCoroOptionPanel('images');
@@ -3664,27 +3664,31 @@ export default function Home() {
               </div>
             </aside>
 
-            <section className={`overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/72 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/88'}`}>
-              <div className="relative min-h-64 overflow-hidden bg-[#dff0ff]">
-                <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(22,120,184,0.92),rgba(255,255,255,0.58)),linear-gradient(90deg,rgba(5,9,11,0.16)_1px,transparent_1px)] bg-[size:auto,34px_34px]" />
-                <div className="relative grid min-h-64 items-center gap-6 px-6 py-8 md:grid-cols-[minmax(0,1fr)_360px] lg:px-10">
+            <section className={`overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/15 bg-[#050b12] shadow-[0_24px_60px_rgba(0,0,0,0.45)]' : 'border border-white/80 bg-white/88'}`}>
+              <div className="hue-store-hero relative min-h-[350px] overflow-hidden">
+                <div aria-hidden="true" className="hue-store-hero-pattern absolute inset-0" />
+                <div aria-hidden="true" className="hue-store-hero-glow absolute inset-0" />
+                <div className="relative grid min-h-[350px] items-center gap-8 px-6 py-9 md:grid-cols-[minmax(0,1fr)_360px] lg:px-10">
                   <div>
-                    <p className="text-xs font-black uppercase tracking-[0.24em] text-white/90">Hue Graphics online store</p>
-                    <h2 className="mt-3 max-w-2xl text-4xl font-black tracking-tight text-white md:text-5xl">Art-ready online ordering</h2>
-                    <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">This tool is for print-ready files that are already approved and ready to produce. We print what you submit and do not perform a full proofing or design review, so please confirm size, spelling, bleed, resolution, and layout before checkout.</p>
-                    <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">We do a basic production check before printing and will reach out when possible if we notice a file issue that may affect print quality. Final spelling, layout, sizing, and design approval remain the customer&apos;s responsibility.</p>
-                    <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">Self-service orders use streamlined art-ready pricing, so many items are priced lower than standard custom-quoted jobs. Most orders are completed in 3-4 business days. Local pickup and US shipping are available for just $10.</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.34em] text-[#67d8ff]">Hue Graphics online store</p>
+                    <h2 className="hue-store-hero-title mt-4 max-w-3xl uppercase leading-[0.84] drop-shadow-[0_10px_32px_rgba(0,0,0,0.55)]">
+                      <span className="block text-[clamp(3.4rem,7vw,6.8rem)] text-white">Art-Ready</span>
+                      <span className="mt-2 block text-[clamp(2.25rem,4.7vw,4.7rem)] text-[#16a9f5]">Online Ordering</span>
+                    </h2>
+                    <p className="mt-5 text-[10px] font-black uppercase tracking-[0.42em] text-slate-300">Upload. Price. Checkout. We print.</p>
+                    <div className="mt-7 grid max-w-3xl grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                      {[['✓', 'Production', 'Checked'], ['◷', 'Fast', 'Turnaround'], ['$', 'Competitive', 'Pricing'], ['⌂', 'Pickup', 'or shipping']].map(([icon, title, note]) => <div key={title} className="flex items-center gap-2 border-l border-[#16a9f5]/45 pl-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#16a9f5]/45 bg-[#071827]/80 font-black text-[#67d8ff] shadow-[0_0_18px_rgba(14,165,233,0.16)]">{icon}</span><span><strong className="block text-white">{title}</strong><span className="block text-slate-400">{note}</span></span></div>)}
+                    </div>
+                    <p className="mt-6 max-w-3xl text-xs leading-5 text-slate-400">For approved, print-ready artwork. Confirm size, spelling, bleed, resolution, and layout before checkout. Our team performs a basic production check before printing.</p>
                   </div>
-                  <div className="rounded-lg border border-white/50 bg-white/85 p-4 shadow-[0_18px_40px_rgba(7,17,31,0.18)]">
-                    <p className="text-sm font-black text-slate-950">Ready artwork checklist</p>
-                    <div className="mt-3 grid gap-2 text-sm text-slate-700">
-                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Artwork is final and print-ready</span>
-                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Size, bleed, and spelling are approved</span>
-                      <span className="rounded-md bg-blue-50 px-3 py-2 text-[#0f5f94]">Basic production check before printing</span>
-                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Streamlined pricing for self-service orders</span>
-                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Most orders finish in 3-4 business days</span>
-                      <span className="rounded-md bg-blue-50 px-3 py-2 text-[#0f5f94]">Local pickup or US shipping: $10</span>
-                      <span className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">Need design help or changes? Submit a quote request on the main website.</span>
+                  <div className="rounded-xl border border-white/15 bg-[#0a1119]/90 p-5 shadow-[0_24px_70px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur">
+                    <p className="text-sm font-black text-white">Ready artwork checklist</p>
+                    <div className="mt-4 grid gap-3 text-xs text-slate-300">
+                      {['Artwork is final and print-ready', 'Size, bleed, and spelling are approved', 'Basic production check before printing', 'Streamlined pricing for self-service orders', 'Most orders finish in 3-4 business days', 'Local pickup or US shipping: $10'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
+                    </div>
+                    <div className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-amber-400">
+                      <strong className="block">Need design help or changes?</strong>
+                      <span className="text-amber-300/75">Submit a quote request on the main website.</span>
                     </div>
                   </div>
                 </div>
@@ -3699,15 +3703,18 @@ export default function Home() {
                   <button type="button" onClick={() => setStoreCategory('apparel')} className={`rounded-md border px-3 py-2 text-sm font-medium ${isProductionBuilder ? 'border-white/20 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : 'border-slate-300 bg-white hover:bg-slate-50'}`}>Apparel Designer</button>
                 </div>
                 <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleStoreProducts.map((product) => <button key={product.id} type="button" onClick={() => openStoreProduct(product)} className={`group min-h-52 rounded-lg border p-5 text-left shadow-sm transition ${product.disabled ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-75' : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-[#1678b8] hover:shadow-[0_18px_42px_rgba(7,17,31,0.12)]'}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-md bg-[#07111f] text-sm font-black uppercase text-white ring-4 ring-[#eaf5fb]">{product.category === 'apparel' ? 'T' : product.title.slice(0, 2)}</div>
-                      {product.badge ? <span className={`rounded-full px-2 py-1 text-xs font-bold ${product.disabled ? 'bg-slate-200 text-slate-500' : 'bg-[#eaf5fb] text-[#0f5f94]'}`}>{product.badge}</span> : null}
+                  {visibleStoreProducts.map((product) => <button key={product.id} type="button" onClick={() => openStoreProduct(product)} className={`hue-store-product-card group relative min-h-52 overflow-hidden rounded-lg border p-5 text-left transition ${product.disabled ? 'cursor-not-allowed border-white/10 bg-[#0a1017] opacity-60' : 'border-white/10 bg-[#08111b] hover:-translate-y-0.5 hover:border-[#16a9f5]/70 hover:shadow-[0_18px_48px_rgba(0,0,0,0.42),0_0_30px_rgba(14,165,233,0.10)]'}`}>
+                    <span aria-hidden="true" className={`hue-store-product-visual hue-store-product-visual--${product.category}`}><span>{product.category === 'apparel' ? 'T' : product.title.slice(0, 2)}</span></span>
+                    <div className="relative z-10 max-w-[68%]">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded border border-[#16a9f5]/35 bg-[#071827] text-[10px] font-black uppercase text-[#8be3ff] shadow-[0_0_18px_rgba(14,165,233,0.14)]">{product.category === 'apparel' ? 'T' : product.title.slice(0, 2)}</div>
+                        {product.badge ? <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${product.disabled ? 'bg-white/5 text-slate-500' : 'bg-[#0ea5e9]/10 text-[#67d8ff]'}`}>{product.badge}</span> : null}
+                      </div>
+                      <p className="mt-5 text-xl font-black tracking-tight text-white">{product.title}</p>
+                      <p className="mt-1 text-xs font-semibold text-[#38bdf8]">{product.subtitle}</p>
+                      <p className="mt-3 text-xs leading-5 text-slate-400">{product.description}</p>
+                      <span className={`mt-4 inline-flex items-center gap-2 text-xs font-black ${product.disabled ? 'text-slate-500' : 'text-[#67d8ff] group-hover:text-white'}`}>{product.disabled ? 'Coming soon' : 'Start order'}<span aria-hidden="true">→</span></span>
                     </div>
-                    <p className="mt-5 text-xl font-black tracking-tight text-slate-950">{product.title}</p>
-                    <p className="mt-1 text-sm font-semibold text-[#1678b8]">{product.subtitle}</p>
-                    <p className="mt-3 text-sm leading-6 text-slate-600">{product.description}</p>
-                    <span className={`mt-5 inline-flex rounded-md px-3 py-2 text-sm font-bold ${product.disabled ? 'bg-slate-200 text-slate-500' : 'bg-[#1678b8] text-white group-hover:bg-[#0f5f94]'}`}>{product.disabled ? 'Coming soon' : 'Start order'}</span>
                   </button>)}
                 </div>
               </div>

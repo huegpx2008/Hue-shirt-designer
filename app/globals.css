@@ -65,6 +65,133 @@ body {
     radial-gradient(circle at 50% 52%, transparent 0, rgba(0, 0, 0, 0.28) 72%);
 }
 
+.hue-store-hero {
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 78% 12%, rgba(14, 165, 233, 0.16), transparent 23%),
+    radial-gradient(circle at 16% 76%, rgba(14, 165, 233, 0.11), transparent 30%),
+    linear-gradient(125deg, #060b11 0%, #07111a 55%, #05090e 100%);
+}
+
+.hue-store-hero-title {
+  font-family: Impact, Haettenschweiler, "Arial Narrow Bold", "Arial Narrow", sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.012em;
+  font-stretch: condensed;
+  text-wrap: balance;
+}
+
+.hue-store-hero-title > span:first-child {
+  text-shadow: 0 2px 0 rgba(148, 163, 184, 0.38), 0 14px 38px rgba(0, 0, 0, 0.62);
+}
+
+.hue-store-hero-title > span:last-child {
+  letter-spacing: 0.005em;
+  text-shadow: 0 0 28px rgba(14, 165, 233, 0.22), 0 10px 30px rgba(0, 0, 0, 0.56);
+}
+
+.hue-store-hero-pattern {
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(30deg, rgba(38, 67, 86, 0.7) 12%, transparent 12.5%, transparent 87%, rgba(38, 67, 86, 0.7) 87.5%),
+    linear-gradient(150deg, rgba(38, 67, 86, 0.7) 12%, transparent 12.5%, transparent 87%, rgba(38, 67, 86, 0.7) 87.5%),
+    linear-gradient(30deg, rgba(20, 42, 57, 0.72) 12%, transparent 12.5%, transparent 87%, rgba(20, 42, 57, 0.72) 87.5%),
+    linear-gradient(150deg, rgba(20, 42, 57, 0.72) 12%, transparent 12.5%, transparent 87%, rgba(20, 42, 57, 0.72) 87.5%),
+    linear-gradient(60deg, rgba(14, 165, 233, 0.18) 25%, transparent 25.5%, transparent 75%, rgba(14, 165, 233, 0.18) 75%),
+    linear-gradient(60deg, rgba(8, 23, 34, 0.85) 25%, transparent 25.5%, transparent 75%, rgba(8, 23, 34, 0.85) 75%);
+  background-position: 0 0, 0 0, 34px 59px, 34px 59px, 0 0, 34px 59px;
+  background-size: 68px 118px;
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.55), black 42%, rgba(0, 0, 0, 0.78));
+}
+
+.hue-store-hero-glow {
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 72% 5%, transparent 0 34px, rgba(56, 189, 248, 0.5) 35px 37px, transparent 38px 58px, rgba(14, 165, 233, 0.26) 59px 61px, transparent 62px),
+    radial-gradient(circle at 79% 17%, rgba(14, 165, 233, 0.18), transparent 18%),
+    linear-gradient(90deg, rgba(5, 10, 15, 0.18), transparent 55%, rgba(5, 9, 13, 0.18));
+}
+
+.hue-store-product-card {
+  isolation: isolate;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.hue-store-product-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 92% 16%, rgba(14, 165, 233, 0.1), transparent 35%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.025), transparent 42%);
+}
+
+.hue-store-product-visual {
+  position: absolute;
+  top: 30px;
+  right: 20px;
+  bottom: 24px;
+  width: 28%;
+  min-width: 76px;
+  transform: perspective(420px) rotateY(-13deg) rotateZ(2deg);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: linear-gradient(115deg, #f8fafc, #7c8794 45%, #f8fafc 56%, #1f2937 100%);
+  box-shadow: -12px 18px 32px rgba(0, 0, 0, 0.48), inset -8px 0 16px rgba(15, 23, 42, 0.22);
+}
+
+.hue-store-product-visual::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), transparent 52%);
+}
+
+.hue-store-product-visual > span {
+  position: absolute;
+  z-index: 1;
+  right: 10px;
+  bottom: 8px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.hue-store-product-visual--banners {
+  border-radius: 2px 12px 12px 2px;
+}
+
+.hue-store-product-visual--coro,
+.hue-store-product-visual--rigid {
+  transform: perspective(420px) rotateY(-16deg);
+  border-radius: 2px;
+  background: linear-gradient(120deg, #ffffff, #d7dee5 56%, #65717e 58%, #202934 100%);
+}
+
+.hue-store-product-visual--decals {
+  border-radius: 44% 56% 38% 62%;
+  background: linear-gradient(135deg, #0ea5e9, #05263d 48%, #f97316 50%, #431407);
+}
+
+.hue-store-product-visual--magnets {
+  border-radius: 50%;
+  background: radial-gradient(circle, #071827 0 38%, #38bdf8 39% 52%, #dce7ef 53% 64%, #17212b 65%);
+}
+
+.hue-store-product-visual--apparel {
+  clip-path: polygon(18% 0, 40% 12%, 60% 12%, 82% 0, 100% 22%, 82% 38%, 82% 100%, 18% 100%, 18% 38%, 0 22%);
+  background: linear-gradient(135deg, #1f2937, #0ea5e9 48%, #07111f 52%);
+}
+
+.hue-store-product-visual--misc {
+  border-radius: 50% 4px 50% 4px;
+  background: linear-gradient(135deg, #f97316, #7c2d12 45%, #0ea5e9 48%, #082f49);
+}
+
 .hue-artwork-panel {
   isolation: isolate;
   background:
