@@ -180,6 +180,72 @@ const getImageNaturalSize = (dataUrl: string): Promise<{ width: number; height: 
   image.src = dataUrl;
 });
 
+const getTransparentTrimmedArtwork = (dataUrl: string): Promise<{ dataUrl: string; width: number; height: number; trimmed: boolean }> => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.onload = () => {
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+
+    if (!context || !width || !height) {
+      resolve({ dataUrl, width, height, trimmed: false });
+      return;
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height).data;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const alpha = pixels[((y * width + x) * 4) + 3];
+        if (alpha > 24) {
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    }
+
+    if (maxX < minX || maxY < minY) {
+      resolve({ dataUrl, width, height, trimmed: false });
+      return;
+    }
+
+    const cropWidth = maxX - minX + 1;
+    const cropHeight = maxY - minY + 1;
+    const shouldTrim = cropWidth < width * 0.98 || cropHeight < height * 0.98;
+
+    if (!shouldTrim) {
+      resolve({ dataUrl, width, height, trimmed: false });
+      return;
+    }
+
+    const trimmedCanvas = document.createElement('canvas');
+    trimmedCanvas.width = cropWidth;
+    trimmedCanvas.height = cropHeight;
+    const trimmedContext = trimmedCanvas.getContext('2d');
+
+    if (!trimmedContext) {
+      resolve({ dataUrl, width, height, trimmed: false });
+      return;
+    }
+
+    trimmedContext.drawImage(canvas, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    resolve({ dataUrl: trimmedCanvas.toDataURL('image/png'), width: cropWidth, height: cropHeight, trimmed: true });
+  };
+  image.onerror = () => reject(new Error('Could not trim transparent artwork padding.'));
+  image.src = dataUrl;
+});
+
 const getErrorMessage = async (response: Response) => {
   try {
     const payload = await response.json() as { message?: string; error?: string };
@@ -187,6 +253,29 @@ const getErrorMessage = async (response: Response) => {
   } catch {
     return response.statusText;
   }
+};
+
+const isSupabaseSessionExpiredError = (message: string) => /exp.*claim|jwt.*expired|token.*expired|invalid.*jwt/i.test(message);
+
+const refreshSupabaseSession = async (session: CustomerSession | null) => {
+  if (!session?.refresh_token) return null;
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ refresh_token: session.refresh_token })
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as Partial<CustomerSession>;
+  if (!payload.access_token) return null;
+  return {
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token || session.refresh_token,
+    expires_at: payload.expires_at,
+    user: payload.user || session.user
+  };
 };
 
 const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession | null) => {
@@ -850,8 +939,11 @@ const aspectRatioMismatch = (imageWidth: number | undefined, imageHeight: number
 
 const getFittedArtworkSize = (imageWidth: number | undefined, imageHeight: number | undefined, targetWidth: number, targetHeight: number) => {
   if (!imageWidth || !imageHeight || !targetWidth || !targetHeight) return { width: targetWidth, height: targetHeight };
-  const imageRatio = imageWidth / imageHeight;
-  return { width: targetWidth, height: targetWidth / imageRatio };
+  const scale = Math.min(targetWidth / imageWidth, targetHeight / imageHeight);
+  return {
+    width: Number((imageWidth * scale).toFixed(2)),
+    height: Number((imageHeight * scale).toFixed(2))
+  };
 };
 
 const getSignOptionLabel = (field: SignField, value: string | boolean) => {
@@ -1056,6 +1148,7 @@ export default function Home() {
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
+  const [signArtworkDisplayUrl, setSignArtworkDisplayUrl] = useState<string | null>(null);
   const [bannerArtworkName, setBannerArtworkName] = useState('');
   const [bannerArtworkFitState, setBannerArtworkFitState] = useState<ArtworkFitState>('unresolved');
   const [bannerOrderItems, setBannerOrderItems] = useState<BannerOrderItem[]>([]);
@@ -1479,8 +1572,8 @@ export default function Home() {
   const isRigidSignBuilder = productMode === 'signage' && RIGID_SIGN_PRODUCT_IDS.includes(selectedSignProduct.id);
   const isAutoSidedRigidBuilder = isRigidSignBuilder && ['pvc', 'acm', 'aluminum'].includes(selectedSignProduct.id);
   const isProductionBuilder = productMode === 'signage';
-  const signSurfacePreviewUrl = isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? rigidBackArtwork?.dataUrl || null : signArtworkPreviewUrl;
-  const hasPlacedSignArtwork = Boolean(signSurfacePreviewUrl) || layers.length > 0;
+  const signSurfacePreviewUrl = isRigidSignBuilder && rigidPreviewSide === 'back' ? rigidBackArtwork?.dataUrl || null : signArtworkDisplayUrl || signArtworkPreviewUrl;
+  const hasPlacedSignArtwork = Boolean(signArtworkPreviewUrl) || Boolean(signSurfacePreviewUrl) || layers.length > 0;
   const bannerArtworkActualSize = signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
   const rawBannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
   const bannerFitResolved = isBannerBuilder && Boolean(signArtworkPreviewUrl) && (bannerArtworkFitState === 'fit' || bannerArtworkFitState === 'stretch');
@@ -1498,6 +1591,14 @@ export default function Home() {
   const bannerLocalOptionTotal = isBannerBuilder && Boolean(signValues.windSlits) ? 10 : 0;
   const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
   const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : signWidth > 0 && signHeight > 0 ? Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight))) : 1.5;
+  const signPreviewWidth = isProductionBuilder
+    ? activeCoroOptionPanel === 'images'
+      ? `min(44vw, 760px, calc(48vh * ${signPreviewAspect}))`
+      : `min(50vw, 900px, calc(50vh * ${signPreviewAspect}))`
+    : '82%';
+  const signPreviewBoxStyle = { aspectRatio: signPreviewAspect, width: signPreviewWidth };
+  const rigidSafeZoneInsetX = signWidth > 0 ? Math.min(24, (0.25 / signWidth) * 100) : 0;
+  const rigidSafeZoneInsetY = signHeight > 0 ? Math.min(24, (0.25 / signHeight) * 100) : 0;
   const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
   const hasBannerArtwork = isBannerBuilder && Boolean(signArtworkPreviewUrl);
   const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
@@ -2232,7 +2333,7 @@ export default function Home() {
   };
 
   const editSelected = (fn: (obj: FabricObject) => void) => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected) return; fn(selected); clampToArea(selected); canvas.requestRenderAll(); refreshLayers(canvas); };
-  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) { setSignArtworkSize(null); setSignArtworkPreviewUrl(null); setBannerArtworkName(''); setBannerArtworkFitState('unresolved'); } canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
+  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) { setSignArtworkSize(null); setSignArtworkPreviewUrl(null); setSignArtworkDisplayUrl(null); setBannerArtworkName(''); setBannerArtworkFitState('unresolved'); } canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
   const clearSignArtwork = () => {
     const canvas = fabricCanvasRef.current;
     if (canvas) {
@@ -2245,6 +2346,7 @@ export default function Home() {
     setLayers([]);
     setSignArtworkSize(null);
     setSignArtworkPreviewUrl(null);
+    setSignArtworkDisplayUrl(null);
     setBannerArtworkName('');
     setBannerArtworkFitState('unresolved');
     setCoroSheetArtworkItems([]);
@@ -2299,8 +2401,8 @@ export default function Home() {
     const area = getActiveArtworkArea();
     const objectWidth = Math.max(1, obj.width || 1);
     const objectHeight = Math.max(1, obj.height || 1);
-    const paddedWidth = productMode === 'signage' ? area.width * 0.94 : area.width * 0.78;
-    const paddedHeight = productMode === 'signage' ? area.height * 0.94 : area.height * 0.78;
+    const paddedWidth = productMode === 'signage' ? area.width : area.width * 0.78;
+    const paddedHeight = productMode === 'signage' ? area.height : area.height * 0.78;
     const containScale = Math.min(paddedWidth / objectWidth, paddedHeight / objectHeight);
     const coverScale = Math.max(area.width / objectWidth, area.height / objectHeight);
 
@@ -2366,12 +2468,19 @@ export default function Home() {
   const placeImageOnDesign = async (dataUrl: string, sourceName = 'Uploaded artwork') => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    if (productMode === 'signage') setSignArtworkPreviewUrl(dataUrl);
+    const placementArtwork = productMode === 'signage'
+      ? await getTransparentTrimmedArtwork(dataUrl).catch(() => ({ dataUrl, width: 0, height: 0, trimmed: false }))
+      : { dataUrl, width: 0, height: 0, trimmed: false };
+    const placementDataUrl = placementArtwork.trimmed ? placementArtwork.dataUrl : dataUrl;
+    if (productMode === 'signage') {
+      setSignArtworkPreviewUrl(dataUrl);
+      setSignArtworkDisplayUrl(placementDataUrl);
+    }
     if (productMode === 'signage') {
       canvas.getObjects().forEach((obj) => canvas.remove(obj));
       canvas.discardActiveObject();
     }
-    const img = await FabricImage.fromURL(dataUrl);
+    const img = await FabricImage.fromURL(placementDataUrl);
     img.set({ ...FABRIC_CONTROL_STYLE });
     fitObjectToArtworkArea(img, 'contain');
     (img as FabricObject & { data?: { printLocation?: PrintLocation; originalWidth?: number; originalHeight?: number; fileName?: string } }).data = {
@@ -2421,9 +2530,30 @@ export default function Home() {
 
   const canPlaceImageZoneItem = (item: ImageZoneItem) => Boolean(item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') || isLikelyImagePath(item.name) || isLikelyImagePath(item.dataUrl));
 
+  const refreshCurrentCustomerSession = async () => {
+    const refreshedSession = await refreshSupabaseSession(customerSession);
+    if (!refreshedSession) return null;
+    setCustomerSession(refreshedSession);
+    window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
+    setCustomerAuthStatus(`Signed in as ${refreshedSession.user?.email || 'customer'}.`);
+    return refreshedSession;
+  };
+
+  const getSignedImageZoneUrl = async (storagePath: string) => {
+    try {
+      return await getSupabaseSignedUrl(storagePath, customerSession);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (!isSupabaseSessionExpiredError(message)) throw error;
+      const refreshedSession = await refreshCurrentCustomerSession();
+      if (!refreshedSession) throw new Error('Your saved artwork session expired. Please sign in again to use library files.');
+      return getSupabaseSignedUrl(storagePath, refreshedSession);
+    }
+  };
+
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
     const refreshedUrl = item.source === 'supabase' && item.storagePath
-      ? await getSupabaseSignedUrl(item.storagePath, customerSession)
+      ? await getSignedImageZoneUrl(item.storagePath)
       : item.dataUrl;
     const size = item.width > 0 && item.height > 0 && refreshedUrl === item.dataUrl
       ? { width: item.width, height: item.height }
@@ -2455,8 +2585,13 @@ export default function Home() {
     setLayers([]);
     setSignArtworkSize(null);
     setSignArtworkPreviewUrl(null);
+    setSignArtworkDisplayUrl(null);
+    setRigidBackArtwork(null);
+    setRigidArtworkTarget('front');
+    setRigidPreviewSide('front');
     setBannerArtworkName('');
     setBannerArtworkFitState('unresolved');
+    if (isRigidSignBuilder) setSignValues((prev) => ({ ...prev, sides: 'single' }));
   };
 
   const removeRigidBackArtwork = () => {
@@ -2503,6 +2638,16 @@ export default function Home() {
       clearCurrentBannerArtwork();
     }
     setImageLibraryStatus(`${item.name} loaded for editing.`);
+  };
+
+  const deleteCurrentBannerArtworkSet = async () => {
+    const previousItem = bannerOrderItems[bannerOrderItems.length - 1];
+    if (previousItem) {
+      await loadBannerOrderItem(previousItem);
+      setImageLibraryStatus('Removed the extra artwork set.');
+      return;
+    }
+    clearCurrentBannerArtwork();
   };
 
   const removeBannerOrderItem = (itemId: string) => {
@@ -2653,7 +2798,7 @@ export default function Home() {
     try {
       imageItem = await hydrateImageZoneItemSize(item);
     } catch (error) {
-      setImageLibraryStatus(`Could not load ${item.name} from your saved library: ${error instanceof Error ? error.message : 'image access failed'}. Please sign in again and retry.`);
+      setImageLibraryStatus(error instanceof Error ? error.message : `Could not load ${item.name}. Please sign in again and retry.`);
       return;
     }
     if (isAutoSidedRigidBuilder && rigidArtworkTarget === 'back') {
@@ -3478,8 +3623,11 @@ export default function Home() {
               <img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" />
             </div>
             <div className={`min-w-0 ${isProductionBuilder ? 'hidden xl:block' : ''}`}>
-              <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
-              <h1 className={`truncate text-xl font-black tracking-tight md:text-2xl ${isProductionBuilder ? 'text-white' : 'text-[#05090b]'}`}>Print-Ready Store</h1>
+              <p className={`text-xs font-black uppercase tracking-[0.24em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
+              <h1 className={`truncate font-black tracking-tight ${isProductionBuilder ? 'text-[2rem] leading-none text-white drop-shadow-[0_0_18px_rgba(56,189,248,0.26)]' : 'text-2xl text-[#05090b] md:text-3xl'}`}>
+                <span className={isProductionBuilder ? 'bg-gradient-to-r from-white via-[#dff7ff] to-[#57c8ff] bg-clip-text text-transparent' : ''}>Hue Studio</span>
+              </h1>
+              <p className={`mt-1 text-[10px] font-bold uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>Print-ready ordering</p>
             </div>
           </div>
           {isProductionBuilder ? <nav className="order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
@@ -3510,7 +3658,7 @@ export default function Home() {
             <aside className={`rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
               <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Online ordering</p>
               <h2 className={`mt-2 text-2xl font-black tracking-tight ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>Shop ready artwork products</h2>
-              <p className={`mt-2 text-sm leading-6 ${isProductionBuilder ? 'text-slate-300' : 'text-slate-600'}`}>Upload finished artwork, check fit, get online pricing, and checkout separately from the quote system.</p>
+              <p className={`mt-2 text-sm leading-6 ${isProductionBuilder ? 'text-slate-300' : 'text-slate-600'}`}>Order with print-ready files, check fit, get online pricing, and checkout separately from the quote request system.</p>
               <div className="mt-5 space-y-2">
                 {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => setStoreCategory(category.id)} className={`w-full rounded-md border p-3 text-left transition ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
               </div>
@@ -3522,15 +3670,19 @@ export default function Home() {
                 <div className="relative grid min-h-64 items-center gap-6 px-6 py-8 md:grid-cols-[minmax(0,1fr)_360px] lg:px-10">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.24em] text-white/90">Hue Graphics online store</p>
-                    <h2 className="mt-3 max-w-2xl text-4xl font-black tracking-tight text-white md:text-5xl">Fast print-ready ordering</h2>
-                    <p className="mt-3 max-w-xl text-sm leading-6 text-white/90">For finished artwork that is ready to print. If the file needs design help, cleanup, or quoting, use the regular request path.</p>
+                    <h2 className="mt-3 max-w-2xl text-4xl font-black tracking-tight text-white md:text-5xl">Art-ready online ordering</h2>
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">This tool is for print-ready files that are already approved and ready to produce. We print what you submit and do not perform a full proofing or design review, so please confirm size, spelling, bleed, resolution, and layout before checkout.</p>
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-white/90">Self-service orders use streamlined art-ready pricing, so many items are priced lower than standard custom-quoted jobs. Most orders are completed in 3-4 business days. Local pickup and US shipping are available for just $10.</p>
                   </div>
                   <div className="rounded-lg border border-white/50 bg-white/85 p-4 shadow-[0_18px_40px_rgba(7,17,31,0.18)]">
                     <p className="text-sm font-black text-slate-950">Ready artwork checklist</p>
                     <div className="mt-3 grid gap-2 text-sm text-slate-700">
-                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Fits selected size</span>
-                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Artwork uploaded before checkout</span>
-                      <span className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">Design help routes to quote</span>
+                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Artwork is final and print-ready</span>
+                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Size, bleed, and spelling are approved</span>
+                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Streamlined pricing for self-service orders</span>
+                      <span className="rounded-md bg-green-50 px-3 py-2 text-green-700">Most orders finish in 3-4 business days</span>
+                      <span className="rounded-md bg-blue-50 px-3 py-2 text-[#0f5f94]">Local pickup or US shipping: $10</span>
+                      <span className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">Need design help or changes? Submit a quote request on the main website.</span>
                     </div>
                   </div>
                 </div>
@@ -3805,23 +3957,27 @@ export default function Home() {
                     </div>
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.min(coroSheetPreviews.length - 1, current + 1))} disabled={activeCoroSheetIndex >= coroSheetPreviews.length - 1} className="absolute right-8 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35">›</button> : null}
                     {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="hue-sheet-upload group absolute z-10 flex w-44 flex-col items-center rounded-2xl border border-white/25 bg-[#1686c9] px-4 py-4 text-center text-white shadow-[0_18px_44px_rgba(3,105,161,0.42),0_0_32px_rgba(56,189,248,0.28)] hover:-translate-y-0.5 hover:bg-[#0e74b4]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xl transition group-hover:scale-105">+</span><span className="mt-2 text-xs font-black uppercase tracking-[0.08em]">Add your artwork</span><span className="mt-1 text-[9px] font-medium text-[#c8f2ff]">Upload or choose from library</span></button> : null}
-                  </div> : <div className={`relative flex items-center justify-center ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''} ${isProductionBuilder ? activeCoroOptionPanel === 'images' ? 'w-[min(44vw,760px)] max-h-[48vh]' : 'w-[min(50vw,900px)] max-h-[50vh]' : 'w-[82%]'}`} style={{ aspectRatio: signPreviewAspect }}>
+                  </div> : <div className={`relative flex items-center justify-center ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''}`} style={signPreviewBoxStyle}>
                     <div className={`absolute -top-8 left-0 right-0 border-t text-center text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={isBannerBuilder ? 'bg-[#07111f]/90 px-2' : 'bg-white/80 px-2'}>{signWidth || 0}&quot;</span></div>
-                    <div className={`absolute -bottom-9 left-0 right-0 text-center text-xs ${isBannerBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
+                    <div className={`absolute -bottom-9 left-0 right-0 text-center text-xs ${isBannerBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isRigidSignBuilder && rigidPreviewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
                     <div className={`absolute -left-9 bottom-0 top-0 border-l text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute left-[-12px] top-1/2 -translate-y-1/2 -rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
                     <div className={`absolute -right-9 bottom-0 top-0 border-r text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
                     <div className={`absolute inset-0 ${isRigidSignBuilder ? 'rigid-sign-preview overflow-hidden rounded-[3px] border border-slate-300' : 'rounded-sm border border-slate-300 bg-white shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]'}`}>
                       {!isRigidSignBuilder ? <div className="absolute inset-3 border border-dashed border-slate-300" /> : null}
-                      {isRigidSignBuilder && !signSurfacePreviewUrl ? <div className="absolute inset-0 flex items-end justify-center pb-5"><span className="rounded-full border border-slate-300/80 bg-white/75 px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 shadow-sm backdrop-blur">Rigid panel</span></div> : null}
-                      {signSurfacePreviewUrl ? <img src={signSurfacePreviewUrl} alt="" className={`absolute inset-0 h-full w-full ${bannerArtworkFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} /> : null}
+                      {isRigidSignBuilder && !hasPlacedSignArtwork ? <div className="absolute inset-0 flex items-end justify-center pb-5"><span className="rounded-full border border-slate-300/80 bg-white/75 px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 shadow-sm backdrop-blur">Rigid panel</span></div> : null}
+                      {signSurfacePreviewUrl ? <img src={signSurfacePreviewUrl} alt="" className={`absolute inset-0 h-full w-full ${bannerArtworkFitState === 'stretch' || (isRigidSignBuilder && signArtworkMatchesSize) ? 'object-fill' : 'object-contain'}`} /> : null}
+                      {isRigidSignBuilder && signWidth > 0 && signHeight > 0 ? <div className="pointer-events-none absolute z-20 border border-dashed border-[#93c5fd] shadow-[0_0_0_1px_rgba(15,23,42,0.18),0_0_18px_rgba(56,189,248,0.22)]" style={{ left: `${rigidSafeZoneInsetX}%`, right: `${rigidSafeZoneInsetX}%`, top: `${rigidSafeZoneInsetY}%`, bottom: `${rigidSafeZoneInsetY}%` }} /> : null}
                       {isTrueBannerBuilder ? <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div> : null}
                     </div>
-                    {isAutoSidedRigidBuilder && rigidBackArtwork ? <div className="absolute -bottom-20 left-1/2 z-20 flex -translate-x-1/2 overflow-hidden rounded-full border border-white/15 bg-[#06111d]/90 text-[10px] font-black uppercase text-slate-300 shadow-lg backdrop-blur"><button type="button" onClick={() => setRigidPreviewSide('front')} className={`px-4 py-2 ${rigidPreviewSide === 'front' ? 'bg-[#1686c9] text-white' : 'hover:bg-white/10'}`}>Front</button><button type="button" onClick={() => setRigidPreviewSide('back')} className={`border-l border-white/10 px-4 py-2 ${rigidPreviewSide === 'back' ? 'bg-[#1686c9] text-white' : 'hover:bg-white/10'}`}>Back</button></div> : null}
+                    {isRigidSignBuilder ? <button type="button" onClick={() => setRigidPreviewSide((side) => side === 'front' ? 'back' : 'front')} className="absolute -bottom-16 left-0 z-20 inline-flex items-center gap-2 rounded-full border border-[#38bdf8]/30 bg-[#06111d]/90 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-[#b7ecff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur transition hover:border-[#67d8ff]/70 hover:bg-[#0a2438] hover:text-white">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 fill-none stroke-current stroke-2"><path d="M7 7h8a4 4 0 0 1 0 8H6" /><path d="M9 4 6 7l3 3" /><path d="M17 20l3-3-3-3" /></svg>
+                      {rigidPreviewSide === 'front' ? 'Flip over' : 'Show front'}
+                    </button> : null}
                     {!hasPlacedSignArtwork ? <button type="button" onClick={openArtworkLibrary} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
                   </div>}
                 </div> : hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
                 {productMode === 'apparel' && showPrintArtboard ? <div className="pointer-events-none absolute rounded-md border border-dashed border-[#1678b8]/60 bg-[#1678b8]/10 shadow-[0_0_0_9999px_rgba(255,255,255,0.04)]" style={{ top: `${artboardPercent.top}%`, left: `${artboardPercent.left}%`, width: `${artboardPercent.width}%`, height: `${artboardPercent.height}%` }}><span className="absolute -top-7 left-0 rounded bg-[#1678b8] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">{PRINT_AREA_CONFIG[printLocation].label}</span></div> : null}
-                <div className={`designer-fabric-layer absolute ${isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? 'pointer-events-none opacity-0' : ''} ${productMode === 'signage' ? selectedSignProduct.id === 'yard-sign' ? 'pointer-events-none left-1/2 top-1/2 w-[23%] min-w-56 max-w-[360px] -translate-x-1/2 -translate-y-1/2 opacity-0' : `left-1/2 top-1/2 ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[180px]' : ''} ${isProductionBuilder ? activeCoroOptionPanel === 'images' ? 'w-[min(44vw,760px)] max-h-[48vh]' : 'w-[min(50vw,900px)] max-h-[50vh]' : 'w-[82%]'} -translate-x-1/2 -translate-y-1/2` : 'inset-0'}`} style={productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
+                <div className={`designer-fabric-layer absolute ${isRigidSignBuilder && rigidPreviewSide === 'back' ? 'pointer-events-none opacity-0' : ''} ${productMode === 'signage' ? selectedSignProduct.id === 'yard-sign' ? 'pointer-events-none left-1/2 top-1/2 w-[23%] min-w-56 max-w-[360px] -translate-x-1/2 -translate-y-1/2 opacity-0' : `left-1/2 top-1/2 ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[180px]' : ''} -translate-x-1/2 -translate-y-1/2` : 'inset-0'}`} style={productMode === 'signage' && selectedSignProduct.id !== 'yard-sign' ? signPreviewBoxStyle : productMode === 'signage' ? { aspectRatio: signPreviewAspect } : undefined}><canvas ref={canvasElRef} className="h-full w-full touch-none" /></div>
               </div>
               {productMode === 'signage' && selectedSignProduct.id === 'yard-sign' && !isCoroBuilder ? <div className="absolute left-4 top-24 z-10 w-60 rounded border border-slate-200 bg-white/95 p-3 text-sm shadow-[0_12px_30px_rgba(7,17,31,0.10)]">
                 <div className="flex items-center gap-2">
@@ -3846,7 +4002,7 @@ export default function Home() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set 01</p>
-                      <h3 className={`mt-1 text-lg font-black leading-tight ${signArtworkPreviewUrl || layers.length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>{signArtworkPreviewUrl || layers.length > 0 ? 'Artwork loaded' : 'Let&apos;s add your artwork'}</h3>
+                      <h3 className={`mt-1 text-lg font-black leading-tight ${signArtworkPreviewUrl || layers.length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>{signArtworkPreviewUrl || layers.length > 0 ? 'Artwork loaded' : "Let's add your artwork"}</h3>
                       <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-700">
                         {selectedSignProduct.fields.filter((field) => ['width', 'height', 'quantity'].includes(field.name)).map((field) => <label key={field.name}>{field.name === 'quantity' ? 'qty' : field.name}<input type="number" min={field.name === 'quantity' ? 1 : 0} step={field.step} value={String(signValues[field.name] ?? field.defaultValue ?? '')} onChange={(event) => updateSignOption(field.name, event.target.value)} className="mt-1 h-8 w-full rounded border border-slate-300 bg-white px-2 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>)}
                       </div>
@@ -3894,14 +4050,14 @@ export default function Home() {
                 <div className={`hue-artwork-card rounded-2xl border p-4 ${signArtworkStatusOk && !bannerAspectMismatch ? 'hue-artwork-card--ready border-emerald-300/45 bg-[#f1fff8]' : 'hue-artwork-card--warning border-amber-300/45 bg-[#fffaf0]'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set {String(bannerOrderItems.length + 1).padStart(2, '0')}</p><h3 className={`mt-1 text-lg font-black leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-emerald-700' : 'text-amber-700'}`}>{signArtworkPreviewUrl ? bannerAspectMismatch ? 'Needs a fit check' : 'Print ready' : 'Let&apos;s add your artwork'}</h3>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set {String(bannerOrderItems.length + 1).padStart(2, '0')}</p><h3 className={`mt-1 text-lg font-black leading-tight ${signArtworkStatusOk && !bannerAspectMismatch ? 'text-emerald-700' : 'text-amber-700'}`}>{signArtworkPreviewUrl ? bannerAspectMismatch ? 'Needs a fit check' : 'Print ready' : "Let's add your artwork"}</h3>
                       <div className="mt-2 grid grid-cols-[1fr_1fr_64px] gap-2 text-xs text-slate-700">
                         <label>width<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>height<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>qty<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                       </div>
                     </div>
-                    <button type="button" onClick={clearCurrentBannerArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
+                    <button type="button" onClick={deleteCurrentBannerArtworkSet} disabled={!signArtworkPreviewUrl && layers.length === 0 && bannerOrderItems.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
                   </div>
                   <button type="button" onClick={() => { if (isAutoSidedRigidBuilder) setRigidArtworkTarget('front'); openArtworkLibrary(); }} className="hue-artwork-dropzone mt-3 flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-3 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
                     {signArtworkPreviewUrl ? <span className="w-full">
@@ -4024,7 +4180,7 @@ export default function Home() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork set 01</p>
-                      <h3 className="mt-1 text-lg font-black leading-tight text-amber-700">Let&apos;s add your artwork</h3>
+                      <h3 className="mt-1 text-lg font-black leading-tight text-amber-700">Let's add your artwork</h3>
                       {isCustomCoro ? <div className="mt-2 space-y-2 text-xs text-slate-700">
                         <div className="grid grid-cols-[1fr_1fr_54px] gap-2">
                           <label>width<input type="number" min={0} step="0.25" value={String(signValues.width ?? 0)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
