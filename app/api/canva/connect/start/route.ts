@@ -18,12 +18,27 @@ export async function GET(request: NextRequest) {
     }, { status: 501 });
   }
 
+  const expectedRedirectUri = new URL("/api/canva/connect/callback", request.nextUrl.origin).toString();
+  let normalizedRedirectUri = "";
+  try {
+    normalizedRedirectUri = new URL(redirectUri).toString();
+  } catch {
+    return NextResponse.json({ error: "CANVA_REDIRECT_URI is not a valid URL." }, { status: 500 });
+  }
+  if (normalizedRedirectUri !== expectedRedirectUri) {
+    return NextResponse.json({
+      error: "The Canva callback belongs to a different Hue Studio address.",
+      expectedRedirectUri,
+      configuredRedirectUri: normalizedRedirectUri
+    }, { status: 409 });
+  }
+
   const state = crypto.randomBytes(24).toString("hex");
   const codeVerifier = base64UrlEncode(crypto.randomBytes(64));
   const codeChallenge = base64UrlEncode(crypto.createHash("sha256").update(codeVerifier).digest());
   const authorizeUrl = new URL(CANVA_AUTHORIZE_URL);
   authorizeUrl.searchParams.set("client_id", clientId);
-  authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizeUrl.searchParams.set("redirect_uri", normalizedRedirectUri);
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("scope", process.env.CANVA_SCOPES || DEFAULT_CANVA_SCOPES);
   authorizeUrl.searchParams.set("state", state);

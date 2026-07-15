@@ -20,7 +20,7 @@ type NewArtworkPresetGroup = { id: string; label: string; description: string; s
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
-type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string };
+type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
 type BannerOrderItem = { id: string; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState };
@@ -4445,7 +4445,11 @@ export default function Home() {
   };
 
   const connectCanvaAccount = () => {
-    const authUrl = canvaImportStatus?.authUrl || '/api/canva/connect/start';
+    const authUrl = canvaImportStatus?.authUrl;
+    if (!authUrl) {
+      setCanvaDesignStatus(canvaImportStatus?.message || 'The Canva callback address needs to be configured before connecting.');
+      return;
+    }
     const popup = window.open(authUrl, 'hue-canva-connect', 'popup=yes,width=720,height=760,resizable=yes,scrollbars=yes');
     if (!popup) {
       setCanvaDesignStatus('Your browser blocked the Canva connection window. Allow pop-ups for Hue Studio and try again.');
@@ -4453,6 +4457,12 @@ export default function Home() {
     }
     setCanvaDesignStatus('Finish connecting Canva in the new window. Hue Studio will stay open here.');
     popup.focus();
+    const popupCheck = window.setInterval(() => {
+      if (!popup.closed) return;
+      window.clearInterval(popupCheck);
+      setCanvaDesignStatus('Checking the Canva connection...');
+      void openCanvaImport();
+    }, 750);
   };
 
   useEffect(() => {

@@ -49,3 +49,9 @@ alter table public.hue_promo_codes enable row level security;
 -- These tables are intentionally service-role only. Customer browsers validate
 -- promo codes and submit orders through the protected Next.js API routes.
 
+-- Tables created from the SQL editor are owned by postgres. Explicitly grant
+-- the API's service_role access so Supabase secret keys can use them while RLS
+-- continues to block browser clients.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on table public.hue_orders to service_role;
+grant select, insert, update, delete on table public.hue_promo_codes to service_role;

@@ -17,13 +17,24 @@ export async function GET(request: NextRequest) {
   if (!verifyAdminRequest(request)) return NextResponse.json({ error: 'Admin sign-in required.' }, { status: 401 });
   if (!hasSupabaseAdminConfig()) return NextResponse.json({ error: 'Add SUPABASE_SERVICE_ROLE_KEY to load admin data.' }, { status: 503 });
   try {
-    const [usersPayload, orders, files, promos] = await Promise.all([
+    const results = await Promise.allSettled([
       supabaseAdminFetch('/auth/v1/admin/users?page=1&per_page=200') as Promise<{ users?: unknown[] }>,
       supabaseAdminFetch('/rest/v1/hue_orders?select=*&order=created_at.desc&limit=250') as Promise<unknown[]>,
       listStorageFiles(),
       supabaseAdminFetch('/rest/v1/hue_promo_codes?select=*&order=created_at.desc') as Promise<unknown[]>
     ]);
-    return NextResponse.json({ users: usersPayload.users || [], orders, files, promos });
+    const sectionNames = ['users', 'orders', 'files', 'promos'] as const;
+    const sectionErrors = results.reduce<Record<string, string>>((errors, result, index) => {
+      if (result.status === 'rejected') {
+        errors[sectionNames[index]] = result.reason instanceof Error ? result.reason.message : 'This section could not be loaded.';
+      }
+      return errors;
+    }, {});
+    const usersPayload = results[0].status === 'fulfilled' ? results[0].value : { users: [] };
+    const orders = results[1].status === 'fulfilled' ? results[1].value : [];
+    const files = results[2].status === 'fulfilled' ? results[2].value : [];
+    const promos = results[3].status === 'fulfilled' ? results[3].value : [];
+    return NextResponse.json({ users: usersPayload.users || [], orders, files, promos, sectionErrors });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Admin data could not be loaded.' }, { status: 500 });
   }
