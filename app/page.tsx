@@ -201,6 +201,37 @@ const getImageNaturalSize = (dataUrl: string): Promise<{ width: number; height: 
   image.src = dataUrl;
 });
 
+const renderPdfFirstPage = async (source: string | ArrayBuffer) => {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).toString();
+  }
+  const buffer = typeof source === 'string'
+    ? await fetch(source).then((response) => response.ok ? response.arrayBuffer() : Promise.reject(new Error('Could not download the PDF preview.')))
+    : source;
+  const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const page = await document.getPage(1);
+  const pageAt72Dpi = page.getViewport({ scale: 1 });
+  const renderScale = Math.max(2, Math.min(4, 1800 / Math.max(1, pageAt72Dpi.width)));
+  const viewport = page.getViewport({ scale: renderScale });
+  const canvas = window.document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(viewport.width));
+  canvas.height = Math.max(1, Math.round(viewport.height));
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw new Error('This browser could not prepare the PDF preview.');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    width: canvas.width,
+    height: canvas.height,
+    dpi: Math.round(72 * renderScale),
+    signWidth: Number((pageAt72Dpi.width / 72).toFixed(2)),
+    signHeight: Number((pageAt72Dpi.height / 72).toFixed(2))
+  };
+};
+
 const dataUrlToFile = async (dataUrl: string, fileName: string, mimeType = 'image/png') => {
   const response = await fetch(dataUrl);
   if (!response.ok) throw new Error('The imported artwork file could not be prepared for storage.');
@@ -842,9 +873,9 @@ const MAGNET_SIZE_OPTIONS = [
   { label: '72" x 24"', value: '72x24' }
 ];
 const ROUNDED_CORNER_OPTIONS = [
-  { label: '1"', value: '1' },
-  { label: '1/2"', value: '0.5' },
-  { label: 'None', value: 'none' }
+  { label: 'None', value: 'none', note: 'Square finished corners' },
+  { label: '1/2" Radius', value: '0.5', note: 'Subtle rounded corners · +$5' },
+  { label: '1" Radius', value: '1', note: 'Larger rounded corners · +$5' }
 ];
 const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
   {
@@ -1015,6 +1046,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
                 ]
               : [{ label: 'Single-Sided', value: 'single' }]
           },
+          ...(['acm', 'aluminum'].includes(id) ? [{ name: 'roundedCorners', label: 'Rounded Corners', type: 'select' as const, defaultValue: 'none', options: ROUNDED_CORNER_OPTIONS }] : []),
           { name: 'grommets', label: 'Grommets', type: 'checkbox' as const, defaultValue: false },
           { name: 'rush', label: 'Rush', type: 'checkbox' as const, defaultValue: false }
         ]
@@ -1160,7 +1192,8 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
       webbing: Boolean(values.webbing),
       polePocket: Boolean(values.polePocket),
       windSlits: Boolean(values.windSlits),
-      roundedCorners: product.id === 'acrylic' ? Boolean(values.roundedCorners) : values.roundedCorners || 'none',
+      roundedCorners: product.id === 'acrylic' || ['acm', 'aluminum'].includes(product.id) ? String(values.roundedCorners || 'none') !== 'none' : values.roundedCorners || 'none',
+      ...(['acm', 'aluminum', 'vehicle-magnet'].includes(product.id) ? { roundedCornerRadius: String(values.roundedCorners || 'none') } : {}),
       standOffs: product.id === 'acrylic' && Boolean(values.standOffs),
       standOffQty: product.id === 'acrylic' && Boolean(values.standOffs) ? Math.max(1, Number(values.standOffQty || 4)) : 0,
       standOffColor: product.id === 'acrylic' && Boolean(values.standOffs) ? String(values.standOffColor || 'silver') : '',
@@ -1540,6 +1573,7 @@ export default function Home() {
   const [aiEditQuality, setAiEditQuality] = useState<'low' | 'medium' | 'high'>('low');
   const [aiEditStatus, setAiEditStatus] = useState('');
   const [isAiEditing, setIsAiEditing] = useState(false);
+  const [aiEditSource, setAiEditSource] = useState<ImageZoneItem | null>(null);
   const [aiEditPreview, setAiEditPreview] = useState<{ dataUrl: string; width: number; height: number; source: ImageZoneItem } | null>(null);
   const [showArtworkEditor, setShowArtworkEditor] = useState(false);
   const [artworkEditorOrderReturn, setArtworkEditorOrderReturn] = useState<ArtworkEditorOrderReturn | null>(null);
@@ -1775,15 +1809,22 @@ export default function Home() {
             const storagePath = `${prefix}/${file.name}`;
             const previewUrl = await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
             const isImageFile = Boolean(file.metadata?.mimetype?.startsWith('image/') || isLikelyImagePath(file.name));
-            const imageSize = isImageFile
-              ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
-              : { width: 0, height: 0 };
+            const isPdfFile = file.metadata?.mimetype === 'application/pdf' || /\.pdf$/i.test(file.name);
+            const pdfPreview = isPdfFile ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
+            const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
+            const imageSize = pdfPreview
+              ? { width: pdfPreview.width, height: pdfPreview.height }
+              : isImageFile
+                ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
+                : { width: 0, height: 0 };
             const embeddedResolution = isImageFile
               ? await fetch(previewUrl).then((imageResponse) => imageResponse.ok ? imageResponse.blob() : Promise.reject(new Error('Image metadata unavailable'))).then(readEmbeddedImageResolution).catch(() => null)
               : null;
-            const inferredPrintSize = imageSize.width > 0 && imageSize.height > 0
-              ? getArtworkPrintSize(imageSize.width, imageSize.height, embeddedResolution)
-              : null;
+            const inferredPrintSize = pdfPreview
+              ? { width: pdfPreview.signWidth, height: pdfPreview.signHeight }
+              : imageSize.width > 0 && imageSize.height > 0
+                ? getArtworkPrintSize(imageSize.width, imageSize.height, embeddedResolution)
+                : null;
             const isEditorProject = /-huedesign-\d+-project\.json$/i.test(file.name);
             const editorProject = isEditorProject
               ? await fetch(previewUrl).then((projectResponse) => projectResponse.ok ? projectResponse.json() as Promise<ArtworkEditorProject> : null).catch(() => null)
@@ -1791,10 +1832,10 @@ export default function Home() {
             return {
               id: file.id || storagePath,
               name: file.name,
-              dataUrl: previewUrl,
+              dataUrl: renderedPreviewUrl,
               width: imageSize.width,
               height: imageSize.height,
-              dpi: embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI,
+              dpi: pdfPreview?.dpi || (embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI),
               uploadedAt: file.updated_at || file.created_at || 'Supabase',
               storagePath,
               storageUrl: previewUrl,
@@ -2041,11 +2082,14 @@ export default function Home() {
     : `${selectedColorName} / ${selectedPreview?.brand || 'Catalog'}`;
   const selectedCoroSize = parseCoroSize(signValues.size);
   const isCustomCoro = selectedSignProduct.id === 'yard-sign' && String(signValues.size || '') === 'custom';
+  const firstSizedCustomCoroArtwork = isCustomCoro
+    ? coroSheetArtworkItems.find((item) => Number(item.signWidth || 0) > 0 && Number(item.signHeight || 0) > 0)
+    : null;
   const selectedMagnetSize = parsePresetSize(signValues.size);
   const isCustomMagnet = selectedSignProduct.id === 'vehicle-magnet' && Boolean(signValues.customCut);
   const magnetDisplayName = isCustomMagnet ? 'Custom Magnets' : selectedSignProduct.name;
-  const signWidth = selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? Number(signValues.width || 0) : selectedCoroSize.width : selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? Number(signValues.width || 0) : selectedMagnetSize.width : Number(signValues.width || 0);
-  const signHeight = selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? Number(signValues.height || 0) : selectedCoroSize.height : selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? Number(signValues.height || 0) : selectedMagnetSize.height : Number(signValues.height || 0);
+  const signWidth = selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? Number(signValues.width || firstSizedCustomCoroArtwork?.signWidth || 0) : selectedCoroSize.width : selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? Number(signValues.width || 0) : selectedMagnetSize.width : Number(signValues.width || 0);
+  const signHeight = selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? Number(signValues.height || firstSizedCustomCoroArtwork?.signHeight || 0) : selectedCoroSize.height : selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? Number(signValues.height || 0) : selectedMagnetSize.height : Number(signValues.height || 0);
   const designerQuantity = productMode === 'signage' ? getSignQuantity(signValues) : totalQuantity;
   const coroSheetArtworkQuantity = coroSheetArtworkItems.reduce((total, item) => total + Math.max(1, Number(coroArtworkQuantities[item.id] || 1)), 0);
   const effectiveCoroQuantity = selectedSignProduct.id === 'yard-sign' && coroSheetArtworkItems.length > 0 ? coroSheetArtworkQuantity : designerQuantity;
@@ -2101,7 +2145,12 @@ export default function Home() {
       : BANNER_MATERIAL_OPTIONS
     : productMaterialOptions;
   const selectedBannerMaterial = bannerMaterialOptions.find((option) => option.value === String(signValues.material || productMaterialOptions[0]?.value || 'standard')) || bannerMaterialOptions[0] || productMaterialOptions[0];
-  const selectedRoundedCornerOption = ROUNDED_CORNER_OPTIONS.find((option) => option.value === String(signValues.roundedCorners || 'none')) || ROUNDED_CORNER_OPTIONS[2];
+  const selectedRoundedCornerOption = ROUNDED_CORNER_OPTIONS.find((option) => option.value === String(signValues.roundedCorners || 'none')) || ROUNDED_CORNER_OPTIONS[0];
+  const supportsSizedRoundedCorners = selectedSignProduct.id === 'acm' || selectedSignProduct.id === 'aluminum';
+  const selectedRoundedCornerRadius = supportsSizedRoundedCorners && selectedRoundedCornerOption.value !== 'none' ? Number(selectedRoundedCornerOption.value) : 0;
+  const roundedCornerPreviewPercent = selectedRoundedCornerRadius > 0 && signWidth > 0 && signHeight > 0
+    ? Math.min(18, (selectedRoundedCornerRadius / Math.max(1, Math.min(signWidth, signHeight))) * 100)
+    : 0;
   const bannerDisplayName = isMeshBanner ? 'Mesh Banner' : selectedSignProduct.name;
   const bannerLocalOptionTotal = isBannerBuilder && Boolean(signValues.windSlits) ? 10 : 0;
   const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
@@ -2141,8 +2190,10 @@ export default function Home() {
   const designerQuantityBreakdown = productMode === 'signage' ? `Each: ${designerQuantity}` : sizeBreakdown;
   const signRetailBase = numericPrice(signEstimate?.price?.retail);
   const signEachBase = numericPrice(signEstimate?.price?.each);
-  const signRetailTotal = signRetailBase !== null ? signRetailBase + bannerLocalOptionTotal : null;
-  const signEachTotal = signEachBase !== null ? signEachBase + (bannerLocalOptionTotal / Math.max(1, designerQuantity)) : null;
+  const roundedCornerLocalOptionTotal = supportsSizedRoundedCorners && selectedRoundedCornerRadius > 0 ? 5 : 0;
+  const signLocalOptionTotal = bannerLocalOptionTotal + roundedCornerLocalOptionTotal;
+  const signRetailTotal = signRetailBase !== null ? signRetailBase + signLocalOptionTotal : null;
+  const signEachTotal = signEachBase !== null ? signEachBase + (signLocalOptionTotal / Math.max(1, designerQuantity)) : null;
   const signPricePerSheet = signRetailTotal !== null ? signRetailTotal / coroSheetLayout.sheetCount : null;
   const coroPricePerSign = signEachTotal ?? (signRetailTotal !== null ? signRetailTotal / Math.max(1, effectiveCoroQuantity) : null);
   const coroPricePerFullSheet = coroPricePerSign !== null ? coroPricePerSign * coroSheetLayout.signsPerSheet : null;
@@ -3195,6 +3246,22 @@ export default function Home() {
     const refreshedUrl = item.source === 'supabase' && item.storagePath
       ? await getSignedImageZoneUrl(item.storagePath)
       : item.dataUrl;
+    const isPdfItem = item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name);
+    if (isPdfItem) {
+      const preview = await renderPdfFirstPage(refreshedUrl);
+      const sizedItem = {
+        ...item,
+        dataUrl: preview.dataUrl,
+        storageUrl: item.storagePath ? refreshedUrl : item.storageUrl,
+        width: preview.width,
+        height: preview.height,
+        dpi: preview.dpi,
+        signWidth: preview.signWidth,
+        signHeight: preview.signHeight
+      };
+      setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
+      return sizedItem;
+    }
     const size = item.width > 0 && item.height > 0 && refreshedUrl === item.dataUrl
       ? { width: item.width, height: item.height }
       : await getImageNaturalSize(refreshedUrl);
@@ -4802,12 +4869,12 @@ export default function Home() {
     window.history.replaceState({}, '', nextUrl);
   }, []);
 
-  const openAiEditor = () => {
-    const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+  const openAiEditorForSource = (source: ImageZoneItem | null) => {
     if (!source || !canPlaceImageZoneItem(source)) {
       setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening AI Edit.');
       return;
     }
+    setAiEditSource(source);
     setAiEditPrompt('');
     setAiEditAction('restore');
     setAiEditQuality('low');
@@ -4816,8 +4883,35 @@ export default function Home() {
     setShowAiImageEditor(true);
   };
 
+  const openAiEditor = () => {
+    openAiEditorForSource(imageZoneItems.find((item) => item.id === selectedImageZoneId) || null);
+  };
+
+  const openArtworkEditorAiTools = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    if (!canvas || !source) {
+      setArtworkEditorStatus('The current artboard is not ready for AI tools yet.');
+      return;
+    }
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    const dataUrl = canvas.toDataURL({ format: 'png', multiplier: 1 });
+    const dimensions = await getImageNaturalSize(dataUrl);
+    openAiEditorForSource({
+      ...source,
+      id: `hue-designer-ai-${Date.now()}`,
+      name: `${source.name.replace(/\.[^.]+$/, '') || 'artwork'}-current-design.png`,
+      dataUrl,
+      width: dimensions.width,
+      height: dimensions.height,
+      mimeType: 'image/png',
+      source: 'local'
+    });
+  };
+
   const generateAiImageEdit = async () => {
-    const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+    const source = aiEditSource;
     const prompt = aiEditPrompt.trim();
     if (!source || !canPlaceImageZoneItem(source)) {
       setAiEditStatus('The selected artwork cannot be edited. Choose an image file and try again.');
@@ -4912,6 +5006,10 @@ export default function Home() {
         setImageLibraryStatus(`AI edit saved as a new image${customerSession?.user?.email ? ` in ${customerSession.user.email}'s library` : ''}.`);
       } else {
         setImageLibraryStatus('AI edit saved as a new browser image. Connect storage to keep it for future sessions.');
+      }
+      if (showArtworkEditor && artworkEditorCanvasRef.current) {
+        await addArtworkEditorImageLayer(normalized.dataUrl, normalized.fileName, 'ai-edit');
+        setArtworkEditorStatus(`${normalized.fileName} was saved to Image Zone and added to the design as an editable layer.`);
       }
       setShowAiImageEditor(false);
       setAiEditPreview(null);
@@ -5009,13 +5107,17 @@ export default function Home() {
     if (!file) return;
     const canvas = fabricCanvasRef.current;
     const isImageFile = isPreviewableImageFile(file);
-    const canPlaceOnCanvas = Boolean(isImageFile && canvas);
+    const isPdfFile = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    let canPlaceOnCanvas = Boolean(isImageFile && canvas);
     if (isImageFile && !canPlaceOnCanvas) setImageLibraryStatus(`Adding file to the library. Open the ${selectedSignProduct.name} builder to place it on the design.`);
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result as string;
+      let placementDataUrl = dataUrl;
       let imagePixels = { width: 0, height: 0 };
       let embeddedResolution: ImageResolution | null = null;
+      let pdfPrintSize: { width: number; height: number } | null = null;
+      let pdfPreviewDpi: number | null = null;
       if (isImageFile) {
         try {
           imagePixels = await getImageNaturalSize(dataUrl);
@@ -5028,22 +5130,36 @@ export default function Home() {
           setArtworkAnalysis(null);
           setArtworkAnalysisStatus(error instanceof Error ? error.message : 'Artwork analysis failed.');
         }
+      } else if (isPdfFile) {
+        try {
+          const preview = await renderPdfFirstPage(await file.arrayBuffer());
+          placementDataUrl = preview.dataUrl;
+          imagePixels = { width: preview.width, height: preview.height };
+          pdfPrintSize = { width: preview.signWidth, height: preview.signHeight };
+          pdfPreviewDpi = preview.dpi;
+          canPlaceOnCanvas = Boolean(canvas);
+          setArtworkAnalysis(null);
+          setArtworkAnalysisStatus(`${file.name} previewed from page 1 at ${preview.signWidth}" × ${preview.signHeight}". The original PDF remains attached for production.`);
+        } catch (error) {
+          setArtworkAnalysis(null);
+          setArtworkAnalysisStatus(`The original PDF was saved, but its preview could not be rendered: ${error instanceof Error ? error.message : 'unknown PDF error'}.`);
+        }
       } else {
         setArtworkAnalysis(null);
-        setArtworkAnalysisStatus(`${file.name} saved as a production file. PDF preview placement is coming next.`);
+        setArtworkAnalysisStatus(`${file.name} saved as a production file.`);
       }
 
       const localItemId = `${Date.now()}-${file.name}`;
-      const detectedPrintSize = imagePixels.width > 0 && imagePixels.height > 0
+      const detectedPrintSize = pdfPrintSize || (imagePixels.width > 0 && imagePixels.height > 0
         ? getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution)
-        : null;
+        : null);
       const item: ImageZoneItem = {
         id: localItemId,
         name: file.name,
-        dataUrl,
+        dataUrl: placementDataUrl,
         width: imagePixels.width,
         height: imagePixels.height,
-        dpi: embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI,
+        dpi: pdfPreviewDpi || (embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI),
         uploadedAt: new Date().toLocaleString(),
         source: 'local',
         mimeType: file.type,
@@ -5052,27 +5168,31 @@ export default function Home() {
       };
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(item.id);
-      if (isImageFile && isCoroBuilder) placeCoroArtworkOnSheet(item);
-      if (isImageFile && isAutoSidedRigidBuilder && rigidArtworkTarget === 'back') {
+      if ((isImageFile || Boolean(pdfPrintSize)) && isCoroBuilder) placeCoroArtworkOnSheet(item);
+      if ((isImageFile || Boolean(pdfPrintSize)) && isAutoSidedRigidBuilder && rigidArtworkTarget === 'back') {
         setRigidBackArtwork(item);
         setRigidArtworkTarget('front');
         setRigidPreviewSide('back');
         setSignValues((prev) => ({ ...prev, sides: 'double' }));
         setSignEstimate(null);
         setImageLibraryStatus(`${file.name} placed on the back. Double-sided pricing is now active.`);
-      } else if (isImageFile && isBannerBuilder) {
+      } else if ((isImageFile || Boolean(pdfPrintSize)) && isBannerBuilder) {
         if (isAutoSidedRigidBuilder) {
           setRigidArtworkTarget('front');
           setRigidPreviewSide('front');
           setSignValues((prev) => ({ ...prev, sides: rigidBackArtwork ? 'double' : 'single' }));
         }
-        setSignArtworkPreviewUrl(dataUrl);
+        setSignArtworkPreviewUrl(placementDataUrl);
         setBannerArtworkName(file.name);
-        const printSize = applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
-        setPendingBannerPlacement({ dataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height, printWidth: printSize.width, printHeight: printSize.height });
+        const printSize = pdfPrintSize || applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
+        if (pdfPrintSize) {
+          setSignValues((prev) => ({ ...prev, width: String(pdfPrintSize.width), height: String(pdfPrintSize.height) }));
+          setSignArtworkSize(pdfPrintSize);
+        }
+        setPendingBannerPlacement({ dataUrl: placementDataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height, printWidth: printSize.width, printHeight: printSize.height });
         setImageLibraryStatus(`${file.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       } else if (canPlaceOnCanvas) {
-        await placeImageOnDesign(dataUrl, file.name);
+        await placeImageOnDesign(placementDataUrl, file.name);
       }
       event.target.value = '';
 
@@ -6290,11 +6410,12 @@ export default function Home() {
                     <div className={`absolute -bottom-9 left-0 right-0 text-center text-xs ${isBannerBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
                     <div className={`absolute -left-9 bottom-0 top-0 border-l text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute left-[-12px] top-1/2 -translate-y-1/2 -rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
                     <div className={`absolute -right-9 bottom-0 top-0 border-r text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
-                    <div className={`absolute inset-0 ${isRigidSignBuilder ? 'rigid-sign-preview overflow-hidden rounded-[3px] border border-slate-300' : `overflow-hidden rounded-sm border ${signSurfacePreviewUrl ? 'border-[#38bdf8]/60 bg-transparent' : 'border-slate-300 bg-white'} shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]`}`}>
+                    <div className={`absolute inset-0 ${isRigidSignBuilder ? 'rigid-sign-preview overflow-hidden border border-slate-300 transition-[border-radius] duration-300' : `overflow-hidden rounded-sm border bg-white ${signSurfacePreviewUrl ? 'border-[#38bdf8]/60' : 'border-slate-300'} shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]`}`} style={supportsSizedRoundedCorners ? { borderRadius: roundedCornerPreviewPercent > 0 ? `${roundedCornerPreviewPercent}%` : '3px' } : undefined}>
                       {!isRigidSignBuilder ? <div className="absolute inset-3 border border-dashed border-slate-300" /> : null}
                       {isRigidSignBuilder && !hasPlacedSignArtwork ? <div className="absolute inset-0 flex items-end justify-center pb-5"><span className="rounded-full border border-slate-300/80 bg-white/75 px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 shadow-sm backdrop-blur">Rigid panel</span></div> : null}
                       {signSurfacePreviewUrl ? <img src={signSurfacePreviewUrl} alt="" className={`absolute inset-0 h-full w-full ${bannerArtworkFitState === 'stretch' ? 'object-fill' : !rawBannerAspectMismatch || signArtworkMatchesSize ? 'object-cover' : 'object-contain'}`} /> : null}
-                      {isRigidSignBuilder && signWidth > 0 && signHeight > 0 ? <div className="pointer-events-none absolute z-20 border border-dashed border-[#93c5fd] shadow-[0_0_0_1px_rgba(15,23,42,0.18),0_0_18px_rgba(56,189,248,0.22)]" style={{ left: `${rigidSafeZoneInsetX}%`, right: `${rigidSafeZoneInsetX}%`, top: `${rigidSafeZoneInsetY}%`, bottom: `${rigidSafeZoneInsetY}%` }} /> : null}
+                      {isRigidSignBuilder && signWidth > 0 && signHeight > 0 ? <div className="pointer-events-none absolute z-20 border border-dashed border-[#93c5fd] shadow-[0_0_0_1px_rgba(15,23,42,0.18),0_0_18px_rgba(56,189,248,0.22)]" style={{ left: `${rigidSafeZoneInsetX}%`, right: `${rigidSafeZoneInsetX}%`, top: `${rigidSafeZoneInsetY}%`, bottom: `${rigidSafeZoneInsetY}%`, borderRadius: roundedCornerPreviewPercent > 0 ? `${Math.max(2, roundedCornerPreviewPercent * 0.72)}%` : undefined }} /> : null}
+                      {supportsSizedRoundedCorners && selectedRoundedCornerRadius > 0 ? <span className="pointer-events-none absolute bottom-2 left-2 z-30 rounded-full border border-white/45 bg-[#071827]/80 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-[#b7ecff] shadow backdrop-blur">{selectedRoundedCornerOption.label} corners</span> : null}
                       {isTrueBannerBuilder ? <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div> : null}
                     </div>
                     {isAutoSidedRigidBuilder && rigidBackArtwork ? <button type="button" onClick={() => setRigidPreviewSide((side) => side === 'front' ? 'back' : 'front')} className="absolute -bottom-16 left-0 z-20 inline-flex items-center gap-2 rounded-full border border-[#38bdf8]/30 bg-[#06111d]/90 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-[#b7ecff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur transition hover:border-[#67d8ff]/70 hover:bg-[#0a2438] hover:text-white">
@@ -6663,9 +6784,9 @@ export default function Home() {
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'roundedCorners' ? <div className="mt-4 mx-auto grid max-w-md overflow-hidden rounded border border-slate-200 bg-white">
-                  {(selectedSignProduct.id === 'acrylic' ? [{ label: 'None', value: false }, { label: 'Rounded Corners', value: true }] : ROUNDED_CORNER_OPTIONS).map((option) => {
+                  {(selectedSignProduct.id === 'acrylic' ? [{ label: 'None', value: false, note: 'Square finished corners' }, { label: 'Rounded Corners', value: true, note: '+$5 finishing option' }] : ROUNDED_CORNER_OPTIONS).map((option) => {
                     const selected = selectedSignProduct.id === 'acrylic' ? Boolean(signValues.roundedCorners) === option.value : String(signValues.roundedCorners || 'none') === option.value;
-                    return <button key={String(option.value)} type="button" onClick={() => { updateSignOption('roundedCorners', option.value); setActiveCoroOptionPanel(null); }} className={`border-b border-slate-100 px-4 py-3 text-center text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}>{option.label}</button>;
+                    return <button key={String(option.value)} type="button" onClick={() => { updateSignOption('roundedCorners', option.value); setActiveCoroOptionPanel(null); }} className={`border-b border-slate-100 px-4 py-3 text-left text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}><span className="block font-black">{option.label}</span><span className={`mt-1 block text-xs ${selected ? 'text-blue-100' : 'text-slate-500'}`}>{option.note}</span></button>;
                   })}
                 </div> : null}
               </div> : null}
@@ -6716,6 +6837,7 @@ export default function Home() {
                                   ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
                                   ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
                                 ] : [
+                                  ...(['acm', 'aluminum'].includes(selectedSignProduct.id) ? [['Rounded Corners', selectedRoundedCornerOption.label, selectedRoundedCornerRadius > 0]] : []),
                                   ['Rush', signValues.rush ? 'Yes' : 'No', Boolean(signValues.rush)]
                                 ]) as [string, string, boolean][]
                           ] as [string, string, boolean][])
@@ -6925,13 +7047,22 @@ export default function Home() {
                   <span className="rounded-full bg-[#0ea5e9]/20 px-2 py-0.5 text-xs font-bold text-[#9be6ff]">{customerOrderHistory.length}</span>
                 </div>
                 {customerOrderHistory.length ? <div className="mt-3 space-y-2">
-                  {customerOrderHistory.slice(0, 4).map((order) => <div key={`account-order-${order.id}`} className="rounded border border-white/10 bg-[#02070d]/55 px-3 py-2 text-xs">
+                  {customerOrderHistory.slice(0, 4).map((order) => <button type="button" key={`account-order-${order.id}`} onClick={() => {
+                    try {
+                      window.sessionStorage.setItem(ORDER_CONFIRMATION_STORAGE_KEY, JSON.stringify(getPersistableTestOrders([order])[0]));
+                    } catch {
+                      // The confirmation page can still find the order in local history.
+                    }
+                    setShowCustomerLogin(false);
+                    window.location.assign(`/order-confirmation?order=${encodeURIComponent(order.orderNumber)}`);
+                  }} className="block w-full rounded border border-white/10 bg-[#02070d]/55 px-3 py-2 text-left text-xs transition hover:border-[#38bdf8]/55 hover:bg-[#0c2a40]/70 focus:outline-none focus:ring-2 focus:ring-[#38bdf8]/40">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-black text-white">{order.orderNumber}</span>
                       <span className="font-black text-green-300">{formatSignPrice(order.total, order.currency)}</span>
                     </div>
                     <p className="mt-1 text-slate-400">{new Date(order.createdAt).toLocaleDateString()} / {order.items.length} item{order.items.length === 1 ? '' : 's'} / {order.items.reduce((total, item) => total + item.artworkFiles.length, 0)} artwork file{order.items.reduce((total, item) => total + item.artworkFiles.length, 0) === 1 ? '' : 's'}</p>
-                  </div>)}
+                    <span className="mt-1 block font-bold text-[#8be3ff]">View order details →</span>
+                  </button>)}
                 </div> : <p className="mt-2 text-xs leading-5 text-slate-400">Completed test orders for this account will appear here while we build the production order dashboard.</p>}
               </div>
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
@@ -6963,7 +7094,7 @@ export default function Home() {
                 <h2 className="mt-1 text-2xl font-black text-white">Print-ready order</h2>
                 <p className="mt-1 text-sm text-slate-300">{cartItems.length} item{cartItems.length === 1 ? '' : 's'} / {formatSignPrice(cartSubtotal, 'USD')} subtotal</p>
               </div>
-              <button type="button" onClick={() => setShowCart(false)} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
+              <button type="button" onClick={() => { setShowCart(false); setStoreView('store'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
             </div>
             {cartStatus ? <p className="mt-3 rounded border border-[#0ea5e9]/20 bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-300">{cartStatus}</p> : null}
             {testOrders[0] ? <p className="mt-2 text-xs text-slate-400">Latest test order: <span className="font-bold text-[#9be6ff]">{testOrders[0].orderNumber}</span></p> : null}
@@ -7045,8 +7176,9 @@ export default function Home() {
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Subtotal</p>
                 <p className="text-2xl font-black text-green-400">{formatSignPrice(cartSubtotal, 'USD')}</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
                 <button type="button" onClick={() => { setCartItems([]); setCartStatus('Cart cleared.'); }} disabled={cartItems.length === 0} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-red-400/60 disabled:cursor-not-allowed disabled:opacity-40">Clear</button>
+                <button type="button" onClick={() => { setShowCart(false); setStoreView('store'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded border border-[#38bdf8]/45 bg-[#0c2a40] px-4 py-3 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Keep Shopping</button>
                 <button type="button" onClick={openTestCheckout} disabled={cartItems.length === 0} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(14,165,233,0.20)] hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Continue to Checkout</button>
               </div>
             </div>
@@ -7345,6 +7477,7 @@ export default function Home() {
             <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#67d8ff]/25 bg-[#0c2a40] text-xl text-[#67d8ff]">✎</span>
             <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Create New Artwork' : `Editing ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
             <div className="flex items-center gap-1 rounded-xl border border-[#38bdf8]/25 bg-black/25 p-1"><button type="button" onClick={() => switchArtworkEditorSide('front')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'front' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>Front</button><button type="button" onClick={() => switchArtworkEditorSide('back')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'back' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{artworkEditorHasBackSide ? 'Back' : '+ Add Back'}</button></div>
+            <button type="button" disabled={isArtworkEditorSaving || isAiEditing} onClick={() => { void openArtworkEditorAiTools(); }} className="rounded-xl border border-violet-300/35 bg-violet-500/10 px-4 py-2.5 text-xs font-black uppercase text-violet-100 shadow-[0_0_24px_rgba(139,92,246,0.12)] hover:border-violet-300/65 hover:bg-violet-500/20 disabled:opacity-40">✦ AI Tools</button>
             <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <select value="" onChange={(event) => restoreArtworkEditorVersion(event.target.value)} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-2 text-[10px] text-slate-200"><option value="" disabled>Restore…</option>{artworkEditorVersions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}</select> : null}</div>
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
               <button type="button" disabled={!artworkEditorCanUndo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(-1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">↶ Undo</button>
@@ -7358,12 +7491,12 @@ export default function Home() {
               <button type="button" onClick={() => setArtworkEditorLeftPanelOpen((open) => !open)} className={`sticky top-0 z-20 mb-3 flex h-9 items-center justify-center rounded-xl border border-[#38bdf8]/25 bg-[#081827]/95 text-xs font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_12px_24px_rgba(0,0,0,0.22)] hover:border-[#67d8ff] hover:bg-[#0c2a40] ${artworkEditorLeftPanelOpen ? 'ml-auto w-28' : 'w-full'}`} aria-label={artworkEditorLeftPanelOpen ? 'Collapse artwork tools' : 'Expand artwork tools'}>{artworkEditorLeftPanelOpen ? 'Hide tools' : 'Tools'}</button>
               {!artworkEditorLeftPanelOpen ? <div className="flex flex-col items-center gap-3 pt-1">
                 <button type="button" onClick={() => artworkEditorImageInputRef.current?.click()} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38bdf8]/35 bg-[#1686c9] text-lg font-black text-white hover:bg-[#0f75b5]" title="Upload image or logo">+</button>
-                <button type="button" onClick={() => { setImageLibraryStatus('Choose saved artwork to add as an editable layer.'); setShowImageZone(true); }} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38bdf8]/35 bg-white/[0.045] text-xs font-black text-[#8be3ff] hover:bg-[#10364f]" title="Use Image Zone artwork">IZ</button>
+                <button type="button" onClick={() => { setImageLibraryStatus('Choose saved artwork to add as an editable layer.'); setShowImageZone(true); }} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38bdf8]/35 bg-white/[0.045] text-xs font-black text-[#8be3ff] hover:bg-[#10364f]" title="Add artwork from Image Zone">IZ</button>
                 <button type="button" onClick={() => setArtworkEditorLeftPanelOpen(true)} className="mt-2 [writing-mode:vertical-rl] rounded-full border border-white/10 bg-white/[0.04] px-2 py-3 text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 hover:text-white">Open</button>
               </div> : <div>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Add elements</p>
               <button type="button" onClick={() => artworkEditorImageInputRef.current?.click()} className="mt-3 flex w-full items-center gap-3 rounded-xl border border-dashed border-[#38bdf8]/45 bg-[#0c2a40]/55 p-3 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#1686c9] text-lg font-black text-white">+</span><span><strong className="block text-xs font-black text-white">Upload image or logo</strong><span className="mt-0.5 block text-[10px] text-slate-400">Add a movable, resizable image layer</span></span></button>
-              <button type="button" onClick={() => { setImageLibraryStatus('Choose saved artwork to add as an editable layer.'); setShowImageZone(true); }} className="mt-2 flex w-full items-center gap-3 rounded-xl border border-[#38bdf8]/30 bg-white/[0.045] p-3 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#38bdf8]/35 bg-[#071827] text-xs font-black uppercase text-[#8be3ff]">IZ</span><span><strong className="block text-xs font-black text-white">Use Image Zone artwork</strong><span className="mt-0.5 block text-[10px] text-slate-400">Add saved customer artwork to this design</span></span></button>
+              <button type="button" onClick={() => { setImageLibraryStatus('Choose saved artwork to add as an editable layer.'); setShowImageZone(true); }} className="mt-2 flex w-full items-center gap-3 rounded-xl border border-[#38bdf8]/30 bg-white/[0.045] p-3 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#38bdf8]/35 bg-[#071827] text-xs font-black uppercase text-[#8be3ff]">IZ</span><span><strong className="block text-xs font-black text-white">Add from Image Zone</strong><span className="mt-0.5 block text-[10px] text-slate-400">Choose saved artwork and add it as an editable layer</span></span></button>
               {artworkEditorSide === 'front' ? <button type="button" onClick={copyArtworkEditorFrontToBack} className="mt-2 w-full rounded-xl border border-[#38bdf8]/25 bg-white/[0.04] px-3 py-2.5 text-xs font-bold text-[#9be8ff] hover:border-[#67d8ff]/60 hover:bg-[#0c2a40]">Copy Front → Back</button> : <button type="button" onClick={removeArtworkEditorBackSide} className="mt-2 w-full rounded-xl border border-red-400/20 bg-red-500/[0.06] px-3 py-2.5 text-xs font-bold text-red-200 hover:bg-red-500/10">Remove Back Side</button>}
               <div className="mt-3 space-y-2">
                 <textarea value={artworkEditorText} onChange={(event) => setArtworkEditorText(event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" placeholder="Enter replacement text" />
@@ -7465,7 +7598,7 @@ export default function Home() {
       </div> : null}
 
       {showAiImageEditor ? (() => {
-        const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+        const source = aiEditSource;
         const aiTools = [
           { id: 'quality-check', title: 'Check Print Quality', tag: 'No credits', description: 'Review size, ratio, and estimated print resolution before editing.' },
           { id: 'restore', title: 'Enhance Artwork', tag: 'Cloudinary AI', description: 'Sharpen edges and clean compression for a better production proof.' },
@@ -7478,7 +7611,7 @@ export default function Home() {
         const activeAiTool = aiTools.find((tool) => tool.id === aiEditAction) || aiTools[1];
         const promptRequired = !['restore', 'remove-background', 'quality-check'].includes(aiEditAction);
         const quickPrompts = aiEditAction === 'remove' ? ['phone number', 'old date', 'small mark in the corner', 'background clutter'] : aiEditAction === 'background' ? ['clean white studio background', 'subtle dark blue gradient', 'outdoor storefront wall'] : aiEditAction === 'recolor' ? ['logo', 'background', 'main graphic', 'red text'] : aiEditAction === 'replace' ? ['old phone number => new phone number', 'left arrow => right arrow', 'red shape => blue shape'] : [];
-        return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#01050a]/90 p-4 backdrop-blur-lg">
+        return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#01050a]/90 p-4 backdrop-blur-lg">
           <section className="flex max-h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_40px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.2)]">
             <header className="flex items-center gap-4 border-b border-white/10 bg-[#071522] px-6 py-5">
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-sm font-black shadow-[0_0_28px_rgba(14,165,233,0.2)]">AI</span>
@@ -7507,7 +7640,7 @@ export default function Home() {
               <p className={`min-w-0 flex-1 text-xs leading-5 ${aiEditStatus.includes('CLOUDINARY_') || aiEditStatus.toLowerCase().includes('could not') || aiEditStatus.toLowerCase().includes('failed') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{aiEditStatus}</p>
               <button type="button" disabled={isAiEditing} onClick={() => setShowAiImageEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
               <button type="button" disabled={isAiEditing || (promptRequired && aiEditPrompt.trim().length < 2)} onClick={generateAiImageEdit} className="rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:bg-[#10364f] disabled:cursor-not-allowed disabled:opacity-35">{aiEditAction === 'quality-check' ? 'Run check' : aiEditPreview ? 'Generate again' : 'Generate edit'}</button>
-              <button type="button" disabled={isAiEditing || !aiEditPreview || aiEditAction === 'quality-check'} onClick={saveAiImageEdit} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Save as new image</button>
+              <button type="button" disabled={isAiEditing || !aiEditPreview || aiEditAction === 'quality-check'} onClick={saveAiImageEdit} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">{showArtworkEditor ? 'Save & Add to Design' : 'Save as New Image'}</button>
             </footer>
           </section>
         </div>;
@@ -7531,7 +7664,7 @@ export default function Home() {
         </section>
       </div> : null}
 
-      {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/80 p-0 backdrop-blur-md sm:p-4">
+      {showImageZone ? <div className={`fixed inset-0 ${showArtworkEditor ? 'z-[95]' : 'z-50'} flex items-center justify-center bg-[#02070d]/80 p-0 backdrop-blur-md sm:p-4`}>
         <section className="hue-image-library flex h-full w-full flex-col overflow-hidden border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)] sm:h-[min(800px,90vh)] sm:w-[min(1380px,96vw)] sm:rounded-[22px]">
           <div className="relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
             <div className="mr-auto flex min-w-[280px] items-center gap-3">
@@ -7602,7 +7735,7 @@ export default function Home() {
                 const item = imageZoneItems.find((entry) => entry.id === selectedImageZoneId);
                 if (!item) return;
                 await useImageZoneItem(item);
-              }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Use Selected Artwork</button>
+              }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">{showArtworkEditor ? 'Add to Design' : 'Use Selected Artwork'}</button>
             </div>
           </div>
         </section>

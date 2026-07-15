@@ -21,6 +21,11 @@ type ConfirmationOrder = {
 const CONFIRMATION_KEY = 'hue-order-confirmation';
 const ORDER_HISTORY_KEY = 'hue-test-orders';
 const money = (value: unknown, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0));
+const itemSizeLabel = (item: ConfirmationItem) => {
+  const listed = String(item.sizeLabel || '').trim();
+  if (listed && !/^0(?:\.0+)?"?\s*x\s*0(?:\.0+)?"?$/i.test(listed)) return listed;
+  return item.productionBreakdown?.find((artwork) => artwork.sizeLabel && !/^0(?:\.0+)?"?\s*x\s*0(?:\.0+)?"?$/i.test(artwork.sizeLabel))?.sizeLabel || listed || 'Size not listed';
+};
 
 export default function OrderConfirmationPage() {
   const [order, setOrder] = useState<ConfirmationOrder | null>(null);
@@ -96,10 +101,10 @@ export default function OrderConfirmationPage() {
           <section className="mt-6">
             <div className="flex flex-wrap items-end justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff] print:text-sky-700">Production breakdown</p><h2 className="mt-1 text-2xl font-black">What you ordered</h2></div><p className="text-xs text-slate-500">Submitted {new Date(order.createdAt).toLocaleString()}</p></div>
             <div className="mt-4 space-y-4">{order.items.map((item, itemIndex) => <article key={item.id || itemIndex} className="rounded-2xl border border-white/10 bg-[#020a12]/70 p-4 print:border-slate-300 print:bg-white sm:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Item {itemIndex + 1}</p><h3 className="mt-1 text-xl font-black">{item.productName || 'Print product'}</h3><p className="mt-1 text-sm text-slate-400">{item.sizeLabel} / Total qty {item.quantity || 0}</p></div><p className="text-lg font-black text-green-300 print:text-green-700">{money(item.price?.total, item.price?.currency || order.currency)}</p></div>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Item {itemIndex + 1}</p><h3 className="mt-1 text-xl font-black">{item.productName || 'Print product'}</h3><p className="mt-1 text-sm text-slate-400">{itemSizeLabel(item)} / Total qty {item.quantity || 0}</p></div><p className="text-lg font-black text-green-300 print:text-green-700">{money(item.price?.total, item.price?.currency || order.currency)}</p></div>
               {(item.productionBreakdown || []).length ? <div className="mt-4 grid gap-3 md:grid-cols-2">{item.productionBreakdown?.map((artwork, artworkIndex) => <div key={artwork.id || artworkIndex} className="flex gap-3 rounded-xl border border-[#38bdf8]/25 bg-[#071827] p-3 print:border-sky-300 print:bg-sky-50">
                 <div className="flex shrink-0 gap-1">{artwork.frontPreviewUrl ? <img src={artwork.frontPreviewUrl} alt={`${artwork.label || 'Artwork'} front`} className="h-24 w-24 rounded-lg bg-white object-contain" /> : <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-white/20 text-[10px] text-slate-500">No preview</div>}{artwork.backPreviewUrl ? <img src={artwork.backPreviewUrl} alt={`${artwork.label || 'Artwork'} back`} className="hidden h-24 w-24 rounded-lg bg-white object-contain sm:block" /> : null}</div>
-                <div className="min-w-0"><p className="truncate text-sm font-black">{artwork.label || `Artwork set ${artworkIndex + 1}`}</p><p className="mt-1 text-2xl font-black text-green-300 print:text-green-700">Qty {artwork.quantity || 0}</p><p className="mt-2 text-xs text-slate-300 print:text-slate-700">{artwork.sizeLabel || item.sizeLabel}</p>{artwork.sheetLabel ? <p className="mt-1 text-xs font-bold text-[#9be8ff] print:text-sky-700">{artwork.sheetLabel}</p> : null}<p className="mt-2 truncate text-[10px] text-slate-500">{artwork.frontName}</p></div>
+                <div className="min-w-0"><p className="truncate text-sm font-black">{artwork.label || `Artwork set ${artworkIndex + 1}`}</p><p className="mt-1 text-2xl font-black text-green-300 print:text-green-700">Qty {artwork.quantity || 0}</p><p className="mt-2 text-xs text-slate-300 print:text-slate-700">{artwork.sizeLabel || itemSizeLabel(item)}</p>{artwork.sheetLabel ? <p className="mt-1 text-xs font-bold text-[#9be8ff] print:text-sky-700">{artwork.sheetLabel}</p> : null}<p className="mt-2 truncate text-[10px] text-slate-500">{artwork.frontName}</p></div>
               </div>)}</div> : null}
             </article>)}</div>
           </section>

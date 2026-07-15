@@ -101,18 +101,24 @@ const renderArtworkFiles = (files: OrderArtworkFile[] | undefined) => {
 };
 
 const renderArtworkPreview = (url: string | undefined, side: string) => url
-  ? `<div style="display:inline-block;width:132px;margin:0 10px 8px 0;vertical-align:top;text-align:center;">
-      <img src="${escapeHtml(url)}" alt="${escapeHtml(side)} artwork" style="display:block;width:130px;height:105px;object-fit:contain;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;" />
+  ? `<div style="display:inline-block;width:104px;margin:0 10px 8px 0;vertical-align:top;text-align:center;">
+      <img src="${escapeHtml(url)}" alt="${escapeHtml(side)} artwork" width="96" height="76" style="display:block;width:96px!important;max-width:96px!important;height:76px!important;max-height:76px!important;object-fit:contain;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;" />
       <p style="margin:5px 0 0;color:#64748b;font-size:10px;font-weight:900;letter-spacing:.12em;">${escapeHtml(side.toUpperCase())}</p>
     </div>`
-  : `<div style="display:inline-block;width:132px;height:105px;margin:0 10px 8px 0;border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;color:#64748b;font-size:11px;line-height:105px;text-align:center;vertical-align:top;">No preview</div>`;
+  : `<div style="display:inline-block;width:96px;height:76px;margin:0 10px 8px 0;border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;color:#64748b;font-size:11px;line-height:76px;text-align:center;vertical-align:top;">No preview</div>`;
+
+const getOrderItemSizeLabel = (item: OrderItem) => {
+  const listed = String(item.sizeLabel || '').trim();
+  if (listed && !/^0(?:\.0+)?"?\s*x\s*0(?:\.0+)?"?$/i.test(listed)) return listed;
+  return item.productionBreakdown?.find((entry) => entry.sizeLabel && !/^0(?:\.0+)?"?\s*x\s*0(?:\.0+)?"?$/i.test(entry.sizeLabel))?.sizeLabel || listed || 'Size not listed';
+};
 
 const renderProductionBreakdown = (artwork: OrderProductionArtwork[] | undefined) => {
   if (!artwork?.length) return "<p style=\"margin:8px 0 0;color:#b45309;font-size:13px;\">No per-artwork quantity breakdown was recorded.</p>";
   return `<div style="margin-top:10px;">${artwork.map((entry, index) => `
     <table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0;margin-top:10px;border:2px solid #38bdf8;border-radius:12px;background:#f0f9ff;overflow:hidden;">
       <tr>
-        <td style="width:290px;padding:14px;vertical-align:top;">
+        <td width="230" style="width:230px;padding:14px;vertical-align:top;">
           ${renderArtworkPreview(entry.frontPreviewUrl, "Front")}
           ${entry.backName || entry.backPreviewUrl ? renderArtworkPreview(entry.backPreviewUrl, "Back") : ""}
         </td>
@@ -148,7 +154,7 @@ const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPay
     for (const [artworkIndex, artwork] of (item.productionBreakdown || []).entries()) {
       const artworkToken = `A${String(artworkIndex + 1).padStart(2, '0')}`;
       const quantityToken = `QTY-${String(Math.max(0, Number(artwork.quantity || 0))).padStart(3, '0')}`;
-      const sizeToken = getSafeOrderToken(String(artwork.sizeLabel || item.sizeLabel || 'CUSTOM').replace(/["']/g, '').replace(/\s*x\s*/i, 'x'), 'CUSTOM', 18);
+      const sizeToken = getSafeOrderToken(String(artwork.sizeLabel || getOrderItemSizeLabel(item) || 'CUSTOM').replace(/["']/g, '').replace(/\s*x\s*/i, 'x'), 'CUSTOM', 18);
 
       const organizeSide = async (side: 'FRONT' | 'BACK') => {
         const sourcePath = side === 'FRONT' ? artwork.frontStoragePath : artwork.backStoragePath;
@@ -281,7 +287,7 @@ export async function POST(request: Request) {
       <div style="background:#eff6ff;padding:14px 16px;">
         <p style="margin:0;color:#075985;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.12em;">Item ${index + 1}</p>
         <h2 style="margin:5px 0 0;color:#111827;font-size:20px;">${escapeHtml(item.productName || "Print-ready item")}</h2>
-        <p style="margin:6px 0 0;color:#374151;font-size:14px;">${escapeHtml(item.sizeLabel || "Size not listed")} / Qty ${escapeHtml(item.quantity || 0)} / ${formatMoney(item.price?.total, item.price?.currency || currency)}</p>
+        <p style="margin:6px 0 0;color:#374151;font-size:14px;">${escapeHtml(getOrderItemSizeLabel(item))} / Qty ${escapeHtml(item.quantity || 0)} / ${formatMoney(item.price?.total, item.price?.currency || currency)}</p>
       </div>
       <div style="padding:16px;">
         <p style="margin:0;color:#111827;font-size:15px;font-weight:900;">Production Artwork Breakdown</p>
@@ -346,10 +352,10 @@ export async function POST(request: Request) {
     "",
     "Items:",
     ...order.items.flatMap((item, index) => [
-      `${index + 1}. ${item.productName || "Print-ready item"} / ${item.sizeLabel || "Size not listed"} / Qty ${item.quantity || 0}`,
+      `${index + 1}. ${item.productName || "Print-ready item"} / ${getOrderItemSizeLabel(item)} / Qty ${item.quantity || 0}`,
       "   Production artwork breakdown:",
       ...(item.productionBreakdown || []).flatMap((entry, artworkIndex) => [
-        `   - ${entry.label || `Artwork set ${artworkIndex + 1}`}: Qty ${entry.quantity || 0} / ${entry.sizeLabel || item.sizeLabel || "Size not listed"}${entry.sheetLabel ? ` / ${entry.sheetLabel}` : ""}`,
+        `   - ${entry.label || `Artwork set ${artworkIndex + 1}`}: Qty ${entry.quantity || 0} / ${entry.sizeLabel || getOrderItemSizeLabel(item)}${entry.sheetLabel ? ` / ${entry.sheetLabel}` : ""}`,
         `     Front: ${entry.frontName || "Unnamed artwork"}${entry.frontStoragePath ? ` / ${entry.frontStoragePath}` : ""}`,
         entry.backName ? `     Back: ${entry.backName}${entry.backStoragePath ? ` / ${entry.backStoragePath}` : ""}` : "",
       ]),
@@ -376,6 +382,31 @@ export async function POST(request: Request) {
   if (!resendResponse.ok) {
     return NextResponse.json(
       { error: "The order was saved, but the email could not be sent. Check the Resend sender and API key.", order },
+      { status: 502 },
+    );
+  }
+
+  const customerResponse = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: orderFromEmail,
+      html: html
+        .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
+        .replace("Test checkout submitted", "Order submitted"),
+      reply_to: orderToEmail,
+      subject: `Your Hue Studio Order Confirmation ${order.orderNumber}`,
+      text: `Thank you for your order.\n\n${text}`,
+      to: order.customer.email,
+    }),
+  });
+
+  if (!customerResponse.ok) {
+    return NextResponse.json(
+      { error: "The order was saved and Hue was notified, but the customer confirmation email could not be sent. Check the Resend sender and customer address.", order },
       { status: 502 },
     );
   }
