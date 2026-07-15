@@ -355,6 +355,109 @@ body {
   transform: translateY(-1px);
 }
 
+/* Mobile keeps the same Hue Studio workflow, but turns dense desktop controls
+   into touch-friendly horizontal strips and vertically stacked work areas. */
+.hue-mobile-header-actions,
+.hue-mobile-category-strip {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hue-mobile-header-actions::-webkit-scrollbar,
+.hue-mobile-category-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.hue-mobile-header-actions > * {
+  flex-shrink: 0;
+  min-height: 42px;
+}
+
+@media (max-width: 767px) {
+  body {
+    overflow-x: hidden;
+  }
+
+  .hue-store-hero-title {
+    line-height: 0.9;
+  }
+
+  .hue-store-product-visual--image {
+    right: 2px;
+    width: 39%;
+    opacity: 0.88;
+  }
+
+  .hue-mobile-builder-stage {
+    min-height: 920px;
+    height: auto !important;
+  }
+
+  .hue-builder-summary {
+    left: 12px !important;
+    right: 12px !important;
+    top: 14px !important;
+    display: flex !important;
+    align-items: stretch !important;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scrollbar-width: none;
+  }
+
+  .hue-builder-summary::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hue-builder-summary > * {
+    width: min(82vw, 320px);
+    min-width: min(82vw, 320px);
+  }
+
+  .hue-builder-canvas {
+    top: 250px !important;
+    bottom: 88px !important;
+  }
+
+  .hue-mobile-artwork-panel {
+    left: 8px !important;
+    right: 8px !important;
+    top: 150px !important;
+    bottom: auto !important;
+    width: auto !important;
+    max-height: 650px;
+    border-radius: 18px;
+  }
+
+  .hue-builder-option-bar {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 12px !important;
+    max-height: none !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    overflow-x: auto !important;
+    padding: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background: rgba(3, 10, 18, 0.9);
+    backdrop-filter: blur(12px);
+    scrollbar-width: none;
+  }
+
+  .hue-builder-option-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hue-builder-option-bar > * {
+    flex-shrink: 0;
+  }
+
+  .hue-image-library header,
+  .hue-image-library > div:first-of-type {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 .hue-production-atmosphere {
   z-index: 0;
   left: 50%;
