@@ -1,7 +1,7 @@
 'use client';
 
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, IText, Line, Object as FabricObject, Path, Rect, Shadow, Triangle, filters } from 'fabric';
+import { ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, IText, Line, Object as FabricObject, Path, Point, Rect, Shadow, Triangle, filters } from 'fabric';
 import QRCode from 'qrcode';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
@@ -67,6 +67,7 @@ type TestOrder = {
   };
   items: CartItem[];
   subtotal: number;
+  shipping?: { amount: number; label: string };
   tax: { rate: number; amount: number; label: string };
   total: number;
   currency: string;
@@ -109,6 +110,7 @@ const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
 const GEORGIA_SALES_TAX_RATE = 0.08;
+const HUE_STUDIO_US_SHIPPING_FEE = 10;
 
 const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
@@ -1247,7 +1249,7 @@ export default function Home() {
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
   const [showAiImageEditor, setShowAiImageEditor] = useState(false);
   const [aiEditPrompt, setAiEditPrompt] = useState('');
-  const [aiEditAction, setAiEditAction] = useState<'restore' | 'remove-background' | 'remove' | 'background' | 'recolor' | 'replace'>('restore');
+  const [aiEditAction, setAiEditAction] = useState<'restore' | 'remove-background' | 'remove' | 'background' | 'recolor' | 'replace' | 'quality-check'>('restore');
   const [aiEditTargetColor, setAiEditTargetColor] = useState('#0ea5e9');
   const [aiEditQuality, setAiEditQuality] = useState<'low' | 'medium' | 'high'>('low');
   const [aiEditStatus, setAiEditStatus] = useState('');
@@ -1282,6 +1284,7 @@ export default function Home() {
   const [artworkEditorBorderThickness, setArtworkEditorBorderThickness] = useState(0.5);
   const [artworkEditorBorderColor, setArtworkEditorBorderColor] = useState('#0b1f44');
   const [artworkEditorZoom, setArtworkEditorZoom] = useState(1);
+  const [artworkEditorLeftPanelOpen, setArtworkEditorLeftPanelOpen] = useState(true);
   const [artworkEditorSnapToCenter, setArtworkEditorSnapToCenter] = useState(true);
   const [artworkEditorShowGuides, setArtworkEditorShowGuides] = useState(true);
   const [artworkEditorVerticalGuides, setArtworkEditorVerticalGuides] = useState<number[]>([]);
@@ -1831,12 +1834,21 @@ export default function Home() {
   const coroPricingCurrency = signEstimate?.currency || 'USD';
   const coroPricingIsLoaded = isCoroBuilder && signEstimate && signRetailTotal !== null;
   const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);
+  const checkoutShippingAmount = checkoutFulfillment === 'direct_ship' ? HUE_STUDIO_US_SHIPPING_FEE : 0;
+  const checkoutShippingLabel = checkoutFulfillment === 'direct_ship' ? 'US shipping' : 'Local pickup';
   const checkoutShipState = checkoutAddress.state.trim().toUpperCase();
   const checkoutIsGeorgiaOrder = checkoutFulfillment === 'pickup' || checkoutShipState === 'GA' || checkoutShipState === 'GEORGIA';
   const checkoutTaxRate = checkoutTaxExempt || !checkoutIsGeorgiaOrder ? 0 : GEORGIA_SALES_TAX_RATE;
-  const checkoutTaxAmount = Number((cartSubtotal * checkoutTaxRate).toFixed(2));
-  const checkoutOrderTotal = Number((cartSubtotal + checkoutTaxAmount).toFixed(2));
+  const checkoutTaxableAmount = cartSubtotal + checkoutShippingAmount;
+  const checkoutTaxAmount = Number((checkoutTaxableAmount * checkoutTaxRate).toFixed(2));
+  const checkoutOrderTotal = Number((cartSubtotal + checkoutShippingAmount + checkoutTaxAmount).toFixed(2));
   const checkoutTaxLabel = checkoutTaxExempt ? 'Tax exempt' : checkoutIsGeorgiaOrder ? `${GEORGIA_SALES_TAX_LABEL} (${(GEORGIA_SALES_TAX_RATE * 100).toFixed(2)}%)` : 'No GA tax for out-of-state shipping';
+  const customerOrderHistory = testOrders.filter((order) => {
+    const sessionUserId = customerSession?.user?.id;
+    const sessionEmail = customerSession?.user?.email?.trim().toLowerCase();
+    const orderEmail = order.customer.email.trim().toLowerCase();
+    return Boolean((sessionUserId && order.customer.userId === sessionUserId) || (sessionEmail && orderEmail === sessionEmail));
+  });
   const canAddCurrentDesignToCart = productMode === 'signage' && Boolean(signEstimate) && signRetailTotal !== null && signArtworkStatusOk;
   const openTestCheckout = () => {
     if (cartItems.length === 0) {
@@ -1855,6 +1867,24 @@ export default function Home() {
     setCheckoutStatus('');
     setShowTestCheckout(true);
   };
+  const sendTestOrderEmail = async (order: TestOrder) => {
+    try {
+      setCheckoutStatus(`Test order ${order.orderNumber} submitted. Sending order email to Hue...`);
+      const orderForEmail = getPersistableTestOrders([order])[0];
+      const response = await fetch('/api/orders/test-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: orderForEmail })
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(payload.error || 'The order email could not be sent.');
+      setCheckoutStatus(`Test order ${order.orderNumber} submitted and emailed to Hue. No payment was collected.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The order email could not be sent.';
+      setCheckoutStatus(`Test order ${order.orderNumber} was saved, but email needs attention: ${message}`);
+    }
+  };
+
   const submitTestOrder = () => {
     const contactName = checkoutContact.name.trim();
     const contactEmail = checkoutContact.email.trim();
@@ -1900,6 +1930,7 @@ export default function Home() {
       },
       items: cartItems,
       subtotal: cartSubtotal,
+      shipping: { amount: checkoutShippingAmount, label: checkoutShippingLabel },
       tax: { rate: checkoutTaxRate, amount: checkoutTaxAmount, label: checkoutTaxLabel },
       total: checkoutOrderTotal,
       currency: 'USD'
@@ -1910,6 +1941,7 @@ export default function Home() {
     setShowCart(false);
     setCheckoutStep('complete');
     setCheckoutStatus(`Test order ${order.orderNumber} submitted. No payment was collected.`);
+    void sendTestOrderEmail(order);
   };
   const artworkAnalysisSummary = useMemo(() => {
     if (!artworkAnalysis) return 'No uploaded artwork analysis yet.';
@@ -3228,20 +3260,26 @@ export default function Home() {
     const objectUrl = URL.createObjectURL(file);
     artworkEditorObjectUrlsRef.current.push(objectUrl);
     try {
-      const image = await FabricImage.fromURL(objectUrl);
-      const scale = Math.min((canvas.getWidth() * 0.7) / Math.max(1, image.width || 1), (canvas.getHeight() * 0.7) / Math.max(1, image.height || 1), 1);
-      image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, ...FABRIC_CONTROL_STYLE });
-      (image as FabricObject & { data?: { layerId?: string; layerName?: string; editorTool?: string } }).data = { layerId: `artwork-editor-image-${Date.now()}`, layerName: file.name, editorTool: 'uploaded-image' };
-      canvas.add(image);
-      canvas.setActiveObject(image);
-      syncArtworkEditorControls(image);
-      commitArtworkEditorChange(image);
-      setArtworkEditorStatus(`${file.name} added as an editable image layer.`);
+      await addArtworkEditorImageLayer(objectUrl, file.name, 'uploaded-image');
     } catch (error) {
       URL.revokeObjectURL(objectUrl);
       artworkEditorObjectUrlsRef.current = artworkEditorObjectUrlsRef.current.filter((url) => url !== objectUrl);
       setArtworkEditorStatus(`The image could not be added: ${error instanceof Error ? error.message : 'unsupported image file'}.`);
     }
+  };
+
+  const addArtworkEditorImageLayer = async (dataUrl: string, name: string, editorTool = 'image-zone') => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) throw new Error('The artwork editor is still loading.');
+    const image = await FabricImage.fromURL(dataUrl, dataUrl.startsWith('http') ? { crossOrigin: 'anonymous' } : undefined);
+    const scale = Math.min((canvas.getWidth() * 0.7) / Math.max(1, image.width || 1), (canvas.getHeight() * 0.7) / Math.max(1, image.height || 1), 1);
+    image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, ...FABRIC_CONTROL_STYLE });
+    (image as FabricObject & { data?: { layerId?: string; layerName?: string; editorTool?: string } }).data = { layerId: `artwork-editor-image-${Date.now()}`, layerName: name, editorTool };
+    canvas.add(image);
+    canvas.setActiveObject(image);
+    syncArtworkEditorControls(image);
+    commitArtworkEditorChange(image);
+    setArtworkEditorStatus(`${name} added as an editable image layer.`);
   };
 
   const fitArtworkEditorSelectedImage = (mode: 'fit' | 'fill' | 'stretch') => {
@@ -3620,6 +3658,24 @@ export default function Home() {
     window.addEventListener('pointerup', stop);
   };
 
+  const setArtworkEditorCanvasZoom = (value: number) => {
+    const next = Math.max(0.5, Math.min(2.5, Number(value.toFixed(1))));
+    const canvas = artworkEditorCanvasRef.current;
+    setArtworkEditorZoom(next);
+    if (!canvas) return;
+    const center = new Point(canvas.getWidth() / 2, canvas.getHeight() / 2);
+    canvas.zoomToPoint(center, next);
+    canvas.requestRenderAll();
+  };
+
+  const resetArtworkEditorCanvasZoom = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    setArtworkEditorZoom(1);
+    if (!canvas) return;
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    canvas.requestRenderAll();
+  };
+
   const addArtworkEditorIcon = (symbol: string, name: string) => {
     const canvas = artworkEditorCanvasRef.current;
     if (!canvas) return;
@@ -3888,6 +3944,7 @@ export default function Home() {
       selectionBorderColor: '#38bdf8'
     });
     artworkEditorCanvasRef.current = canvas;
+    setArtworkEditorZoom(1);
     artworkEditorHistoryRef.current = [];
     artworkEditorHistoryIndexRef.current = -1;
     artworkEditorRestoringRef.current = true;
@@ -3920,27 +3977,32 @@ export default function Home() {
       if (Math.abs(objectCenter.x - canvasCenterX) <= 8) object.set({ left: (object.left || 0) + canvasCenterX - objectCenter.x });
       if (Math.abs(objectCenter.y - canvasCenterY) <= 8) object.set({ top: (object.top || 0) + canvasCenterY - objectCenter.y });
     });
-    canvas.on('mouse:down', (event) => {
-      const pointerEvent = event.e as MouseEvent;
-      if (!pointerEvent.altKey) return;
-      isPanning = true;
-      lastPointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
-      canvas.selection = false;
-      canvas.setCursor('grabbing');
-    });
-    canvas.on('mouse:move', (event) => {
+    const onPanPointerMove = (pointerEvent: PointerEvent) => {
       if (!isPanning || !canvas.viewportTransform) return;
-      const pointerEvent = event.e as MouseEvent;
       canvas.viewportTransform[4] += pointerEvent.clientX - lastPointer.x;
       canvas.viewportTransform[5] += pointerEvent.clientY - lastPointer.y;
       lastPointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
       canvas.requestRenderAll();
-    });
-    canvas.on('mouse:up', () => {
+    };
+    const onPanPointerUp = () => {
       isPanning = false;
       canvas.selection = true;
       canvas.setCursor('default');
-    });
+      window.removeEventListener('pointermove', onPanPointerMove);
+      window.removeEventListener('pointerup', onPanPointerUp);
+    };
+    const onPanPointerDown = (pointerEvent: PointerEvent) => {
+      if (!pointerEvent.altKey) return;
+      pointerEvent.preventDefault();
+      isPanning = true;
+      lastPointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
+      canvas.discardActiveObject();
+      canvas.selection = false;
+      canvas.setCursor('grabbing');
+      window.addEventListener('pointermove', onPanPointerMove);
+      window.addEventListener('pointerup', onPanPointerUp);
+    };
+    canvas.upperCanvasEl.addEventListener('pointerdown', onPanPointerDown);
 
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -4049,6 +4111,9 @@ export default function Home() {
     return () => {
       disposed = true;
       window.removeEventListener('keydown', onKeyDown);
+      canvas.upperCanvasEl.removeEventListener('pointerdown', onPanPointerDown);
+      window.removeEventListener('pointermove', onPanPointerMove);
+      window.removeEventListener('pointerup', onPanPointerUp);
       canvas.dispose();
       artworkEditorCanvasRef.current = null;
       artworkEditorHistoryRef.current = [];
@@ -4081,6 +4146,24 @@ export default function Home() {
     const prompt = aiEditPrompt.trim();
     if (!source || !canPlaceImageZoneItem(source)) {
       setAiEditStatus('The selected artwork cannot be edited. Choose an image file and try again.');
+      return;
+    }
+    if (aiEditAction === 'quality-check') {
+      const printWidth = source.signWidth || getArtworkPrintSize(source.width, source.height).width;
+      const printHeight = source.signHeight || getArtworkPrintSize(source.width, source.height).height;
+      const effectiveDpi = Math.min(source.width / Math.max(1, printWidth), source.height / Math.max(1, printHeight));
+      const ratioDifference = Math.abs((source.width / Math.max(1, source.height)) - (printWidth / Math.max(1, printHeight)));
+      const notes = [
+        `${source.name} is ${source.width} x ${source.height}px.`,
+        `Estimated print size is ${formatArtworkInches(source.width, source.height, printWidth, printHeight)}.`,
+        `Effective resolution is about ${Math.round(effectiveDpi)} DPI.`
+      ];
+      if (effectiveDpi >= 150) notes.push('Resolution looks usable for production.');
+      else notes.push('Resolution may be low for print. A higher quality file is recommended.');
+      if (ratioDifference > 0.03) notes.push('Artwork ratio does not match the selected print size, so Fit or Stretch may be needed.');
+      else notes.push('Artwork ratio matches the selected print size.');
+      setAiEditPreview(null);
+      setAiEditStatus(notes.join(' '));
       return;
     }
     if (!['restore', 'remove-background'].includes(aiEditAction) && prompt.length < 2) {
@@ -4178,6 +4261,16 @@ export default function Home() {
       imageItem = await hydrateImageZoneItemSize(item);
     } catch (error) {
       setImageLibraryStatus(error instanceof Error ? error.message : `Could not load ${item.name}. Please sign in again and retry.`);
+      return;
+    }
+    if (showArtworkEditor && artworkEditorCanvasRef.current) {
+      try {
+        await addArtworkEditorImageLayer(imageItem.dataUrl, imageItem.name, 'image-zone');
+        setImageLibraryStatus(`${imageItem.name} added to the artwork editor.`);
+        setShowImageZone(false);
+      } catch (error) {
+        setImageLibraryStatus(`Could not add ${imageItem.name} to the editor: ${error instanceof Error ? error.message : 'image failed to load'}.`);
+      }
       return;
     }
     if (isAutoSidedRigidBuilder && rigidArtworkTarget === 'back') {
@@ -5986,6 +6079,21 @@ export default function Home() {
                 <button type="button" onClick={() => { setShowCustomerLogin(false); setShowImageZone(true); }} className="rounded-lg border border-[#38bdf8]/30 bg-[#0c2a40] p-4 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="block text-xs font-black uppercase tracking-[0.18em] text-[#67d8ff]">Saved Artwork</span><span className="mt-2 block text-2xl font-black text-white">{imageZoneItems.length}</span><span className="mt-1 block text-xs text-slate-300">Open Image Zone</span></button>
                 <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><span className="block text-xs font-black uppercase tracking-[0.18em] text-slate-400">Account Status</span><span className="mt-2 block text-lg font-black text-emerald-300">Active</span><span className="mt-1 block text-xs text-slate-400">Cloud library connected</span></div>
               </div>
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Past Orders</span>
+                  <span className="rounded-full bg-[#0ea5e9]/20 px-2 py-0.5 text-xs font-bold text-[#9be6ff]">{customerOrderHistory.length}</span>
+                </div>
+                {customerOrderHistory.length ? <div className="mt-3 space-y-2">
+                  {customerOrderHistory.slice(0, 4).map((order) => <div key={`account-order-${order.id}`} className="rounded border border-white/10 bg-[#02070d]/55 px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-black text-white">{order.orderNumber}</span>
+                      <span className="font-black text-green-300">{formatSignPrice(order.total, order.currency)}</span>
+                    </div>
+                    <p className="mt-1 text-slate-400">{new Date(order.createdAt).toLocaleDateString()} / {order.items.length} item{order.items.length === 1 ? '' : 's'} / {order.items.reduce((total, item) => total + item.artworkFiles.length, 0)} artwork file{order.items.reduce((total, item) => total + item.artworkFiles.length, 0) === 1 ? '' : 's'}</p>
+                  </div>)}
+                </div> : <p className="mt-2 text-xs leading-5 text-slate-400">Completed test orders for this account will appear here while we build the production order dashboard.</p>}
+              </div>
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
               <label className="block text-sm font-bold text-slate-200">Email
                 <input type="email" value={customerAuthEmail} onChange={(event) => setCustomerAuthEmail(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete="email" />
@@ -6211,6 +6319,10 @@ export default function Home() {
                     <span>{formatSignPrice(cartSubtotal, 'USD')}</span>
                   </div>
                   <div className="flex items-start justify-between gap-4 text-slate-300">
+                    <span>{checkoutShippingLabel}</span>
+                    <span>{checkoutShippingAmount > 0 ? formatSignPrice(checkoutShippingAmount, 'USD') : 'No charge'}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4 text-slate-300">
                     <span>{checkoutTaxLabel}</span>
                     <span>{formatSignPrice(checkoutTaxAmount, 'USD')}</span>
                   </div>
@@ -6243,6 +6355,34 @@ export default function Home() {
                   <p className="text-xs text-slate-400">Total</p>
                   <p className="mt-1 text-2xl font-black text-green-400">{formatSignPrice(lastTestOrder.total, lastTestOrder.currency)}</p>
                   <p className="mt-1 text-xs text-slate-400">{lastTestOrder.tax.label}: {formatSignPrice(lastTestOrder.tax.amount, lastTestOrder.currency)}</p>
+                </div>
+              </div> : null}
+              {lastTestOrder ? <div className="mx-auto max-w-xl rounded-xl border border-[#0ea5e9]/25 bg-[#02070d]/60 p-4 text-left">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-[#62d4ff]">Order Details</p>
+                    <p className="mt-2 text-sm font-bold text-white">{lastTestOrder.customer.name} / {lastTestOrder.customer.email}</p>
+                    <p className="mt-1 text-xs text-slate-400">{lastTestOrder.fulfillment.method === 'direct_ship' ? `Direct ship: ${lastTestOrder.fulfillment.address?.line1}, ${lastTestOrder.fulfillment.address?.city}, ${lastTestOrder.fulfillment.address?.state} ${lastTestOrder.fulfillment.address?.postalCode}` : 'Local pickup'}</p>
+                  </div>
+                  <div className="text-right text-xs text-slate-300">
+                    <p>Subtotal: {formatSignPrice(lastTestOrder.subtotal, lastTestOrder.currency)}</p>
+                    <p>{lastTestOrder.shipping?.label || 'Shipping'}: {formatSignPrice(lastTestOrder.shipping?.amount || 0, lastTestOrder.currency)}</p>
+                    <p>Tax: {formatSignPrice(lastTestOrder.tax.amount, lastTestOrder.currency)}</p>
+                  </div>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {lastTestOrder.items.map((item, itemIndex) => <div key={`complete-item-${item.id}`} className="rounded border border-white/10 bg-white/[0.035] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-white">Item {itemIndex + 1}: {item.productName}</p>
+                        <p className="mt-1 text-xs text-slate-400">{item.sizeLabel} / Qty {item.quantity}</p>
+                      </div>
+                      <p className="text-sm font-black text-green-300">{item.price.total !== null ? formatSignPrice(item.price.total, item.price.currency) : 'Needs price'}</p>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {item.artworkFiles.length ? item.artworkFiles.map((file) => <p key={`complete-file-${item.id}-${file.role}-${file.name}`} className="truncate text-xs text-slate-400">{file.role}: <span className="text-slate-200">{file.name}</span>{file.storagePath ? <span> / {file.storagePath}</span> : null}</p>) : <p className="text-xs text-amber-200">No artwork file reference attached.</p>}
+                    </div>
+                  </div>)}
                 </div>
               </div> : null}
             </div> : null}
@@ -6287,7 +6427,7 @@ export default function Home() {
         const activeGroup = NEW_ARTWORK_PRESET_GROUPS.find((group) => group.id === newArtworkPresetGroupId) || NEW_ARTWORK_PRESET_GROUPS[0];
         return <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[#02070d]/90 p-4 backdrop-blur-lg">
           <section className="flex max-h-[min(820px,94vh)] w-[min(1080px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_36px_130px_rgba(0,0,0,0.78),0_0_70px_rgba(14,165,233,0.18)]">
-            <header className="flex items-center gap-4 border-b border-white/10 bg-[#071522] px-6 py-5">
+            <header className="flex items-center gap-4 border-b border-white/10 bg-[linear-gradient(135deg,#071522,#08243a_55%,#071522)] px-6 py-5">
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-2xl font-black text-[#67d8ff]">+</span>
               <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Artwork Studio</p><h2 className="mt-1 text-2xl font-black">Build New Artwork</h2><p className="mt-1 text-sm text-slate-400">Choose a common production size or enter your own dimensions.</p></div>
               <button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
@@ -6336,11 +6476,18 @@ export default function Home() {
             </div>
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => setShowArtworkEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
           </header>
-          <div className="grid min-h-0 flex-1 lg:grid-cols-[220px_minmax(0,1fr)_310px]">
-            <aside className="min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] p-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Add elements</p>
+          <div className={`grid min-h-0 flex-1 transition-[grid-template-columns] duration-300 ${artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
+            <aside className={`relative min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
               <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
+              <button type="button" onClick={() => setArtworkEditorLeftPanelOpen((open) => !open)} className={`sticky top-0 z-20 mb-3 flex h-9 items-center justify-center rounded-xl border border-[#38bdf8]/25 bg-[#081827]/95 text-xs font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_12px_24px_rgba(0,0,0,0.22)] hover:border-[#67d8ff] hover:bg-[#0c2a40] ${artworkEditorLeftPanelOpen ? 'ml-auto w-28' : 'w-full'}`} aria-label={artworkEditorLeftPanelOpen ? 'Collapse artwork tools' : 'Expand artwork tools'}>{artworkEditorLeftPanelOpen ? 'Hide tools' : 'Tools'}</button>
+              {!artworkEditorLeftPanelOpen ? <div className="flex flex-col items-center gap-3 pt-1">
+                <button type="button" onClick={() => artworkEditorImageInputRef.current?.click()} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38bdf8]/35 bg-[#1686c9] text-lg font-black text-white hover:bg-[#0f75b5]" title="Upload image or logo">+</button>
+                <button type="button" onClick={() => { setImageLibraryStatus('Choose saved artwork to add as an editable layer.'); setShowImageZone(true); }} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38bdf8]/35 bg-white/[0.045] text-xs font-black text-[#8be3ff] hover:bg-[#10364f]" title="Use Image Zone artwork">IZ</button>
+                <button type="button" onClick={() => setArtworkEditorLeftPanelOpen(true)} className="mt-2 [writing-mode:vertical-rl] rounded-full border border-white/10 bg-white/[0.04] px-2 py-3 text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 hover:text-white">Open</button>
+              </div> : <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Add elements</p>
               <button type="button" onClick={() => artworkEditorImageInputRef.current?.click()} className="mt-3 flex w-full items-center gap-3 rounded-xl border border-dashed border-[#38bdf8]/45 bg-[#0c2a40]/55 p-3 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#1686c9] text-lg font-black text-white">+</span><span><strong className="block text-xs font-black text-white">Upload image or logo</strong><span className="mt-0.5 block text-[10px] text-slate-400">Add a movable, resizable image layer</span></span></button>
+              <button type="button" onClick={() => { setImageLibraryStatus('Choose saved artwork to add as an editable layer.'); setShowImageZone(true); }} className="mt-2 flex w-full items-center gap-3 rounded-xl border border-[#38bdf8]/30 bg-white/[0.045] p-3 text-left hover:border-[#67d8ff] hover:bg-[#10364f]"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#38bdf8]/35 bg-[#071827] text-xs font-black uppercase text-[#8be3ff]">IZ</span><span><strong className="block text-xs font-black text-white">Use Image Zone artwork</strong><span className="mt-0.5 block text-[10px] text-slate-400">Add saved customer artwork to this design</span></span></button>
               {artworkEditorSide === 'front' ? <button type="button" onClick={copyArtworkEditorFrontToBack} className="mt-2 w-full rounded-xl border border-[#38bdf8]/25 bg-white/[0.04] px-3 py-2.5 text-xs font-bold text-[#9be8ff] hover:border-[#67d8ff]/60 hover:bg-[#0c2a40]">Copy Front → Back</button> : <button type="button" onClick={removeArtworkEditorBackSide} className="mt-2 w-full rounded-xl border border-red-400/20 bg-red-500/[0.06] px-3 py-2.5 text-xs font-bold text-red-200 hover:bg-red-500/10">Remove Back Side</button>}
               <div className="mt-3 space-y-2">
                 <textarea value={artworkEditorText} onChange={(event) => setArtworkEditorText(event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" placeholder="Enter replacement text" />
@@ -6385,15 +6532,23 @@ export default function Home() {
                 <button type="button" onClick={() => adjustArtworkEditorBase('center')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50">Center</button>
               </div>
               <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
-                <button type="button" onClick={() => { const next = Math.max(0.5, Number((artworkEditorZoom - 0.1).toFixed(1))); setArtworkEditorZoom(next); artworkEditorCanvasRef.current?.setZoom(next); artworkEditorCanvasRef.current?.requestRenderAll(); }} className="rounded-lg py-2 text-sm font-black hover:bg-white/10">−</button>
-                <button type="button" onClick={() => { setArtworkEditorZoom(1); artworkEditorCanvasRef.current?.setViewportTransform([1, 0, 0, 1, 0, 0]); artworkEditorCanvasRef.current?.requestRenderAll(); }} className="rounded-lg py-2 text-xs font-bold hover:bg-white/10">{Math.round(artworkEditorZoom * 100)}%</button>
-                <button type="button" onClick={() => { const next = Math.min(2.5, Number((artworkEditorZoom + 0.1).toFixed(1))); setArtworkEditorZoom(next); artworkEditorCanvasRef.current?.setZoom(next); artworkEditorCanvasRef.current?.requestRenderAll(); }} className="rounded-lg py-2 text-sm font-black hover:bg-white/10">+</button>
+                <button type="button" onClick={() => setArtworkEditorCanvasZoom(artworkEditorZoom - 0.1)} className="rounded-lg py-2 text-sm font-black hover:bg-white/10">−</button>
+                <button type="button" onClick={resetArtworkEditorCanvasZoom} className="rounded-lg py-2 text-xs font-bold hover:bg-white/10">{Math.round(artworkEditorZoom * 100)}%</button>
+                <button type="button" onClick={() => setArtworkEditorCanvasZoom(artworkEditorZoom + 0.1)} className="rounded-lg py-2 text-sm font-black hover:bg-white/10">+</button>
               </div>
               <p className="mt-2 text-[10px] leading-4 text-slate-500">Hold Alt and drag the canvas to pan while zoomed.</p>
               <div className="mt-6 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/55 p-3 text-xs leading-5 text-slate-300"><strong className="text-[#8be3ff]">Next phase:</strong> smart removal, background replacement, recoloring, and restoration through Cloudinary.</div>
+              </div>}
             </aside>
             <main className="relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-5">
-              <div ref={artworkEditorViewportRef} className="relative max-h-full max-w-full overflow-auto rounded-lg border border-[#67d8ff]/35 bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)]"><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute left-0 top-0 z-20 h-4 w-full border-b border-sky-400/40 bg-[repeating-linear-gradient(90deg,rgba(14,165,233,.75)_0_1px,transparent_1px_10px)] bg-slate-950/75" /><div className="absolute left-0 top-0 z-20 h-full w-4 border-r border-sky-400/40 bg-[repeating-linear-gradient(0deg,rgba(14,165,233,.75)_0_1px,transparent_1px_10px)] bg-slate-950/75" /><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}</div>
+              <div className="relative max-h-full max-w-full overflow-visible pl-5 pt-5">
+                {artworkEditorShowGuides && artworkEditorSource ? <>
+                  <div className="pointer-events-none absolute left-5 right-0 top-0 z-20 h-4 rounded-t border border-b-0 border-sky-400/35 bg-[repeating-linear-gradient(90deg,rgba(14,165,233,.65)_0_1px,transparent_1px_10px)] bg-slate-950/75" />
+                  <div className="pointer-events-none absolute bottom-0 left-0 top-5 z-20 w-4 rounded-l border border-r-0 border-sky-400/35 bg-[repeating-linear-gradient(0deg,rgba(14,165,233,.65)_0_1px,transparent_1px_10px)] bg-slate-950/75" />
+                  <span className="pointer-events-none absolute left-1/2 top-0 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#38bdf8]/40 bg-[#061524]/95 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-[#9be8ff] shadow-[0_0_24px_rgba(14,165,233,0.22)]">Artboard {formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight)}</span>
+                </> : null}
+                <div ref={artworkEditorViewportRef} className="relative max-h-full max-w-full overflow-auto rounded-lg border border-[#67d8ff]/35 bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)]"><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}</div>
+              </div>
               <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#02070d]/75 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{artworkEditorSide} side · Drag handles to resize · Double-click text to edit</span>
             </main>
             <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-[#07131f] p-4">
@@ -6435,22 +6590,34 @@ export default function Home() {
 
       {showAiImageEditor ? (() => {
         const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
-        const quickPrompts = aiEditAction === 'remove' ? ['text', 'small mark in the upper-right corner', 'background clutter', 'person'] : aiEditAction === 'background' ? ['clean white studio background', 'subtle dark blue gradient', 'outdoor storefront wall'] : aiEditAction === 'recolor' ? ['logo', 'background', 'main graphic'] : aiEditAction === 'replace' ? ['old logo => new circular logo', 'left arrow => right arrow', 'red shape => blue shape'] : [];
+        const aiTools = [
+          { id: 'quality-check', title: 'Check Print Quality', tag: 'No credits', description: 'Review size, ratio, and estimated print resolution before editing.' },
+          { id: 'restore', title: 'Enhance Artwork', tag: 'Cloudinary AI', description: 'Sharpen edges and clean compression for a better production proof.' },
+          { id: 'remove-background', title: 'Remove Background', tag: 'Cloudinary AI', description: 'Isolate the main art and create a transparent PNG proof.' },
+          { id: 'remove', title: 'Clean Up / Remove', tag: 'Cloudinary AI', description: 'Remove unwanted marks, text, objects, or background clutter.' },
+          { id: 'background', title: 'Replace Background', tag: 'Cloudinary AI', description: 'Generate a new background behind the artwork.' },
+          { id: 'recolor', title: 'Recolor Artwork', tag: 'Cloudinary AI', description: 'Change the color of a described logo, object, or design area.' },
+          { id: 'replace', title: 'Replace Object', tag: 'Cloudinary AI', description: 'Swap one described object for another while preserving layout.' }
+        ] as const;
+        const activeAiTool = aiTools.find((tool) => tool.id === aiEditAction) || aiTools[1];
+        const promptRequired = !['restore', 'remove-background', 'quality-check'].includes(aiEditAction);
+        const quickPrompts = aiEditAction === 'remove' ? ['phone number', 'old date', 'small mark in the corner', 'background clutter'] : aiEditAction === 'background' ? ['clean white studio background', 'subtle dark blue gradient', 'outdoor storefront wall'] : aiEditAction === 'recolor' ? ['logo', 'background', 'main graphic', 'red text'] : aiEditAction === 'replace' ? ['old phone number => new phone number', 'left arrow => right arrow', 'red shape => blue shape'] : [];
         return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#01050a]/90 p-4 backdrop-blur-lg">
           <section className="flex max-h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_40px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.2)]">
             <header className="flex items-center gap-4 border-b border-white/10 bg-[#071522] px-6 py-5">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-xl shadow-[0_0_28px_rgba(14,165,233,0.2)]">✦</span>
-              <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Creative Lab · Cloudinary</p><h2 className="mt-1 text-2xl font-black">AI Artwork Edit</h2><p className="mt-1 text-xs text-slate-400">Generate a temporary proof, then save it as a new image. Your original stays untouched.</p></div>
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-sm font-black shadow-[0_0_28px_rgba(14,165,233,0.2)]">AI</span>
+              <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue AI Studio · Cloudinary powered</p><h2 className="mt-1 text-2xl font-black">Artwork Assistant</h2><p className="mt-1 text-xs text-slate-400">Check, clean up, enhance, or create a new proof. Original artwork stays untouched.</p></div>
               <button type="button" disabled={isAiEditing} onClick={() => setShowAiImageEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-6">
               <div className="grid gap-5 lg:grid-cols-[1fr_1fr_390px]">
                 <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Original</p><div className="flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white">{source ? <img src={source.dataUrl} alt="Original artwork" className="max-h-full max-w-full object-contain" /> : null}</div><p className="mt-2 truncate text-xs text-slate-400">{source?.name}</p></div>
                 <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">AI proof</p><div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-[#38bdf8]/25 bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.12),transparent_65%)]">{aiEditPreview ? <img src={aiEditPreview.dataUrl} alt="AI edited proof" className="max-h-full max-w-full object-contain" /> : <div className="max-w-52 text-center"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[#0c2a40] text-2xl text-[#67d8ff]">✦</span><p className="mt-4 text-sm font-bold text-slate-300">Your generated proof will appear here</p></div>}{isAiEditing ? <div className="absolute inset-0 flex items-center justify-center bg-[#04101c]/80"><div className="text-center"><span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-[#67d8ff]/25 border-t-[#67d8ff]" /><p className="mt-3 text-xs font-bold text-[#a9ecff]">Working on your proof...</p></div></div> : null}</div></div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
-                  <label className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Cloudinary tool</label><select value={aiEditAction} onChange={(event) => { setAiEditAction(event.target.value as typeof aiEditAction); setAiEditPrompt(''); setAiEditPreview(null); }} className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-[#0a1928] px-3 text-sm font-bold text-white outline-none focus:border-[#38bdf8]"><option value="restore">Restore and sharpen</option><option value="remove-background">Remove background</option><option value="remove">Remove object or text</option><option value="background">Generate new background</option><option value="recolor">Recolor an object</option><option value="replace">Replace an object</option></select>
-                  <label className="text-xs font-black uppercase tracking-[0.14em] text-[#8be3ff]">What should Hue AI change?</label>
-                  {!['restore', 'remove-background'].includes(aiEditAction) ? <textarea value={aiEditPrompt} onChange={(event) => setAiEditPrompt(event.target.value)} maxLength={500} rows={4} placeholder={aiEditAction === 'replace' ? 'Use: what to replace => what should replace it' : aiEditAction === 'recolor' ? 'Describe the object to recolor, such as: logo' : aiEditAction === 'background' ? 'Describe the new background' : 'Describe exactly what should be removed'} className="mt-3 w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" /> : <p className="mt-3 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/35 p-3 text-xs leading-5 text-slate-300">{aiEditAction === 'restore' ? 'Cloudinary will reduce compression artifacts, sharpen edges, and improve the image.' : 'Cloudinary will isolate the main foreground and create a transparent background.'}</p>}
+                <div className="rounded-2xl border border-[#38bdf8]/20 bg-[#061524]/85 p-4 shadow-[0_0_34px_rgba(14,165,233,0.08)]">
+                  <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Choose a Hue AI tool</p><h3 className="mt-1 text-lg font-black">{activeAiTool.title}</h3></div><span className="rounded-full border border-[#38bdf8]/25 bg-[#0c2a40] px-2.5 py-1 text-[9px] font-black uppercase text-[#9be8ff]">{activeAiTool.tag}</span></div>
+                  <div className="mt-4 grid grid-cols-1 gap-2">{aiTools.map((tool) => <button key={tool.id} type="button" onClick={() => { setAiEditAction(tool.id); setAiEditPrompt(''); setAiEditPreview(null); setAiEditStatus(tool.id === 'quality-check' ? 'Run a print-quality check before spending AI credits.' : `Ready for ${tool.title}. Your original artwork will remain untouched.`); }} className={`rounded-xl border p-3 text-left transition ${aiEditAction === tool.id ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_22px_rgba(14,165,233,0.16)]' : 'border-white/10 bg-white/[0.035] hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}><span className="flex items-center justify-between gap-2"><strong className="text-xs font-black text-white">{tool.title}</strong><span className="text-[9px] font-black uppercase text-slate-500">{tool.tag}</span></span><span className="mt-1 block text-[10px] leading-4 text-slate-400">{tool.description}</span></button>)}</div>
+                  <label className="mt-5 block text-xs font-black uppercase tracking-[0.14em] text-[#8be3ff]">{promptRequired ? 'What should Hue AI change?' : 'How this tool works'}</label>
+                  {promptRequired ? <textarea value={aiEditPrompt} onChange={(event) => setAiEditPrompt(event.target.value)} maxLength={500} rows={4} placeholder={aiEditAction === 'replace' ? 'Use: what to replace => what should replace it' : aiEditAction === 'recolor' ? 'Describe the object to recolor, such as: logo' : aiEditAction === 'background' ? 'Describe the new background' : 'Describe exactly what should be removed'} className="mt-3 w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" /> : <p className="mt-3 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/35 p-3 text-xs leading-5 text-slate-300">{aiEditAction === 'restore' ? 'Cloudinary will reduce compression artifacts, sharpen edges, and improve the image.' : aiEditAction === 'remove-background' ? 'Cloudinary will isolate the main foreground and create a transparent background.' : 'Hue Studio will check the saved image dimensions, selected print size, aspect ratio, and estimated DPI without changing the artwork.'}</p>}
                   {aiEditAction === 'recolor' ? <label className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] font-black uppercase text-slate-400">New color<input type="color" value={aiEditTargetColor} onChange={(event) => setAiEditTargetColor(event.target.value)} className="h-9 w-14 bg-transparent" /></label> : null}
                   {quickPrompts.length ? <><p className="mt-4 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Quick instructions</p><div className="mt-2 flex flex-wrap gap-2">{quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setAiEditPrompt(prompt)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2.5 py-2 text-left text-[11px] leading-4 text-slate-300 hover:border-[#38bdf8]/50 hover:text-white">{prompt}</button>)}</div></> : null}
                   <label className="mt-5 block text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Proof quality</label>
@@ -6463,8 +6630,8 @@ export default function Home() {
             <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4">
               <p className={`min-w-0 flex-1 text-xs leading-5 ${aiEditStatus.includes('CLOUDINARY_') || aiEditStatus.toLowerCase().includes('could not') || aiEditStatus.toLowerCase().includes('failed') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{aiEditStatus}</p>
               <button type="button" disabled={isAiEditing} onClick={() => setShowAiImageEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
-              <button type="button" disabled={isAiEditing || (!['restore', 'remove-background'].includes(aiEditAction) && aiEditPrompt.trim().length < 2)} onClick={generateAiImageEdit} className="rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:bg-[#10364f] disabled:cursor-not-allowed disabled:opacity-35">{aiEditPreview ? 'Generate again' : 'Generate edit'}</button>
-              <button type="button" disabled={isAiEditing || !aiEditPreview} onClick={saveAiImageEdit} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Save as new image</button>
+              <button type="button" disabled={isAiEditing || (promptRequired && aiEditPrompt.trim().length < 2)} onClick={generateAiImageEdit} className="rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:bg-[#10364f] disabled:cursor-not-allowed disabled:opacity-35">{aiEditAction === 'quality-check' ? 'Run check' : aiEditPreview ? 'Generate again' : 'Generate edit'}</button>
+              <button type="button" disabled={isAiEditing || !aiEditPreview || aiEditAction === 'quality-check'} onClick={saveAiImageEdit} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Save as new image</button>
             </footer>
           </section>
         </div>;
