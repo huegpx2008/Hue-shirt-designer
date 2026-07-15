@@ -20,6 +20,7 @@ type NewArtworkPresetGroup = { id: string; label: string; description: string; s
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type CanvaImportStatus = { configured: boolean; authUrl?: string; missing?: string[]; message?: string };
 type BannerOrderItem = { id: string; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState };
 type CoroArtworkQuantityMap = Record<string, number>;
 type CoroArtworkSide = 'front' | 'back';
@@ -1339,6 +1340,9 @@ export default function Home() {
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
+  const [showCanvaImport, setShowCanvaImport] = useState(false);
+  const [canvaImportStatus, setCanvaImportStatus] = useState<CanvaImportStatus | null>(null);
+  const [isCanvaImportLoading, setIsCanvaImportLoading] = useState(false);
   const [showAiImageEditor, setShowAiImageEditor] = useState(false);
   const [aiEditPrompt, setAiEditPrompt] = useState('');
   const [aiEditAction, setAiEditAction] = useState<'restore' | 'remove-background' | 'remove' | 'background' | 'recolor' | 'replace' | 'quality-check'>('restore');
@@ -4280,6 +4284,26 @@ export default function Home() {
     artworkEditorObjectUrlsRef.current = [];
   }, [showArtworkEditor]);
 
+  const openCanvaImport = async () => {
+    setShowCanvaImport(true);
+    setIsCanvaImportLoading(true);
+    setCanvaImportStatus(null);
+    setImageLibraryStatus('Checking Canva import connection...');
+    try {
+      const response = await fetch('/api/canva/status', { cache: 'no-store' });
+      const payload = await response.json() as CanvaImportStatus;
+      setCanvaImportStatus(payload);
+      setImageLibraryStatus(payload.configured
+        ? 'Canva import is ready to connect.'
+        : `Canva import is waiting on setup${payload.missing?.length ? `: ${payload.missing.join(', ')}` : '.'}`);
+    } catch (error) {
+      setCanvaImportStatus({ configured: false, message: error instanceof Error ? error.message : 'Could not check Canva import status.' });
+      setImageLibraryStatus('Could not check Canva import status.');
+    } finally {
+      setIsCanvaImportLoading(false);
+    }
+  };
+
   const openAiEditor = () => {
     const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
     if (!source || !canPlaceImageZoneItem(source)) {
@@ -6801,6 +6825,7 @@ export default function Home() {
               <option>CORO Orders</option>
             </select>
             <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</label>
+            <button type="button" onClick={openCanvaImport} className="h-10 rounded-xl border border-[#22d3ee]/35 bg-[#083044] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#0c3b55]">Import Canva</button>
             <button type="button" onClick={() => { setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Build New</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit Artwork</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={openAiEditor} className="h-10 rounded-xl border border-violet-300/30 bg-violet-500/10 px-4 text-xs font-black uppercase text-violet-100 hover:border-violet-300/60 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-35">AI Tools</button>
@@ -6824,7 +6849,10 @@ export default function Home() {
               <div>
                 <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/20 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.15)]">+</span><p className="mt-5 text-lg font-black text-white">Your artwork vault is ready</p>
                 <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>
-                <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="mt-5 inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</label>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</label>
+                  <button type="button" onClick={openCanvaImport} className="inline-flex rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Import from Canva</button>
+                </div>
               </div>
             </div> : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {imageZoneItems.map((item) => {
@@ -6858,6 +6886,47 @@ export default function Home() {
                 if (!item) return;
                 await useImageZoneItem(item);
               }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Use selected artwork</button>
+            </div>
+          </div>
+        </section>
+      </div> : null}
+
+      {showCanvaImport ? <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#02070d]/82 p-4 backdrop-blur-md">
+        <section className="w-[min(760px,96vw)] overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#071522] text-white shadow-[0_36px_120px_rgba(0,0,0,0.75),0_0_70px_rgba(14,165,233,0.18)]">
+          <header className="flex items-start justify-between gap-4 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_34%),#081827] px-6 py-5">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#67d8ff]">Hue Studio Connector</p>
+              <h2 className="mt-1 text-2xl font-black tracking-tight">Import from Canva</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Connect a customer Canva account, choose one of their saved designs, then save an exported print file into the Hue artwork library for ordering.</p>
+            </div>
+            <button type="button" onClick={() => setShowCanvaImport(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close</button>
+          </header>
+          <div className="grid gap-4 px-6 py-6 md:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+              <h3 className="text-sm font-black uppercase tracking-[0.18em] text-[#8be3ff]">How it will work</h3>
+              <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
+                <p><strong className="text-white">1. Connect Canva.</strong> The customer signs in with Canva and approves Hue Studio.</p>
+                <p><strong className="text-white">2. Pick a design.</strong> Hue Studio lists their available Canva designs with previews.</p>
+                <p><strong className="text-white">3. Save to Image Zone.</strong> We export a print-ready copy and store it in Supabase so it stays tied to their account and order.</p>
+              </div>
+              <p className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100">Canva artwork will come into Hue Studio as an exported file, not editable Canva layers. They can still place, fit, stretch, and order it like any uploaded artwork.</p>
+            </div>
+            <div className="rounded-2xl border border-[#38bdf8]/20 bg-[#06111d] p-5">
+              <h3 className="text-sm font-black uppercase tracking-[0.18em] text-[#8be3ff]">Connection status</h3>
+              {isCanvaImportLoading ? <p className="mt-4 text-sm text-slate-300">Checking Canva setup...</p> : canvaImportStatus?.configured ? <>
+                <p className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm font-bold text-emerald-200">Canva app keys are connected.</p>
+                <a href={canvaImportStatus.authUrl || '/api/canva/connect/start'} className="mt-4 flex h-12 items-center justify-center rounded-xl bg-[#1686c9] text-sm font-black uppercase text-white shadow-[0_14px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Connect Canva Account</a>
+              </> : <>
+                <p className="mt-4 rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/70 p-3 text-sm leading-5 text-slate-300">{canvaImportStatus?.message || 'Canva import is ready in Hue Studio, but the Canva developer app keys still need to be added.'}</p>
+                {canvaImportStatus?.missing?.length ? <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Needed env vars</p>
+                  <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                    {canvaImportStatus.missing.map((item) => <li key={item} className="font-mono">{item}</li>)}
+                  </ul>
+                </div> : null}
+                <button type="button" disabled className="mt-4 flex h-12 w-full cursor-not-allowed items-center justify-center rounded-xl bg-slate-700/70 text-sm font-black uppercase text-slate-400">Waiting on Canva keys</button>
+              </>}
+              <button type="button" onClick={openCanvaImport} className="mt-3 w-full rounded-xl border border-white/15 bg-white/[0.05] px-4 py-3 text-xs font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45 hover:bg-white/[0.09]">Recheck setup</button>
             </div>
           </div>
         </section>
