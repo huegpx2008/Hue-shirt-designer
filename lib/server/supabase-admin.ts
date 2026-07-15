@@ -62,3 +62,30 @@ export const calculatePromoDiscount = (promo: PromoCodeRecord, subtotal: number)
 };
 
 export const getStorageBucket = () => storageBucket;
+
+const encodeStoragePath = (path: string) => path.split('/').map((part) => encodeURIComponent(part)).join('/');
+
+export const getStorageSignedUrl = async (path: string, expiresIn = 3600) => {
+  const payload = await supabaseAdminFetch(`/storage/v1/object/sign/${encodeURIComponent(storageBucket)}/${encodeStoragePath(path)}`, {
+    method: 'POST',
+    body: JSON.stringify({ expiresIn })
+  }) as { signedURL?: string; signedUrl?: string };
+  const signedUrl = payload.signedURL || payload.signedUrl;
+  if (!signedUrl) throw new Error('Supabase did not return a signed artwork preview URL.');
+  if (/^https?:\/\//i.test(signedUrl)) return signedUrl;
+  if (signedUrl.startsWith('/storage/v1/')) return `${supabaseUrl}${signedUrl}`;
+  if (signedUrl.startsWith('/object/')) return `${supabaseUrl}/storage/v1${signedUrl}`;
+  return `${supabaseUrl}/storage/v1/${signedUrl.replace(/^\/+/, '')}`;
+};
+
+export const moveStorageObject = async (sourcePath: string, destinationPath: string) => {
+  if (!sourcePath || !destinationPath) throw new Error('A source and destination storage path are required.');
+  await supabaseAdminFetch('/storage/v1/object/move', {
+    method: 'POST',
+    body: JSON.stringify({
+      bucketId: storageBucket,
+      sourceKey: sourcePath,
+      destinationKey: destinationPath
+    })
+  });
+};

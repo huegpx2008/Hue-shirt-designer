@@ -44,6 +44,7 @@ type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?:
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
 type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; previewUrl?: string };
+type CartProductionArtwork = { id: string; label: string; quantity: number; sizeLabel: string; sheetLabel?: string; frontName: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
 type CartItem = {
   id: string;
   addedAt: string;
@@ -55,6 +56,7 @@ type CartItem = {
   optionSummary: string[];
   price: { total: number | null; each: number | null; currency: string; sheetCount?: number; pricePerSheet?: number | null };
   artworkFiles: CartArtworkFile[];
+  productionBreakdown: CartProductionArtwork[];
   productionSummary: string[];
   customer: { userId?: string; email?: string; checkoutMode: 'account' | 'quick' };
 };
@@ -116,6 +118,7 @@ const SUPABASE_LIBRARY_PREFIX = 'test-library';
 const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
+const ORDER_CONFIRMATION_STORAGE_KEY = 'hue-order-confirmation';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
 
@@ -124,6 +127,11 @@ const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   artworkFiles: item.artworkFiles.map((file) => ({
     ...file,
     previewUrl: file.previewUrl?.startsWith('data:') ? undefined : file.previewUrl
+  })),
+  productionBreakdown: (item.productionBreakdown || []).map((artwork) => ({
+    ...artwork,
+    frontPreviewUrl: artwork.frontPreviewUrl?.startsWith('data:') ? undefined : artwork.frontPreviewUrl,
+    backPreviewUrl: artwork.backPreviewUrl?.startsWith('data:') ? undefined : artwork.backPreviewUrl
   }))
 }));
 
@@ -1259,6 +1267,14 @@ const formatSignPrice = (value: number | string | undefined, currency = 'USD') =
   return value || 'Request pricing';
 };
 
+const createTestOrderNumber = (timestamp: number) => {
+  const orderDate = new Date(timestamp);
+  const dateToken = `${orderDate.getFullYear()}${String(orderDate.getMonth() + 1).padStart(2, '0')}${String(orderDate.getDate()).padStart(2, '0')}`;
+  const timeToken = `${String(orderDate.getHours()).padStart(2, '0')}${String(orderDate.getMinutes()).padStart(2, '0')}${String(orderDate.getSeconds()).padStart(2, '0')}`;
+  const uniqueToken = Math.random().toString(36).slice(2, 5).toUpperCase().padEnd(3, 'X');
+  return `TEST-${dateToken}-${timeToken}-${uniqueToken}`;
+};
+
 const numericPrice = (value: number | string | undefined) => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -1611,6 +1627,7 @@ export default function Home() {
   const [checkoutPromoInput, setCheckoutPromoInput] = useState('');
   const [checkoutPromo, setCheckoutPromo] = useState<AppliedPromo | null>(null);
   const [isCheckoutPromoLoading, setIsCheckoutPromoLoading] = useState(false);
+  const [isSubmittingTestOrder, setIsSubmittingTestOrder] = useState(false);
   const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
   const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
   const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
@@ -1671,6 +1688,15 @@ export default function Home() {
     } catch {
       window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
     }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('open') !== 'account') return;
+    setShowCustomerLogin(true);
+    params.delete('open');
+    const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', cleanUrl);
   }, []);
 
   useEffect(() => {
@@ -2183,6 +2209,7 @@ export default function Home() {
     }
   };
   const sendTestOrderEmail = async (order: TestOrder) => {
+    let submittedOrder = order;
     try {
       setCheckoutStatus(`Test order ${order.orderNumber} submitted. Sending order email to Hue...`);
       const orderForEmail = getPersistableTestOrders([order])[0];
@@ -2191,16 +2218,23 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order: orderForEmail })
       });
-      const payload = await response.json().catch(() => ({})) as { error?: string };
+      const payload = await response.json().catch(() => ({})) as { error?: string; order?: TestOrder };
+      if (payload.order) {
+        submittedOrder = payload.order;
+        setTestOrders((current) => current.map((entry) => entry.orderNumber === submittedOrder.orderNumber ? submittedOrder : entry));
+        setLastTestOrder(submittedOrder);
+      }
       if (!response.ok) throw new Error(payload.error || 'The order email could not be sent.');
       setCheckoutStatus(`Test order ${order.orderNumber} submitted and emailed to Hue. No payment was collected.`);
+      return submittedOrder;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'The order email could not be sent.';
       setCheckoutStatus(`Test order ${order.orderNumber} was saved, but email needs attention: ${message}`);
+      return submittedOrder;
     }
   };
 
-  const submitTestOrder = () => {
+  const submitTestOrder = async () => {
     const contactName = checkoutContact.name.trim();
     const contactEmail = checkoutContact.email.trim();
     if (!contactName || !contactEmail) {
@@ -2216,10 +2250,12 @@ export default function Home() {
         return;
       }
     }
+    if (isSubmittingTestOrder) return;
+    setIsSubmittingTestOrder(true);
     const timestamp = Date.now();
     const order: TestOrder = {
       id: `test-order-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
-      orderNumber: `TEST-${timestamp.toString().slice(-6)}`,
+      orderNumber: createTestOrderNumber(timestamp),
       createdAt: new Date(timestamp).toISOString(),
       status: 'test_submitted',
       paymentMode: 'test_no_payment',
@@ -2255,9 +2291,17 @@ export default function Home() {
     setLastTestOrder(order);
     setCartItems([]);
     setShowCart(false);
-    setCheckoutStep('complete');
-    setCheckoutStatus(`Test order ${order.orderNumber} submitted. No payment was collected.`);
-    void sendTestOrderEmail(order);
+    setCheckoutStatus(`Finalizing ${order.orderNumber} and organizing production artwork...`);
+    const organizedOrder = await sendTestOrderEmail(order);
+    try {
+      const updatedHistory = [organizedOrder, ...testOrders.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)];
+      window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(getPersistableTestOrders(updatedHistory)));
+      window.sessionStorage.setItem(ORDER_CONFIRMATION_STORAGE_KEY, JSON.stringify(getPersistableTestOrders([organizedOrder])[0]));
+    } catch {
+      // The confirmation route can still use the order number if browser storage is unavailable.
+    }
+    setShowTestCheckout(false);
+    window.location.assign(`/order-confirmation?order=${encodeURIComponent(organizedOrder.orderNumber)}`);
   };
   const artworkAnalysisSummary = useMemo(() => {
     if (!artworkAnalysis) return 'No uploaded artwork analysis yet.';
@@ -5438,6 +5482,45 @@ export default function Home() {
       });
     }
 
+    const productionBreakdown: CartProductionArtwork[] = isCoroBuilder
+      ? (() => {
+          let runningQuantity = 0;
+          return coroSheetArtworkItems.map((item, index) => {
+            const quantity = Math.max(1, Number(coroArtworkQuantities[item.id] || 1));
+            const firstSheet = Math.floor(runningQuantity / Math.max(1, coroSheetLayout.signsPerSheet)) + 1;
+            const lastSheet = Math.floor((runningQuantity + quantity - 1) / Math.max(1, coroSheetLayout.signsPerSheet)) + 1;
+            runningQuantity += quantity;
+            const finalFront = artworkFiles.find((file) => file.role === `FINAL PRODUCTION — Artwork set ${index + 1} front`);
+            const finalBack = artworkFiles.find((file) => file.role === `FINAL PRODUCTION — Artwork set ${index + 1} back`);
+            return {
+              id: `${item.id}-${index}`,
+              label: `Artwork set ${index + 1}`,
+              quantity,
+              sizeLabel: `${Number(item.signWidth || signWidth)}" x ${Number(item.signHeight || signHeight)}"`,
+              sheetLabel: firstSheet === lastSheet ? `Sheet ${firstSheet}` : `Sheets ${firstSheet}-${lastSheet}`,
+              frontName: finalFront?.name || item.name,
+              frontPreviewUrl: finalFront?.storageUrl || item.storageUrl || item.dataUrl,
+              frontStoragePath: finalFront?.storagePath || item.storagePath,
+              backName: item.backDataUrl ? finalBack?.name || item.backName || `${item.name} back` : undefined,
+              backPreviewUrl: item.backDataUrl ? finalBack?.storageUrl || item.backDataUrl : undefined,
+              backStoragePath: item.backDataUrl ? finalBack?.storagePath || item.backStoragePath : undefined
+            };
+          });
+        })()
+      : signArtworkPreviewUrl
+        ? [{
+            id: `${selectedSignProduct.id}-artwork-1`,
+            label: 'Artwork set 1',
+            quantity: designerQuantity,
+            sizeLabel: `${signWidth}" x ${signHeight}"`,
+            frontName: artworkFiles.find((file) => file.role.includes('FINAL PRODUCTION') && file.role.toLowerCase().includes('front'))?.name || bannerArtworkName || `${selectedSignProduct.name} artwork`,
+            frontPreviewUrl: artworkFiles.find((file) => file.role.includes('FINAL PRODUCTION') && (file.role.toLowerCase().includes('front') || !rigidBackArtwork))?.storageUrl || signArtworkPreviewUrl,
+            frontStoragePath: artworkFiles.find((file) => file.role.includes('FINAL PRODUCTION') && (file.role.toLowerCase().includes('front') || !rigidBackArtwork))?.storagePath,
+            backName: rigidBackArtwork?.name,
+            backPreviewUrl: artworkFiles.find((file) => file.role === 'FINAL PRODUCTION — Back artwork')?.storageUrl || rigidBackArtwork?.dataUrl,
+            backStoragePath: artworkFiles.find((file) => file.role === 'FINAL PRODUCTION — Back artwork')?.storagePath || rigidBackArtwork?.storagePath
+          }]
+        : [];
     const pricePerSheet = isCoroBuilder ? signPricePerSheet : null;
     const cartItem: CartItem = {
       id: `cart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -5448,7 +5531,7 @@ export default function Home() {
       quantity: isCoroBuilder ? effectiveCoroQuantity : designerQuantity,
       sizeLabel: `${signWidth || 0}" x ${signHeight || 0}"`,
       optionSummary: [
-        getSignConfigurationText(selectedSignProduct, signValues),
+        getSignConfigurationText(selectedSignProduct, isCoroBuilder ? { ...signValues, quantity: String(effectiveCoroQuantity) } : signValues),
         isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : '',
         isBannerBuilder ? `${bannerSquareFeet.toFixed(1)} sqft` : ''
       ].filter(Boolean),
@@ -5460,6 +5543,7 @@ export default function Home() {
         pricePerSheet
       },
       artworkFiles,
+      productionBreakdown,
       productionSummary: [
         signArtworkStatusOk ? 'Artwork fit approved' : 'Artwork needs review',
         'Approved Fit/Stretch placement flattened into FINAL PRODUCTION artwork and saved to Supabase',
@@ -6916,6 +7000,26 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+              {(item.productionBreakdown || []).length > 0 ? <div className="mt-3 rounded-xl border border-[#38bdf8]/35 bg-[#071827] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.14em] text-[#62d4ff]">Quantity by artwork</p>
+                    <p className="mt-1 text-[11px] text-slate-400">Exact production count for each design</p>
+                  </div>
+                  <span className="rounded-full bg-[#0ea5e9]/20 px-2.5 py-1 text-xs font-black text-[#9be6ff]">{item.productionBreakdown.reduce((total, artwork) => total + Number(artwork.quantity || 0), 0)} total</span>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {item.productionBreakdown.map((artwork, artworkIndex) => <div key={`${item.id}-breakdown-${artwork.id || artworkIndex}`} className="flex gap-3 rounded-lg border border-white/10 bg-[#02070d]/65 p-2.5">
+                    {artwork.frontPreviewUrl ? <img src={artwork.frontPreviewUrl} alt={`${artwork.label} front`} className="h-20 w-24 shrink-0 rounded border border-white/10 bg-white object-contain" /> : <div className="flex h-20 w-24 shrink-0 items-center justify-center rounded border border-dashed border-white/20 text-[10px] text-slate-500">No preview</div>}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-black text-white">{artwork.label || `Artwork set ${artworkIndex + 1}`}</p>
+                      <p className="mt-1 text-xl font-black leading-none text-green-300">Qty {artwork.quantity}</p>
+                      <p className="mt-2 text-[11px] text-slate-300">{artwork.sizeLabel}</p>
+                      {artwork.sheetLabel ? <p className="text-[11px] text-[#9be6ff]">{artwork.sheetLabel}</p> : null}
+                    </div>
+                  </div>)}
+                </div>
+              </div> : null}
               <div className="mt-3 rounded border border-white/10 bg-white/[0.04] p-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">Attached artwork</p>
@@ -7141,6 +7245,16 @@ export default function Home() {
                       </div>
                       <p className="text-sm font-black text-green-300">{item.price.total !== null ? formatSignPrice(item.price.total, item.price.currency) : 'Needs price'}</p>
                     </div>
+                    {(item.productionBreakdown || []).length ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {item.productionBreakdown.map((artwork, artworkIndex) => <div key={`complete-breakdown-${item.id}-${artwork.id || artworkIndex}`} className="flex gap-2 rounded border border-[#38bdf8]/25 bg-[#071827] p-2">
+                        {artwork.frontPreviewUrl ? <img src={artwork.frontPreviewUrl} alt="" className="h-16 w-20 shrink-0 rounded bg-white object-contain" /> : null}
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold text-white">{artwork.label || `Artwork set ${artworkIndex + 1}`}</p>
+                          <p className="text-base font-black text-green-300">Qty {artwork.quantity}</p>
+                          <p className="text-[11px] text-slate-400">{artwork.sizeLabel}{artwork.sheetLabel ? ` / ${artwork.sheetLabel}` : ''}</p>
+                        </div>
+                      </div>)}
+                    </div> : null}
                     <div className="mt-2 space-y-1">
                       {item.artworkFiles.length ? item.artworkFiles.map((file) => <p key={`complete-file-${item.id}-${file.role}-${file.name}`} className="truncate text-xs text-slate-400">{file.role}: <span className="text-slate-200">{file.name}</span>{file.storagePath ? <span> / {file.storagePath}</span> : null}</p>) : <p className="text-xs text-amber-200">No artwork file reference attached.</p>}
                     </div>
@@ -7155,7 +7269,7 @@ export default function Home() {
               {checkoutStep !== 'contact' && checkoutStep !== 'complete' ? <button type="button" onClick={() => setCheckoutStep(checkoutStep === 'review' ? 'fulfillment' : 'contact')} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Back</button> : null}
               {checkoutStep === 'contact' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('fulfillment'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Continue</button> : null}
               {checkoutStep === 'fulfillment' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('review'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Review Order</button> : null}
-              {checkoutStep === 'review' ? <button type="button" onClick={submitTestOrder} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a]">Submit Test Order</button> : null}
+              {checkoutStep === 'review' ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : 'Submit Test Order'}</button> : null}
               {checkoutStep === 'complete' ? <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Done</button> : null}
             </div>
           </div>

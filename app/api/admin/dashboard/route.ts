@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
-import { getStorageBucket, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { getStorageBucket, getStorageSignedUrl, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
-type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string };
+type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string };
+
+const canPreviewImage = (entry: StorageEntry) => String(entry.metadata?.mimetype || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(entry.name || '');
 
 const listStorageFiles = async (prefix = '', depth = 0): Promise<StorageEntry[]> => {
   const entries = await supabaseAdminFetch(`/storage/v1/object/list/${encodeURIComponent(getStorageBucket())}`, { method: 'POST', body: JSON.stringify({ prefix, limit: 1000, offset: 0, sortBy: { column: 'created_at', order: 'desc' } }) }) as StorageEntry[];
@@ -32,7 +34,15 @@ export async function GET(request: NextRequest) {
     }, {});
     const usersPayload = results[0].status === 'fulfilled' ? results[0].value : { users: [] };
     const orders = results[1].status === 'fulfilled' ? results[1].value : [];
-    const files = results[2].status === 'fulfilled' ? results[2].value : [];
+    const rawFiles = results[2].status === 'fulfilled' ? results[2].value : [];
+    const files = await Promise.all(rawFiles.map(async (file) => {
+      if (!file.path || !canPreviewImage(file)) return file;
+      try {
+        return { ...file, preview_url: await getStorageSignedUrl(file.path) };
+      } catch {
+        return file;
+      }
+    }));
     const promos = results[3].status === 'fulfilled' ? results[3].value : [];
     return NextResponse.json({ users: usersPayload.users || [], orders, files, promos, sectionErrors });
   } catch (error) {
