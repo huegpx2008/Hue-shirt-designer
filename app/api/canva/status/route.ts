@@ -8,10 +8,12 @@ const getMissingCanvaConfig = () => {
 export async function GET() {
   const missing = getMissingCanvaConfig();
   const configured = missing.length === 0;
+  const redirectUri = process.env.CANVA_REDIRECT_URI;
+  const canvaOrigin = redirectUri ? new URL(redirectUri).origin : "";
 
   return NextResponse.json({
     configured,
-    authUrl: configured ? "/api/canva/connect/start" : undefined,
+    authUrl: configured ? new URL("/api/canva/connect/start", canvaOrigin).toString() : undefined,
     missing,
     message: configured
       ? "Canva import is ready to connect."
