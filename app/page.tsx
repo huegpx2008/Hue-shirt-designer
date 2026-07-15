@@ -57,6 +57,7 @@ type CartItem = {
   customer: { userId?: string; email?: string; checkoutMode: 'account' | 'quick' };
 };
 type CheckoutFulfillment = 'pickup' | 'direct_ship';
+type AppliedPromo = { code: string; description: string; discountType: 'percent' | 'fixed'; discountValue: number; discountAmount: number };
 type TestOrder = {
   id: string;
   orderNumber: string;
@@ -70,6 +71,7 @@ type TestOrder = {
   };
   items: CartItem[];
   subtotal: number;
+  promotion?: { code: string; description: string; discountAmount: number };
   shipping?: { amount: number; label: string };
   tax: { rate: number; amount: number; label: string };
   total: number;
@@ -1354,6 +1356,7 @@ export default function Home() {
   const [isCanvaImportLoading, setIsCanvaImportLoading] = useState(false);
   const [canvaDesigns, setCanvaDesigns] = useState<CanvaDesign[]>([]);
   const [isCanvaDesignsLoading, setIsCanvaDesignsLoading] = useState(false);
+  const [canvaDesignSearch, setCanvaDesignSearch] = useState('');
   const [canvaDesignStatus, setCanvaDesignStatus] = useState('');
   const [importingCanvaDesignId, setImportingCanvaDesignId] = useState<string | null>(null);
   const [showAiImageEditor, setShowAiImageEditor] = useState(false);
@@ -1445,6 +1448,9 @@ export default function Home() {
   const [checkoutStatus, setCheckoutStatus] = useState('');
   const [checkoutContact, setCheckoutContact] = useState({ name: '', organization: '', email: '', phone: '', notes: '' });
   const [checkoutTaxExempt, setCheckoutTaxExempt] = useState(false);
+  const [checkoutPromoInput, setCheckoutPromoInput] = useState('');
+  const [checkoutPromo, setCheckoutPromo] = useState<AppliedPromo | null>(null);
+  const [isCheckoutPromoLoading, setIsCheckoutPromoLoading] = useState(false);
   const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
   const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
   const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
@@ -1949,9 +1955,11 @@ export default function Home() {
   const checkoutShipState = checkoutAddress.state.trim().toUpperCase();
   const checkoutIsGeorgiaOrder = checkoutFulfillment === 'pickup' || checkoutShipState === 'GA' || checkoutShipState === 'GEORGIA';
   const checkoutTaxRate = checkoutTaxExempt || !checkoutIsGeorgiaOrder ? 0 : GEORGIA_SALES_TAX_RATE;
-  const checkoutTaxableAmount = cartSubtotal + checkoutShippingAmount;
+  const checkoutDiscountAmount = Math.min(cartSubtotal, checkoutPromo?.discountAmount || 0);
+  const checkoutDiscountedSubtotal = Math.max(0, cartSubtotal - checkoutDiscountAmount);
+  const checkoutTaxableAmount = checkoutDiscountedSubtotal + checkoutShippingAmount;
   const checkoutTaxAmount = Number((checkoutTaxableAmount * checkoutTaxRate).toFixed(2));
-  const checkoutOrderTotal = Number((cartSubtotal + checkoutShippingAmount + checkoutTaxAmount).toFixed(2));
+  const checkoutOrderTotal = Number((checkoutDiscountedSubtotal + checkoutShippingAmount + checkoutTaxAmount).toFixed(2));
   const checkoutTaxLabel = checkoutTaxExempt ? 'Tax exempt' : checkoutIsGeorgiaOrder ? `${GEORGIA_SALES_TAX_LABEL} (${(GEORGIA_SALES_TAX_RATE * 100).toFixed(2)}%)` : 'No GA tax for out-of-state shipping';
   const customerOrderHistory = testOrders.filter((order) => {
     const sessionUserId = customerSession?.user?.id;
@@ -1975,7 +1983,31 @@ export default function Home() {
     }));
     setCheckoutStep('contact');
     setCheckoutStatus('');
+    setCheckoutPromoInput('');
+    setCheckoutPromo(null);
     setShowTestCheckout(true);
+  };
+  const applyCheckoutPromo = async () => {
+    const code = checkoutPromoInput.trim().toUpperCase();
+    if (!code) {
+      setCheckoutStatus('Enter a promo code first.');
+      return;
+    }
+    setIsCheckoutPromoLoading(true);
+    setCheckoutStatus(`Checking promo code ${code}...`);
+    try {
+      const response = await fetch('/api/promo/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, subtotal: cartSubtotal }) });
+      const payload = await response.json() as AppliedPromo & { error?: string };
+      if (!response.ok) throw new Error(payload.error || 'The promo code could not be applied.');
+      setCheckoutPromo(payload);
+      setCheckoutPromoInput(payload.code);
+      setCheckoutStatus(`${payload.code} applied: ${formatSignPrice(payload.discountAmount, 'USD')} off this order.`);
+    } catch (error) {
+      setCheckoutPromo(null);
+      setCheckoutStatus(error instanceof Error ? error.message : 'The promo code could not be applied.');
+    } finally {
+      setIsCheckoutPromoLoading(false);
+    }
   };
   const sendTestOrderEmail = async (order: TestOrder) => {
     try {
@@ -2040,6 +2072,7 @@ export default function Home() {
       },
       items: cartItems,
       subtotal: cartSubtotal,
+      promotion: checkoutPromo ? { code: checkoutPromo.code, description: checkoutPromo.description, discountAmount: checkoutDiscountAmount } : undefined,
       shipping: { amount: checkoutShippingAmount, label: checkoutShippingLabel },
       tax: { rate: checkoutTaxRate, amount: checkoutTaxAmount, label: checkoutTaxLabel },
       total: checkoutOrderTotal,
@@ -4316,6 +4349,12 @@ export default function Home() {
   };
 
   const importCanvaDesign = async (design: CanvaDesign) => {
+    if (isSupabaseStorageConfigured && !customerSession?.access_token) {
+      const message = 'Sign in to your Hue Studio account before importing so this Canva design is saved to the correct Image Zone library.';
+      setCanvaDesignStatus(message);
+      setImageLibraryStatus(message);
+      return;
+    }
     setImportingCanvaDesignId(design.id);
     setCanvaDesignStatus(`Exporting ${design.title} from Canva...`);
     try {
@@ -4340,26 +4379,38 @@ export default function Home() {
         source: 'local',
         mimeType: payload.mimeType || 'image/png'
       };
-      setImageZoneItems((previous) => [item, ...previous]);
-      setSelectedImageZoneId(localId);
-      setImageLibraryStatus(`${fileName} imported from Canva.`);
-      setCanvaDesignStatus(`${fileName} imported into Image Zone.`);
-      setShowCanvaImport(false);
-      setShowImageZone(true);
-
+      let savedItem = item;
       if (isSupabaseStorageConfigured) {
         const file = await dataUrlToFile(payload.dataUrl, fileName, payload.mimeType || 'image/png');
-        const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
-        setImageZoneItems((previous) => previous.map((entry) => entry.id === localId ? {
-          ...entry,
+        let activeSession = customerSession;
+        if (activeSession?.expires_at && (activeSession.expires_at * 1000) <= Date.now() + 60_000) {
+          activeSession = await refreshCurrentCustomerSession();
+          if (!activeSession) throw new Error('Your Hue Studio session expired. Sign in again, then retry this Canva import.');
+        }
+        let storageInfo: Awaited<ReturnType<typeof uploadArtworkFileToSupabase>>;
+        try {
+          storageInfo = await uploadArtworkFileToSupabase(file, activeSession);
+        } catch (storageError) {
+          const storageMessage = storageError instanceof Error ? storageError.message : '';
+          if (!isSupabaseSessionExpiredError(storageMessage)) throw storageError;
+          activeSession = await refreshCurrentCustomerSession();
+          if (!activeSession) throw new Error('Your Hue Studio session expired. Sign in again, then retry this Canva import.');
+          storageInfo = await uploadArtworkFileToSupabase(file, activeSession);
+        }
+        savedItem = {
+          ...item,
           id: storageInfo.storagePath,
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
           source: 'supabase'
-        } : entry));
-        setSelectedImageZoneId(storageInfo.storagePath);
-        setImageLibraryStatus(`${fileName} imported from Canva and saved to the Hue artwork library.`);
+        };
       }
+      setImageZoneItems((previous) => [savedItem, ...previous.filter((entry) => entry.id !== localId && entry.id !== savedItem.id)]);
+      setSelectedImageZoneId(savedItem.id);
+      setImageLibraryStatus(`${fileName} imported from Canva${savedItem.source === 'supabase' ? ' and saved to your Hue artwork library' : ''}.`);
+      setCanvaDesignStatus(`${fileName} imported into Image Zone.`);
+      setShowCanvaImport(false);
+      setShowImageZone(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not import the Canva design.';
       setCanvaDesignStatus(message);
@@ -4392,6 +4443,27 @@ export default function Home() {
       setIsCanvaImportLoading(false);
     }
   };
+
+  const connectCanvaAccount = () => {
+    const authUrl = canvaImportStatus?.authUrl || '/api/canva/connect/start';
+    const popup = window.open(authUrl, 'hue-canva-connect', 'popup=yes,width=720,height=760,resizable=yes,scrollbars=yes');
+    if (!popup) {
+      setCanvaDesignStatus('Your browser blocked the Canva connection window. Allow pop-ups for Hue Studio and try again.');
+      return;
+    }
+    setCanvaDesignStatus('Finish connecting Canva in the new window. Hue Studio will stay open here.');
+    popup.focus();
+  };
+
+  useEffect(() => {
+    const handleCanvaConnection = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== 'hue-canva-connected') return;
+      setCanvaDesignStatus('Canva connected. Loading your designs...');
+      void openCanvaImport();
+    };
+    window.addEventListener('message', handleCanvaConnection);
+    return () => window.removeEventListener('message', handleCanvaConnection);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -5218,6 +5290,7 @@ export default function Home() {
   };
 
   const visibleStoreProducts = STORE_PRODUCTS.filter((product) => product.category === storeCategory);
+  const filteredCanvaDesigns = canvaDesigns.filter((design) => design.title.toLowerCase().includes(canvaDesignSearch.trim().toLowerCase()));
   const filteredCoroSizeOptions = CORO_SIZE_OPTIONS.filter((option) => {
     const query = coroSizeSearch.trim().toLowerCase();
     if (!query) return true;
@@ -5399,7 +5472,7 @@ export default function Home() {
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
             {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') setShowImageZone(true); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
-            {isProductionBuilder ? <button type="button" onClick={openCanvaImport} className="rounded border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-2 font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.34),0_0_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Connect Canva</button> : null}
+            {isProductionBuilder ? <button type="button" onClick={openCanvaImport} className="rounded border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-2 font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.34),0_0_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva</button> : null}
             <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
             <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart{cartItems.length ? ` (${cartItems.length})` : ''}</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
@@ -5407,7 +5480,7 @@ export default function Home() {
         </div>
       </header>
 
-      {storeView === 'store' && !showImageZone && !showCustomerLogin && !showCart ? (
+      {storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart ? (
         <section className="mx-auto max-w-[1800px] px-4 py-5 md:px-6">
           <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className={`rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
@@ -5420,8 +5493,8 @@ export default function Home() {
               <div className="mt-5 overflow-hidden rounded-lg border border-[#38bdf8]/35 bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.28),transparent_40%),linear-gradient(135deg,rgba(14,165,233,0.22),rgba(7,17,31,0.94))] p-4 shadow-[0_0_32px_rgba(14,165,233,0.16)]">
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8be3ff]">New Canva import</p>
                 <h3 className="mt-2 text-lg font-black leading-tight text-white">Order straight from your Canva designs.</h3>
-                <p className="mt-2 text-xs leading-5 text-slate-300">Connect Canva, choose a saved project, and bring it into Hue Studio for print-ready ordering.</p>
-                <button type="button" onClick={openCanvaImport} className="mt-4 w-full rounded-lg bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.28)] hover:brightness-110">Connect Canva</button>
+                <p className="mt-2 text-xs leading-5 text-slate-300">Choose a saved Canva project and bring it into Hue Studio for print-ready ordering.</p>
+                <button type="button" onClick={openCanvaImport} className="mt-4 w-full rounded-lg bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.28)] hover:brightness-110">Import Canva</button>
               </div>
             </aside>
 
@@ -5444,7 +5517,7 @@ export default function Home() {
                     <div className="mt-7 flex flex-wrap items-center gap-3">
                       <button type="button" onClick={openCanvaImport} className="group inline-flex items-center gap-3 rounded-xl border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-5 py-4 text-sm font-black uppercase text-white shadow-[0_18px_42px_rgba(14,165,233,0.32),0_0_38px_rgba(124,58,237,0.25)] hover:border-white hover:brightness-110">
                         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/18 text-base shadow-inner">C</span>
-                        Import your Canva projects
+                        Import Canva
                         <span className="text-[#dff7ff] transition group-hover:translate-x-1">-&gt;</span>
                       </button>
                       <p className="max-w-md text-xs leading-5 text-slate-300"><strong className="text-white">Design in Canva, order in Hue Studio.</strong> Pull saved Canva projects into your artwork library, confirm the size, and checkout without emailing files back and forth.</p>
@@ -5462,8 +5535,8 @@ export default function Home() {
                     <div className="mt-4 rounded-xl border border-[#8be3ff]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(124,58,237,0.18))] p-4">
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8be3ff]">Canva friendly</p>
                       <h3 className="mt-2 text-lg font-black leading-tight text-white">Already made it in Canva?</h3>
-                      <p className="mt-2 text-[11px] leading-5 text-slate-300">Connect your Canva account, import a saved design, and place the artwork on banners, signs, magnets, and more.</p>
-                      <button type="button" onClick={openCanvaImport} className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-white px-4 py-3 text-xs font-black uppercase text-[#0f5f94] shadow-[0_10px_28px_rgba(14,165,233,0.22)] hover:bg-[#eaf8ff]">Connect Canva to Hue Studio</button>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">Import a saved Canva design and place the artwork on banners, signs, magnets, and more.</p>
+                      <button type="button" onClick={openCanvaImport} className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-white px-4 py-3 text-xs font-black uppercase text-[#0f5f94] shadow-[0_10px_28px_rgba(14,165,233,0.22)] hover:bg-[#eaf8ff]">Import Canva</button>
                     </div>
                     <div className="mt-4 overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(7,24,39,0.92))] p-4 shadow-[0_0_28px_rgba(14,165,233,0.10)]">
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Artwork Studio</p>
@@ -6592,6 +6665,10 @@ export default function Home() {
                   <p className="text-sm text-slate-300">{checkoutFulfillment === 'pickup' ? 'No shipping address needed.' : `${checkoutAddress.line1}, ${checkoutAddress.city}, ${checkoutAddress.state} ${checkoutAddress.postalCode}`}</p>
                 </div>
               </div>
+              <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-4">
+                <div className="flex flex-wrap items-end gap-3"><label className="min-w-52 flex-1 text-xs font-black uppercase tracking-wide text-[#8be3ff]">Promo code<input value={checkoutPromoInput} onChange={(event) => { setCheckoutPromoInput(event.target.value.toUpperCase()); if (checkoutPromo && event.target.value.toUpperCase() !== checkoutPromo.code) setCheckoutPromo(null); }} placeholder="Enter code" className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-4 text-sm font-bold uppercase text-white outline-none focus:border-[#38bdf8]" /></label><button type="button" disabled={isCheckoutPromoLoading} onClick={() => void applyCheckoutPromo()} className="h-11 rounded-xl bg-[#1686c9] px-5 text-xs font-black uppercase text-white hover:bg-[#0f75b5] disabled:opacity-50">{isCheckoutPromoLoading ? 'Checking...' : checkoutPromo ? 'Reapply' : 'Apply code'}</button>{checkoutPromo ? <button type="button" onClick={() => { setCheckoutPromo(null); setCheckoutPromoInput(''); setCheckoutStatus('Promo code removed.'); }} className="h-11 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300">Remove</button> : null}</div>
+                {checkoutPromo ? <p className="mt-3 text-sm font-bold text-emerald-300">✓ {checkoutPromo.code}: {checkoutPromo.description} — {formatSignPrice(checkoutDiscountAmount, 'USD')} savings</p> : <p className="mt-3 text-xs text-slate-400">Have a special Hue discount? Apply it before submitting.</p>}
+              </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-[#62d4ff]">Items</p>
@@ -6614,6 +6691,7 @@ export default function Home() {
                     <span>Subtotal</span>
                     <span>{formatSignPrice(cartSubtotal, 'USD')}</span>
                   </div>
+                  {checkoutPromo ? <div className="flex items-center justify-between font-bold text-emerald-300"><span>Promo: {checkoutPromo.code}</span><span>-{formatSignPrice(checkoutDiscountAmount, 'USD')}</span></div> : null}
                   <div className="flex items-start justify-between gap-4 text-slate-300">
                     <span>{checkoutShippingLabel}</span>
                     <span>{checkoutShippingAmount > 0 ? formatSignPrice(checkoutShippingAmount, 'USD') : 'No charge'}</span>
@@ -6662,6 +6740,7 @@ export default function Home() {
                   </div>
                   <div className="text-right text-xs text-slate-300">
                     <p>Subtotal: {formatSignPrice(lastTestOrder.subtotal, lastTestOrder.currency)}</p>
+                    {lastTestOrder.promotion ? <p className="text-emerald-300">Promo {lastTestOrder.promotion.code}: -{formatSignPrice(lastTestOrder.promotion.discountAmount, lastTestOrder.currency)}</p> : null}
                     <p>{lastTestOrder.shipping?.label || 'Shipping'}: {formatSignPrice(lastTestOrder.shipping?.amount || 0, lastTestOrder.currency)}</p>
                     <p>Tax: {formatSignPrice(lastTestOrder.tax.amount, lastTestOrder.currency)}</p>
                   </div>
@@ -6972,7 +7051,7 @@ export default function Home() {
                 <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
                   <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</label>
-                  <button type="button" onClick={openCanvaImport} className="inline-flex rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Import from Canva</button>
+                  <button type="button" onClick={openCanvaImport} className="inline-flex rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Import Canva</button>
                 </div>
               </div>
             </div> : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -7012,56 +7091,55 @@ export default function Home() {
         </section>
       </div> : null}
 
-      {showCanvaImport ? <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#02070d]/82 p-4 backdrop-blur-md">
-        <section className="w-[min(760px,96vw)] overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#071522] text-white shadow-[0_36px_120px_rgba(0,0,0,0.75),0_0_70px_rgba(14,165,233,0.18)]">
-          <header className="flex items-start justify-between gap-4 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_34%),#081827] px-6 py-5">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#67d8ff]">Hue Studio Connector</p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight">Import from Canva</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Connect a customer Canva account, choose one of their saved designs, then save an exported print file into the Hue artwork library for ordering.</p>
-            </div>
-            <button type="button" onClick={() => setShowCanvaImport(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close</button>
-          </header>
-          <div className="grid gap-4 px-6 py-6 md:grid-cols-[1.1fr_0.9fr]">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-5">
-              <h3 className="text-sm font-black uppercase tracking-[0.18em] text-[#8be3ff]">How it will work</h3>
-              <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
-                <p><strong className="text-white">1. Connect Canva.</strong> The customer signs in with Canva and approves Hue Studio.</p>
-                <p><strong className="text-white">2. Pick a design.</strong> Hue Studio lists their available Canva designs with previews.</p>
-                <p><strong className="text-white">3. Save to Image Zone.</strong> We export a print-ready copy and store it in Supabase so it stays tied to their account and order.</p>
+      {showCanvaImport ? <div className="fixed inset-0 z-[90] overflow-hidden bg-[#030a12]">
+        <section className="flex h-full w-full flex-col overflow-hidden bg-[#071522] text-white">
+          <header className="shrink-0 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_34%),#081827] px-5 py-4 md:px-8">
+            <div className="mx-auto flex max-w-[1600px] items-center gap-4">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#67d8ff]">Hue Studio + Canva</p>
+                <h2 className="mt-1 text-2xl font-black tracking-tight md:text-3xl">Choose a Canva design</h2>
+                <p className="mt-1 text-xs text-slate-400 md:text-sm">Pick a project and Hue Studio will save a print-ready copy directly into Image Zone.</p>
               </div>
-              <p className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100">Canva artwork will come into Hue Studio as an exported file, not editable Canva layers. They can still place, fit, stretch, and order it like any uploaded artwork.</p>
+              {canvaImportStatus?.connected ? <span className="hidden items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-200 sm:flex"><span className="h-2 w-2 rounded-full bg-emerald-400" /> Canva connected</span> : null}
+              <button type="button" onClick={() => setShowCanvaImport(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/45 hover:bg-white/[0.1]">Back to Hue Studio</button>
             </div>
-            <div className="rounded-2xl border border-[#38bdf8]/20 bg-[#06111d] p-5">
-              <h3 className="text-sm font-black uppercase tracking-[0.18em] text-[#8be3ff]">Connection status</h3>
+          </header>
+          <div className="mx-auto grid min-h-0 w-full max-w-[1600px] flex-1 gap-5 overflow-y-auto px-5 py-5 md:px-8 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="h-fit rounded-2xl border border-white/10 bg-white/[0.045] p-5 lg:sticky lg:top-0">
+              <h3 className="text-sm font-black uppercase tracking-[0.18em] text-[#8be3ff]">Three easy steps</h3>
+              <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
+                <p><strong className="text-white">1. Choose a design.</strong><br />Browse your Canva projects.</p>
+                <p><strong className="text-white">2. Import it.</strong><br />Hue creates a print-ready copy.</p>
+                <p><strong className="text-white">3. Start using it.</strong><br />The artwork opens in Image Zone.</p>
+              </div>
+              <p className="mt-5 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100"><strong>Good to know:</strong> Your original Canva project stays unchanged. Hue imports a finished copy, not editable Canva layers.</p>
+              <button type="button" onClick={openCanvaImport} className="mt-4 w-full rounded-xl border border-white/15 bg-white/[0.05] px-4 py-3 text-xs font-bold text-slate-300 hover:border-[#38bdf8]/45 hover:bg-white/[0.09]">Refresh connection</button>
+            </aside>
+            <div className="flex min-h-[520px] min-w-0 flex-col rounded-2xl border border-[#38bdf8]/20 bg-[#06111d] p-5">
               {isCanvaImportLoading ? <p className="mt-4 text-sm text-slate-300">Checking Canva setup...</p> : canvaImportStatus?.configured ? <>
-                <p className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm font-bold text-emerald-200">{canvaImportStatus.connected ? 'Canva account connected.' : 'Canva app keys are connected.'}</p>
-                {canvaImportStatus.connected ? <div className="mt-4 space-y-3">
-                  <div className="rounded-xl border border-[#38bdf8]/25 bg-[#0c2a40]/70 p-4 text-sm leading-6 text-slate-300">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-white">Choose a Canva design to import.</p>
-                        <p className="mt-1">Hue Studio will export a copy and add it to Image Zone as a print-ready file.</p>
-                      </div>
-                      <button type="button" onClick={loadCanvaDesigns} disabled={isCanvaDesignsLoading} className="shrink-0 rounded-lg border border-[#38bdf8]/35 bg-[#083044] px-3 py-2 text-[10px] font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] disabled:cursor-wait disabled:opacity-60">Refresh</button>
-                    </div>
+                {canvaImportStatus.connected ? <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#38bdf8]/25 bg-[#0c2a40]/70 p-3">
+                    <label className="flex h-11 min-w-56 flex-1 items-center gap-3 rounded-xl border border-white/15 bg-black/25 px-4 focus-within:border-[#38bdf8]"><span className="text-[#67d8ff]">⌕</span><input value={canvaDesignSearch} onChange={(event) => setCanvaDesignSearch(event.target.value)} placeholder="Search Canva designs" className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500" /></label>
+                    <span className="text-xs font-semibold text-slate-400">{filteredCanvaDesigns.length} design{filteredCanvaDesigns.length === 1 ? '' : 's'}</span>
+                    <button type="button" onClick={loadCanvaDesigns} disabled={isCanvaDesignsLoading} className="h-11 shrink-0 rounded-lg border border-[#38bdf8]/35 bg-[#083044] px-4 text-[10px] font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] disabled:cursor-wait disabled:opacity-60">{isCanvaDesignsLoading ? 'Refreshing...' : 'Refresh designs'}</button>
                   </div>
                   {canvaDesignStatus ? <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-300">{canvaDesignStatus}</p> : null}
-                  <div className="max-h-72 overflow-y-auto pr-1">
-                    {isCanvaDesignsLoading ? <p className="rounded-xl border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">Loading Canva designs...</p> : canvaDesigns.length ? <div className="grid gap-3">
-                      {canvaDesigns.map((design) => <div key={design.id} className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
-                        <div className="flex h-20 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-slate-950">
-                          {design.thumbnailUrl ? <img src={design.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-[10px] font-black uppercase text-slate-500">Canva</span>}
+                  <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+                    {isCanvaDesignsLoading ? <p className="rounded-xl border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">Loading Canva designs...</p> : filteredCanvaDesigns.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                      {filteredCanvaDesigns.map((design) => <article key={design.id} className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.055] transition hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:shadow-[0_18px_42px_rgba(0,0,0,0.28)]">
+                        <div className="flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-white/10 bg-slate-950 p-3">
+                          {design.thumbnailUrl ? <img src={design.thumbnailUrl} alt={`Preview of ${design.title}`} className="h-full w-full rounded-lg object-contain" /> : <span className="text-[10px] font-black uppercase text-slate-500">Canva preview</span>}
                         </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-black text-white">{design.title}</p>
+                        <div className="min-w-0 p-4">
+                          <p className="line-clamp-2 min-h-10 text-sm font-black leading-5 text-white" title={design.title}>{design.title}</p>
                           <p className="mt-1 truncate text-[11px] text-slate-400">{design.updatedAt || 'Canva design'}</p>
-                          <button type="button" onClick={() => void importCanvaDesign(design)} disabled={Boolean(importingCanvaDesignId)} className="mt-3 rounded-lg bg-[#1686c9] px-3 py-2 text-[10px] font-black uppercase text-white hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{importingCanvaDesignId === design.id ? 'Importing...' : 'Import'}</button>
+                          <button type="button" onClick={() => void importCanvaDesign(design)} disabled={Boolean(importingCanvaDesignId)} className="mt-4 flex h-11 w-full items-center justify-center rounded-xl bg-[#1686c9] px-3 text-[10px] font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.2)] hover:bg-[#0f75b5] disabled:cursor-wait disabled:opacity-55">{importingCanvaDesignId === design.id ? 'Importing...' : 'Import to Image Zone'}</button>
                         </div>
-                      </div>)}
-                    </div> : <p className="rounded-xl border border-dashed border-[#38bdf8]/25 bg-white/[0.035] p-4 text-sm leading-6 text-slate-300">No Canva designs are showing yet. Try Refresh, or reconnect Canva if this account should have saved designs.</p>}
+                      </article>)}
+                    </div> : <div className="flex min-h-72 items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/25 bg-white/[0.035] p-6 text-center"><div><p className="font-black text-white">{canvaDesignSearch.trim() ? 'No matching Canva designs' : 'No Canva designs found'}</p><p className="mt-2 text-sm leading-6 text-slate-400">{canvaDesignSearch.trim() ? 'Try a different search.' : 'Refresh the gallery or create a design in Canva first.'}</p></div></div>}
                   </div>
-                </div> : <a href={canvaImportStatus.authUrl || '/api/canva/connect/start'} className="mt-4 flex h-12 items-center justify-center rounded-xl bg-[#1686c9] text-sm font-black uppercase text-white shadow-[0_14px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Connect Canva Account</a>}
+                </div> : <button type="button" onClick={connectCanvaAccount} className="mt-4 flex h-12 w-full items-center justify-center rounded-xl bg-[#1686c9] text-sm font-black uppercase text-white shadow-[0_14px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Connect Canva Account</button>}
               </> : <>
                 <p className="mt-4 rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/70 p-3 text-sm leading-5 text-slate-300">{canvaImportStatus?.message || 'Canva import is ready in Hue Studio, but the Canva developer app keys still need to be added.'}</p>
                 {canvaImportStatus?.missing?.length ? <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
@@ -7072,7 +7150,6 @@ export default function Home() {
                 </div> : null}
                 <button type="button" disabled className="mt-4 flex h-12 w-full cursor-not-allowed items-center justify-center rounded-xl bg-slate-700/70 text-sm font-black uppercase text-slate-400">Waiting on Canva keys</button>
               </>}
-              <button type="button" onClick={openCanvaImport} className="mt-3 w-full rounded-xl border border-white/15 bg-white/[0.05] px-4 py-3 text-xs font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45 hover:bg-white/[0.09]">Recheck setup</button>
             </div>
           </div>
         </section>

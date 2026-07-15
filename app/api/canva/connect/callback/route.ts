@@ -59,8 +59,27 @@ export async function GET(request: NextRequest) {
 
   const redirectTarget = new URL("/", request.nextUrl.origin);
   redirectTarget.searchParams.set("canva", "connected");
-
-  const response = NextResponse.redirect(redirectTarget);
+  const response = new NextResponse(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Canva connected</title></head>
+  <body style="margin:0;background:#06111d;color:#fff;font-family:system-ui,sans-serif;display:grid;min-height:100vh;place-items:center">
+    <main style="max-width:32rem;padding:2rem;text-align:center">
+      <h1 style="margin:0 0 .75rem;color:#67d8ff">Canva connected</h1>
+      <p style="color:#cbd5e1">Returning to Hue Studio&hellip;</p>
+      <p><a href="${redirectTarget.toString()}" style="color:#67d8ff">Return to Hue Studio</a></p>
+    </main>
+    <script>
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: "hue-canva-connected" }, window.location.origin);
+        window.close();
+      } else {
+        window.location.replace(${JSON.stringify(redirectTarget.toString())});
+      }
+    </script>
+  </body>
+</html>`, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }
+  });
   const secure = request.nextUrl.protocol === "https:";
   response.cookies.set("hue_canva_access_token", tokenPayload.access_token, {
     httpOnly: true,

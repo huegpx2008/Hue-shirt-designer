@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { calculatePromoDiscount, getPromoCode, hasSupabaseAdminConfig, supabaseAdminFetch } from "@/lib/server/supabase-admin";
 
 type OrderArtworkFile = {
   role?: string;
@@ -31,6 +32,7 @@ type TestOrderEmailPayload = {
       notes?: string;
       taxExempt?: boolean;
       checkoutMode?: string;
+      userId?: string;
     };
     fulfillment?: {
       method?: "pickup" | "direct_ship";
@@ -38,8 +40,9 @@ type TestOrderEmailPayload = {
     };
     items?: OrderItem[];
     subtotal?: number;
+    promotion?: { code?: string; description?: string; discountAmount?: number };
     shipping?: { amount?: number; label?: string };
-    tax?: { amount?: number; label?: string };
+    tax?: { rate?: number; amount?: number; label?: string };
     total?: number;
   };
 };
@@ -85,13 +88,6 @@ export async function POST(request: Request) {
   const orderToEmail = process.env.QUOTE_TO_EMAIL || "jason@huegraphics.cc";
   const orderFromEmail = process.env.QUOTE_FROM_EMAIL || "Hue Graphics Orders <orders@huegraphics.cc>";
 
-  if (!resendApiKey) {
-    return NextResponse.json(
-      { error: "Order email is not configured yet. Add RESEND_API_KEY to the local environment and restart the dev server." },
-      { status: 500 },
-    );
-  }
-
   let payload: TestOrderEmailPayload;
   try {
     payload = await request.json();
@@ -102,6 +98,69 @@ export async function POST(request: Request) {
   const order = payload.order;
   if (!order?.orderNumber || !order.customer?.email || !order.items?.length) {
     return NextResponse.json({ error: "Order number, customer email, and at least one item are required." }, { status: 400 });
+  }
+
+  let validatedPromo: Awaited<ReturnType<typeof getPromoCode>> = null;
+  if (order.promotion?.code) {
+    try {
+      const promo = await getPromoCode(order.promotion.code);
+      if (!promo) return NextResponse.json({ error: "The promo code is no longer valid." }, { status: 400 });
+      validatedPromo = promo;
+      const subtotal = Number(order.subtotal || 0);
+      const discountAmount = calculatePromoDiscount(promo, subtotal);
+      order.promotion = { code: promo.code, description: promo.description || '', discountAmount };
+      const shipping = Number(order.shipping?.amount || 0);
+      const taxRate = Number(order.tax?.rate || 0);
+      const taxableAmount = Math.max(0, subtotal - discountAmount) + shipping;
+      if (order.tax) order.tax.amount = Number((taxableAmount * taxRate).toFixed(2));
+      order.total = Number((taxableAmount + Number(order.tax?.amount || 0)).toFixed(2));
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "The promo code could not be validated." }, { status: 400 });
+    }
+  }
+
+  let persistenceWarning = '';
+  if (hasSupabaseAdminConfig()) {
+    try {
+      await supabaseAdminFetch('/rest/v1/hue_orders?on_conflict=order_number', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({
+          order_number: order.orderNumber,
+          status: 'test_submitted',
+          customer_user_id: order.customer.userId || null,
+          customer_email: order.customer.email,
+          customer_name: order.customer.name || null,
+          subtotal: Number(order.subtotal || 0),
+          discount: Number(order.promotion?.discountAmount || 0),
+          promo_code: order.promotion?.code || null,
+          shipping: Number(order.shipping?.amount || 0),
+          tax: Number(order.tax?.amount || 0),
+          total: Number(order.total || 0),
+          currency: order.currency || 'USD',
+          order_data: order,
+          created_at: order.createdAt || new Date().toISOString()
+        })
+      });
+      if (validatedPromo?.id) {
+        await supabaseAdminFetch(`/rest/v1/hue_promo_codes?id=eq.${encodeURIComponent(validatedPromo.id)}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ uses_count: Number(validatedPromo.uses_count || 0) + 1, updated_at: new Date().toISOString() })
+        });
+      }
+    } catch (error) {
+      persistenceWarning = error instanceof Error ? error.message : 'The order could not be added to the admin dashboard.';
+    }
+  } else {
+    persistenceWarning = 'SUPABASE_SERVICE_ROLE_KEY is not configured, so this order is not visible in the admin dashboard yet.';
+  }
+
+  if (!resendApiKey) {
+    return NextResponse.json(
+      { error: `Order saved, but email is not configured. Add RESEND_API_KEY.${persistenceWarning ? ` ${persistenceWarning}` : ''}` },
+      { status: 500 },
+    );
   }
 
   const currency = order.currency || "USD";
@@ -151,6 +210,7 @@ export async function POST(request: Request) {
             <p style="margin:0 0 8px;color:#111827;font-size:15px;font-weight:900;">Order Totals</p>
             <table style="width:100%;border-collapse:collapse;">
               ${renderField("Subtotal", formatMoney(order.subtotal, currency))}
+              ${order.promotion?.code ? renderField(`Promo ${order.promotion.code}`, `-${formatMoney(order.promotion.discountAmount || 0, currency)}`) : ""}
               ${renderField(order.shipping?.label || "Shipping", formatMoney(order.shipping?.amount || 0, currency))}
               ${renderField(order.tax?.label || "Tax", formatMoney(order.tax?.amount || 0, currency))}
               ${renderField("Total", formatMoney(order.total, currency))}
@@ -169,6 +229,7 @@ export async function POST(request: Request) {
     `Fulfillment: ${fulfillmentLabel}`,
     shippingAddress ? `Ship To:\n${shippingAddress}` : "",
     `Subtotal: ${formatMoney(order.subtotal, currency)}`,
+    order.promotion?.code ? `Promo ${order.promotion.code}: -${formatMoney(order.promotion.discountAmount || 0, currency)}` : "",
     `${order.shipping?.label || "Shipping"}: ${formatMoney(order.shipping?.amount || 0, currency)}`,
     `${order.tax?.label || "Tax"}: ${formatMoney(order.tax?.amount || 0, currency)}`,
     `Total: ${formatMoney(order.total, currency)}`,
@@ -203,5 +264,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, persistenceWarning: persistenceWarning || undefined, order });
 }

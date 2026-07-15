@@ -58,6 +58,19 @@ Vercel will auto-detect the framework and build command.
 - Supabase stores private customer artwork; public catalog and website imagery may be delivered by Vercel, Cloudinary, or the SanMar CDN depending on the asset.
 - Experimental integrations should remain disabled until their server-side credentials, usage caps, and customer-facing error handling are configured.
 
+## Hue Studio Admin and Promo Codes
+
+The ordering app includes a protected management dashboard at `/admin`. It is designed to be linked from `huegraphics.cc/admin` while remaining hosted with this ordering project. The dashboard shows Supabase customer accounts, centralized Hue Studio orders, private artwork-file metadata, and promotional codes.
+
+Initial setup:
+
+1. Run [`supabase/hue-studio-admin.sql`](supabase/hue-studio-admin.sql) once in the Supabase SQL editor.
+2. Add `SUPABASE_SERVICE_ROLE_KEY` and a long unique `ADMIN_DASHBOARD_SECRET` to the local and Vercel server environment variables.
+3. Redeploy the project, then open `/admin` and sign in using `ADMIN_DASHBOARD_SECRET`.
+4. Add the deployed `/admin` URL as a link inside the existing `huegraphics.cc/admin` page.
+
+The Supabase service-role key is server-only and must never use a `NEXT_PUBLIC_` prefix. Promo codes created in the dashboard can be percentage or fixed-dollar discounts with optional minimum orders, discount caps, expiration dates, and usage limits. Checkout validates codes through a server route and records the applied discount with the order.
+
 ## Accounts & Services Inventory
 
 Last reviewed: July 14, 2026
