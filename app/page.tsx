@@ -19,7 +19,7 @@ type NewArtworkPreset = { width: number; height: number; label?: string; popular
 type NewArtworkPresetGroup = { id: string; label: string; description: string; sizes: NewArtworkPreset[] };
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -1351,6 +1351,7 @@ export default function Home() {
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
+  const [deletingImageZoneId, setDeletingImageZoneId] = useState<string | null>(null);
   const [showCanvaImport, setShowCanvaImport] = useState(false);
   const [canvaImportStatus, setCanvaImportStatus] = useState<CanvaImportStatus | null>(null);
   const [isCanvaImportLoading, setIsCanvaImportLoading] = useState(false);
@@ -1626,13 +1627,13 @@ export default function Home() {
             const designId = designMatch[1];
             const back = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-back\\.png$`, 'i').test(entry.name));
             const project = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-project\\.json$`, 'i').test(entry.name));
-            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
+            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
           }
           const pairMatch = item.name.match(/-huepair-(\d+)-(front|back)\.png$/i);
           if (!pairMatch) return [item];
           if (pairMatch[2].toLowerCase() === 'back') return [];
           const back = pairedSides.get(pairMatch[1])?.back;
-          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
+          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
         });
         setImageZoneItems((prev) => {
           const localItems = prev.filter((item) => item.source !== 'supabase');
@@ -2926,6 +2927,54 @@ export default function Home() {
     }
   };
 
+  const deleteImageZoneItem = async (item: ImageZoneItem) => {
+    const relatedFileCount = 1 + (item.backDataUrl ? 1 : 0) + (item.editorProject ? 1 : 0);
+    const confirmed = window.confirm(relatedFileCount > 1
+      ? `Permanently delete ${item.name} and its related back/editable files from Image Zone? This cannot be undone.`
+      : `Permanently delete ${item.name} from Image Zone? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingImageZoneId(item.id);
+    setImageLibraryStatus(`Deleting ${item.name}...`);
+    try {
+      if (item.source === 'supabase' && item.storagePath) {
+        if (!customerSession?.access_token) throw new Error('Sign in to delete cloud-saved artwork from your Image Zone.');
+        let activeSession: CustomerSession | null = customerSession;
+        if (activeSession.expires_at && (activeSession.expires_at * 1000) <= Date.now() + 60_000) {
+          activeSession = await refreshCurrentCustomerSession();
+          if (!activeSession) throw new Error('Your Hue Studio session expired. Sign in again, then retry deletion.');
+        }
+        const storageFolder = item.storagePath.includes('/') ? item.storagePath.slice(0, item.storagePath.lastIndexOf('/')) : '';
+        const derivedBackPath = item.backName && storageFolder ? `${storageFolder}/${item.backName}` : undefined;
+        const storagePaths = Array.from(new Set([item.storagePath, item.backStoragePath || derivedBackPath, item.projectStoragePath].filter(Boolean) as string[]));
+        for (const storagePath of storagePaths) {
+          let response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(storagePath)}`, {
+            method: 'DELETE',
+            headers: getSupabaseStorageHeaders(activeSession.access_token)
+          });
+          if (!response.ok) {
+            const firstMessage = await getErrorMessage(response);
+            if (!isSupabaseSessionExpiredError(firstMessage)) throw new Error(firstMessage);
+            activeSession = await refreshCurrentCustomerSession();
+            if (!activeSession) throw new Error('Your Hue Studio session expired. Sign in again, then retry deletion.');
+            response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(storagePath)}`, {
+              method: 'DELETE',
+              headers: getSupabaseStorageHeaders(activeSession.access_token)
+            });
+            if (!response.ok) throw new Error(await getErrorMessage(response));
+          }
+        }
+      }
+      setImageZoneItems((previous) => previous.filter((entry) => entry.id !== item.id));
+      setSelectedImageZoneId((current) => current === item.id ? null : current);
+      setImageLibraryStatus(`${item.name} was permanently deleted from Image Zone.`);
+    } catch (error) {
+      setImageLibraryStatus(`Could not delete ${item.name}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    } finally {
+      setDeletingImageZoneId(null);
+    }
+  };
+
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
     const refreshedUrl = item.source === 'supabase' && item.storagePath
       ? await getSignedImageZoneUrl(item.storagePath)
@@ -4116,7 +4165,7 @@ export default function Home() {
       setSelectedImageZoneId(localId);
       if (isSupabaseStorageConfigured) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
-        setImageZoneItems((previous) => previous.map((entry) => entry.id === localId ? { ...entry, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || entry.backDataUrl, backName: backFileName || entry.backName, projectStoragePath: projectStorageInfo.storagePath } : entry));
+        setImageZoneItems((previous) => previous.map((entry) => entry.id === localId ? { ...entry, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || entry.backDataUrl, backName: backFileName || entry.backName, backStoragePath: backStorageInfo?.storagePath, projectStoragePath: projectStorageInfo.storagePath } : entry));
         setSelectedImageZoneId(storageInfo.storagePath);
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
       } else {
@@ -4358,12 +4407,23 @@ export default function Home() {
     setImportingCanvaDesignId(design.id);
     setCanvaDesignStatus(`Exporting ${design.title} from Canva...`);
     try {
-      const response = await fetch('/api/canva/import', {
+      let response = await fetch('/api/canva/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ designId: design.id, title: design.title })
       });
-      const payload = await response.json() as Partial<CanvaImportPayload> & { error?: string; details?: string };
+      let payload = await response.json() as Partial<CanvaImportPayload> & { error?: string; details?: string; jobId?: string; status?: string };
+      let pollDelay = 1000;
+      let pollCount = 0;
+      while (response.status === 202 && payload.jobId && pollCount < 24) {
+        pollCount += 1;
+        setCanvaDesignStatus(`Canva is preparing ${design.title}... ${pollCount < 4 ? 'This usually takes a few seconds.' : 'Large designs can take a little longer.'}`);
+        await new Promise((resolve) => window.setTimeout(resolve, pollDelay));
+        response = await fetch(`/api/canva/import?jobId=${encodeURIComponent(payload.jobId)}&title=${encodeURIComponent(design.title)}`, { cache: 'no-store' });
+        payload = await response.json() as Partial<CanvaImportPayload> & { error?: string; details?: string; jobId?: string; status?: string };
+        pollDelay = Math.min(Math.round(pollDelay * 1.45), 5000);
+      }
+      if (response.status === 202) throw new Error('Canva is taking longer than expected to prepare this design. Please try again in a few minutes.');
       if (!response.ok || !payload.dataUrl || !payload.name) throw new Error(payload.error || payload.details || 'Canva did not return an exported image.');
       const imagePixels = await getImageNaturalSize(payload.dataUrl);
       const fileName = payload.name;
@@ -7067,23 +7127,21 @@ export default function Home() {
             </div> : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {imageZoneItems.map((item) => {
                 const selected = selectedImageZoneId === item.id;
-                return <button key={item.id} type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`group grid min-h-40 grid-cols-[118px_minmax(0,1fr)] gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-[#38bdf8] bg-[#f2fbff] shadow-[0_18px_46px_rgba(14,165,233,0.22),0_0_0_3px_rgba(56,189,248,0.12)]' : 'border-white/10 bg-white/[0.055] shadow-[0_16px_38px_rgba(0,0,0,0.24)] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.08]'}`}>
-                  <div className={`relative flex h-32 items-center justify-center overflow-hidden rounded-xl border ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
+                return <article key={item.id} className={`group grid min-h-40 grid-cols-[118px_minmax(0,1fr)] gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-[#38bdf8] bg-[#f2fbff] shadow-[0_18px_46px_rgba(14,165,233,0.22),0_0_0_3px_rgba(56,189,248,0.12)]' : 'border-white/10 bg-white/[0.055] shadow-[0_16px_38px_rgba(0,0,0,0.24)] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.08]'}`}>
+                  <button type="button" onClick={() => setSelectedImageZoneId(item.id)} aria-label={`Select ${item.name}`} className={`relative flex h-32 items-center justify-center overflow-hidden rounded-xl border ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
                     {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
                     {selected ? <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1686c9] text-xs font-black text-white shadow-md">✓</span> : null}
-                    {item.backDataUrl ? <span className="absolute bottom-2 left-2 rounded-full bg-[#071827]/90 px-2 py-1 text-[9px] font-black uppercase text-[#8be3ff] shadow">Front + Back</span> : null}
-                    {item.editorProject ? <span className="absolute bottom-2 right-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[9px] font-black uppercase text-white shadow">Editable</span> : null}
-                  </div>
+                    <span className="absolute bottom-2 left-2 flex flex-col items-start gap-1">{item.backDataUrl ? <span className="rounded-full bg-[#071827]/90 px-2 py-1 text-[9px] font-black uppercase text-[#8be3ff] shadow">Front + Back</span> : null}{item.editorProject ? <span className="rounded-full bg-emerald-600/90 px-2 py-1 text-[9px] font-black uppercase text-white shadow">Editable</span> : null}</span>
+                  </button>
                   <div className="min-w-0">
                     <p className={`truncate text-sm font-black ${selected ? 'text-slate-950' : 'text-white'}`}>{item.name}</p>
                     <p className={`mt-2 text-xs font-bold ${selected ? 'text-slate-600' : 'text-slate-300'}`}>{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</p>
                     <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
                     <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</p>
                     <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
-                    <span className={`mt-3 inline-flex rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</span>
-                    <span onClick={async (event) => { event.stopPropagation(); await useImageZoneItem(item); }} className="ml-2 mt-3 inline-flex rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">Use</span>
+                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await useImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">Use</button><button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button></div>
                   </div>
-                </button>;
+                </article>;
               })}
             </div>}
           </div>

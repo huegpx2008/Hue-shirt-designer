@@ -44,7 +44,29 @@ const getExportUrl = (payload: JsonRecord) => {
   return typeof nestedUrl === "string" ? nestedUrl : "";
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const finishExport = async (exportPayload: JsonRecord, title: string) => {
+  const status = getJobStatus(exportPayload);
+  const exportUrl = getExportUrl(exportPayload);
+  if (status === "failed" || status === "error") {
+    return NextResponse.json({
+      error: "Canva could not export this design.",
+      details: JSON.stringify(exportPayload).slice(0, 800)
+    }, { status: 502 });
+  }
+  if (status !== "success" || !exportUrl) return null;
+
+  const fileResponse = await fetch(exportUrl, { cache: "no-store" });
+  if (!fileResponse.ok) {
+    return NextResponse.json({ error: "Canva exported the design, but Hue Studio could not download the file." }, { status: fileResponse.status });
+  }
+  const mimeType = fileResponse.headers.get("content-type") || "image/png";
+  const buffer = Buffer.from(await fileResponse.arrayBuffer());
+  return NextResponse.json({
+    name: `${Date.now()}-${sanitizeFileName(title || "canva-design")}.png`,
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`
+  });
+};
 
 export async function POST(request: NextRequest) {
   const accessToken = request.cookies.get("hue_canva_access_token")?.value;
@@ -77,7 +99,7 @@ export async function POST(request: NextRequest) {
     }, { status: createResponse.status });
   }
 
-  let exportPayload = await createResponse.json() as JsonRecord;
+  const exportPayload = await createResponse.json() as JsonRecord;
   const jobId = getJobId(exportPayload);
   if (!jobId) {
     return NextResponse.json({
@@ -86,42 +108,39 @@ export async function POST(request: NextRequest) {
     }, { status: 502 });
   }
 
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const status = getJobStatus(exportPayload);
-    const exportUrl = getExportUrl(exportPayload);
-    if ((status === "success" || status === "succeeded" || status === "completed") && exportUrl) {
-      const fileResponse = await fetch(exportUrl, { cache: "no-store" });
-      if (!fileResponse.ok) {
-        return NextResponse.json({ error: "Canva exported the design, but Hue Studio could not download the file." }, { status: fileResponse.status });
-      }
-      const mimeType = fileResponse.headers.get("content-type") || "image/png";
-      const buffer = Buffer.from(await fileResponse.arrayBuffer());
-      return NextResponse.json({
-        name: `${Date.now()}-${sanitizeFileName(body.title || "canva-design")}.png`,
-        mimeType,
-        dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`
-      });
-    }
-    if (status === "failed" || status === "error") {
-      return NextResponse.json({
-        error: "Canva could not export this design.",
-        details: JSON.stringify(exportPayload).slice(0, 800)
-      }, { status: 502 });
-    }
-    await sleep(750);
-    const pollResponse = await fetch(`${CANVA_EXPORTS_URL}/${encodeURIComponent(jobId)}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store"
-    });
-    if (!pollResponse.ok) {
-      const details = await pollResponse.text();
-      return NextResponse.json({
-        error: "Hue Studio could not check the Canva export status.",
-        details: details.slice(0, 800)
-      }, { status: pollResponse.status });
-    }
-    exportPayload = await pollResponse.json() as JsonRecord;
+  const completedResponse = await finishExport(exportPayload, body.title || "canva-design");
+  if (completedResponse) return completedResponse;
+
+  return NextResponse.json({ jobId, status: "in_progress" }, { status: 202 });
+}
+
+export async function GET(request: NextRequest) {
+  const accessToken = request.cookies.get("hue_canva_access_token")?.value;
+  if (!accessToken) {
+    return NextResponse.json({ error: "Canva is not connected yet." }, { status: 401 });
   }
 
-  return NextResponse.json({ error: "Canva export is still processing. Try importing this design again in a moment." }, { status: 504 });
+  const jobId = request.nextUrl.searchParams.get("jobId")?.trim();
+  const title = request.nextUrl.searchParams.get("title") || "canva-design";
+  if (!jobId) {
+    return NextResponse.json({ error: "The Canva export job id is missing." }, { status: 400 });
+  }
+
+  const pollResponse = await fetch(`${CANVA_EXPORTS_URL}/${encodeURIComponent(jobId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store"
+  });
+  if (!pollResponse.ok) {
+    const details = await pollResponse.text();
+    return NextResponse.json({
+      error: "Hue Studio could not check the Canva export status.",
+      details: details.slice(0, 800)
+    }, { status: pollResponse.status });
+  }
+
+  const exportPayload = await pollResponse.json() as JsonRecord;
+  const completedResponse = await finishExport(exportPayload, title);
+  if (completedResponse) return completedResponse;
+
+  return NextResponse.json({ jobId, status: "in_progress" }, { status: 202 });
 }
