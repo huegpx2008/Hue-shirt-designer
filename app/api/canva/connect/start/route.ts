@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 
 const CANVA_AUTHORIZE_URL = "https://www.canva.com/api/oauth/authorize";
-const DEFAULT_CANVA_SCOPES = "design:meta:read design:content:read design:permission:read profile:read";
+const DEFAULT_CANVA_SCOPES = "design:meta:read design:content:read";
 
 const base64UrlEncode = (buffer: Buffer) =>
   buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
