@@ -18,7 +18,9 @@ type LayerItem = { id: string; name: string; type: string; isActive: boolean; is
 type NewArtworkPreset = { width: number; height: number; label?: string; popular?: boolean };
 type NewArtworkPresetGroup = { id: string; label: string; description: string; sizes: NewArtworkPreset[] };
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
+type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
+type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
@@ -527,10 +529,66 @@ const GENERATED_ARTWORK_MAX_BYTES = 40 * 1024 * 1024;
 const GENERATED_ARTWORK_MAX_CANVAS_SIDE = 12000;
 const GENERATED_ARTWORK_MAX_CANVAS_PIXELS = 60_000_000;
 
-const getArtworkPrintSize = (width: number, height: number) => ({
-  width: Math.max(1, Number((width / BANNER_PREVIEW_DPI).toFixed(2))),
-  height: Math.max(1, Number((height / BANNER_PREVIEW_DPI).toFixed(2)))
+const roundPrintDimension = (dimension: number) => {
+  const nearestQuarterInch = Math.round(dimension * 4) / 4;
+  return Math.abs(dimension - nearestQuarterInch) <= 0.03 ? nearestQuarterInch : Number(dimension.toFixed(2));
+};
+
+const getArtworkPrintSize = (width: number, height: number, resolution?: ImageResolution | null) => ({
+  width: Math.max(1, roundPrintDimension(width / (resolution?.dpiX || BANNER_PREVIEW_DPI))),
+  height: Math.max(1, roundPrintDimension(height / (resolution?.dpiY || BANNER_PREVIEW_DPI)))
 });
+
+const isUsableImageDpi = (dpi: number) => Number.isFinite(dpi) && dpi >= 20 && dpi <= 2400;
+
+const readEmbeddedImageResolution = async (blob: Blob): Promise<ImageResolution | null> => {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+
+  const isPng = bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
+  if (isPng) {
+    let offset = 8;
+    while (offset + 12 <= bytes.length) {
+      const length = view.getUint32(offset, false);
+      const dataOffset = offset + 8;
+      if (dataOffset + length + 4 > bytes.length) break;
+      const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+      if (type === 'pHYs' && length >= 9 && bytes[dataOffset + 8] === 1) {
+        const dpiX = view.getUint32(dataOffset, false) * 0.0254;
+        const dpiY = view.getUint32(dataOffset + 4, false) * 0.0254;
+        return isUsableImageDpi(dpiX) && isUsableImageDpi(dpiY) ? { dpiX, dpiY } : null;
+      }
+      offset = dataOffset + length + 4;
+    }
+  }
+
+  const isJpeg = bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8;
+  if (isJpeg) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset] !== 0xff) { offset += 1; continue; }
+      const marker = bytes[offset + 1];
+      if (marker === 0xd9 || marker === 0xda) break;
+      if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { offset += 2; continue; }
+      const segmentLength = view.getUint16(offset + 2, false);
+      if (segmentLength < 2 || offset + 2 + segmentLength > bytes.length) break;
+      const dataOffset = offset + 4;
+      const isJfif = marker === 0xe0 && segmentLength >= 14
+        && bytes[dataOffset] === 0x4a && bytes[dataOffset + 1] === 0x46 && bytes[dataOffset + 2] === 0x49 && bytes[dataOffset + 3] === 0x46 && bytes[dataOffset + 4] === 0;
+      if (isJfif) {
+        const units = bytes[dataOffset + 7];
+        const densityX = view.getUint16(dataOffset + 8, false);
+        const densityY = view.getUint16(dataOffset + 10, false);
+        const dpiX = units === 1 ? densityX : units === 2 ? densityX * 2.54 : 0;
+        const dpiY = units === 1 ? densityY : units === 2 ? densityY * 2.54 : 0;
+        return isUsableImageDpi(dpiX) && isUsableImageDpi(dpiY) ? { dpiX, dpiY } : null;
+      }
+      offset += 2 + segmentLength;
+    }
+  }
+  return null;
+};
 
 const formatArtworkInches = (width: number, height: number, signWidth?: number, signHeight?: number) => {
   if (signWidth && signHeight) return `${signWidth}\u2033 \u00d7 ${signHeight}\u2033`;
@@ -574,6 +632,88 @@ const loadImageElement = (src: string) => new Promise<HTMLImageElement>((resolve
 const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality?: number) => new Promise<Blob>((resolve, reject) => {
   canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('The generated artwork could not be compressed.')), type, quality);
 });
+
+const pngCrc32 = (bytes: Uint8Array) => {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+const writePngResolution = async (blob: Blob, dpi: number) => {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length < 33 || bytes[0] !== 137 || bytes[1] !== 80 || bytes[2] !== 78 || bytes[3] !== 71) return blob;
+  const pixelsPerMeter = Math.max(1, Math.round(dpi / 0.0254));
+  const chunk = new Uint8Array(21);
+  const chunkView = new DataView(chunk.buffer);
+  chunkView.setUint32(0, 9, false);
+  chunk.set([0x70, 0x48, 0x59, 0x73], 4);
+  chunkView.setUint32(8, pixelsPerMeter, false);
+  chunkView.setUint32(12, pixelsPerMeter, false);
+  chunk[16] = 1;
+  chunkView.setUint32(17, pngCrc32(chunk.slice(4, 17)), false);
+  const parts: Uint8Array[] = [bytes.slice(0, 8)];
+  let offset = 8;
+  let inserted = false;
+  while (offset + 12 <= bytes.length) {
+    const length = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, false);
+    const end = offset + 12 + length;
+    if (end > bytes.length) return blob;
+    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+    if (type !== 'pHYs') parts.push(bytes.slice(offset, end));
+    if (type === 'IHDR' && !inserted) { parts.push(chunk); inserted = true; }
+    offset = end;
+  }
+  const totalLength = parts.reduce((total, part) => total + part.length, 0);
+  const output = new Uint8Array(totalLength);
+  let outputOffset = 0;
+  for (const part of parts) { output.set(part, outputOffset); outputOffset += part.length; }
+  return new Blob([output], { type: 'image/png' });
+};
+
+const renderProductionArtwork = async (options: { dataUrl: string; name: string; width: number; height: number; fitState: ArtworkFitState; transparentBackground?: boolean }) => {
+  const sourceUrl = options.dataUrl.startsWith('data:')
+    ? options.dataUrl
+    : await fetch(options.dataUrl).then((response) => {
+      if (!response.ok) throw new Error(`Could not download ${options.name} for production rendering.`);
+      return response.blob();
+    }).then(blobToDataUrl);
+  const image = await loadImageElement(sourceUrl);
+  const requestedWidth = Math.max(1, Math.round(options.width * BANNER_PREVIEW_DPI));
+  const requestedHeight = Math.max(1, Math.round(options.height * BANNER_PREVIEW_DPI));
+  const outputScale = Math.min(
+    1,
+    GENERATED_ARTWORK_MAX_CANVAS_SIDE / requestedWidth,
+    GENERATED_ARTWORK_MAX_CANVAS_SIDE / requestedHeight,
+    Math.sqrt(GENERATED_ARTWORK_MAX_CANVAS_PIXELS / Math.max(1, requestedWidth * requestedHeight))
+  );
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(requestedWidth * outputScale));
+  canvas.height = Math.max(1, Math.round(requestedHeight * outputScale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('The final production artwork could not be rendered.');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  if (!options.transparentBackground) {
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  if (options.fitState === 'stretch') {
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  } else {
+    const scale = Math.min(canvas.width / Math.max(1, image.naturalWidth), canvas.height / Math.max(1, image.naturalHeight));
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
+  }
+  const blob = await writePngResolution(await canvasToBlob(canvas, 'image/png'), BANNER_PREVIEW_DPI * outputScale);
+  const baseName = options.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'artwork';
+  const mode = options.fitState === 'stretch' ? 'STRETCHED' : 'FIT';
+  const fileName = `FINAL-PRODUCTION-${baseName}-${options.width}x${options.height}-${mode}.png`;
+  return { file: new File([blob], fileName, { type: 'image/png' }), dataUrl: await blobToDataUrl(blob), width: canvas.width, height: canvas.height, name: fileName };
+};
 
 const normalizeGeneratedArtworkForStorage = async (dataUrl: string, fileName: string, printSize: { width: number; height: number }) => {
   const source = await loadImageElement(dataUrl);
@@ -1332,6 +1472,7 @@ export default function Home() {
   const [artworkAnalysis, setArtworkAnalysis] = useState<ArtworkAnalysis | null>(null);
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
+  const [lockSignProportions, setLockSignProportions] = useState(true);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
   const [signArtworkDisplayUrl, setSignArtworkDisplayUrl] = useState<string | null>(null);
   const [bannerArtworkName, setBannerArtworkName] = useState('');
@@ -1352,6 +1493,9 @@ export default function Home() {
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
   const [deletingImageZoneId, setDeletingImageZoneId] = useState<string | null>(null);
+  const [imageZoneProductChoice, setImageZoneProductChoice] = useState<ImageZoneItem | null>(null);
+  const [queuedImageZonePlacement, setQueuedImageZonePlacement] = useState<{ item: ImageZoneItem; product: StoreProductCard } | null>(null);
+  const [queuedImageZonePlacementAttempt, setQueuedImageZonePlacementAttempt] = useState(0);
   const [showCanvaImport, setShowCanvaImport] = useState(false);
   const [canvaImportStatus, setCanvaImportStatus] = useState<CanvaImportStatus | null>(null);
   const [isCanvaImportLoading, setIsCanvaImportLoading] = useState(false);
@@ -1369,6 +1513,7 @@ export default function Home() {
   const [isAiEditing, setIsAiEditing] = useState(false);
   const [aiEditPreview, setAiEditPreview] = useState<{ dataUrl: string; width: number; height: number; source: ImageZoneItem } | null>(null);
   const [showArtworkEditor, setShowArtworkEditor] = useState(false);
+  const [artworkEditorOrderReturn, setArtworkEditorOrderReturn] = useState<ArtworkEditorOrderReturn | null>(null);
   const [showNewArtworkDialog, setShowNewArtworkDialog] = useState(false);
   const [newArtworkPresetGroupId, setNewArtworkPresetGroupId] = useState('yard-signs');
   const [newArtworkPresetKey, setNewArtworkPresetKey] = useState('24x18');
@@ -1441,6 +1586,7 @@ export default function Home() {
   const [isGuestCheckout, setIsGuestCheckout] = useState(false);
   const [isCustomerAuthLoading, setIsCustomerAuthLoading] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [isPreparingCartArtwork, setIsPreparingCartArtwork] = useState(false);
   const [showCart, setShowCart] = useState(false);
   const [cartStatus, setCartStatus] = useState('');
   const [showTestCheckout, setShowTestCheckout] = useState(false);
@@ -1593,6 +1739,12 @@ export default function Home() {
             const imageSize = isImageFile
               ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
               : { width: 0, height: 0 };
+            const embeddedResolution = isImageFile
+              ? await fetch(previewUrl).then((imageResponse) => imageResponse.ok ? imageResponse.blob() : Promise.reject(new Error('Image metadata unavailable'))).then(readEmbeddedImageResolution).catch(() => null)
+              : null;
+            const inferredPrintSize = imageSize.width > 0 && imageSize.height > 0
+              ? getArtworkPrintSize(imageSize.width, imageSize.height, embeddedResolution)
+              : null;
             const isEditorProject = /-huedesign-\d+-project\.json$/i.test(file.name);
             const editorProject = isEditorProject
               ? await fetch(previewUrl).then((projectResponse) => projectResponse.ok ? projectResponse.json() as Promise<ArtworkEditorProject> : null).catch(() => null)
@@ -1603,12 +1755,14 @@ export default function Home() {
               dataUrl: previewUrl,
               width: imageSize.width,
               height: imageSize.height,
-              dpi: 300,
+              dpi: embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI,
               uploadedAt: file.updated_at || file.created_at || 'Supabase',
               storagePath,
               storageUrl: previewUrl,
               source: 'supabase' as const,
               mimeType: file.metadata?.mimetype,
+              signWidth: inferredPrintSize?.width,
+              signHeight: inferredPrintSize?.height,
               editorProject: editorProject || undefined
             };
           })));
@@ -1910,7 +2064,7 @@ export default function Home() {
   const bannerDisplayName = isMeshBanner ? 'Mesh Banner' : selectedSignProduct.name;
   const bannerLocalOptionTotal = isBannerBuilder && Boolean(signValues.windSlits) ? 10 : 0;
   const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
-  const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : signWidth > 0 && signHeight > 0 ? Math.max(0.45, Math.min(4.5, signWidth / Math.max(1, signHeight))) : 1.5;
+  const signPreviewAspect = selectedSignProduct.id === 'yard-sign' ? CORO_SHEET.width / CORO_SHEET.height : signWidth > 0 && signHeight > 0 ? Math.max(0.15, Math.min(6.5, signWidth / Math.max(1, signHeight))) : 1.5;
   const signPreviewWidth = isProductionBuilder
     ? activeCoroOptionPanel === 'images'
       ? `min(44vw, 760px, calc(48vh * ${signPreviewAspect}))`
@@ -2987,9 +3141,9 @@ export default function Home() {
     return sizedItem;
   };
 
-  const applySignSizeFromPixels = (width: number, height: number) => {
+  const applySignSizeFromPixels = (width: number, height: number, resolution?: ImageResolution | null) => {
     if (!width || !height) return null;
-    const { width: nextWidth, height: nextHeight } = getArtworkPrintSize(width, height);
+    const { width: nextWidth, height: nextHeight } = getArtworkPrintSize(width, height, resolution);
     setSignValues((prev) => ({ ...prev, width: String(nextWidth), height: String(nextHeight) }));
     setSignArtworkSize({ width: nextWidth, height: nextHeight });
     setBannerArtworkFitState('unresolved');
@@ -3331,9 +3485,10 @@ export default function Home() {
   };
 
   const openArtworkEditor = async () => {
+    setArtworkEditorOrderReturn(null);
     const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
     if (!source || !canPlaceImageZoneItem(source)) {
-      setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening the artwork editor.');
+      setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening Hue Designer.');
       return;
     }
     try {
@@ -3462,7 +3617,7 @@ export default function Home() {
 
   const addArtworkEditorImageLayer = async (dataUrl: string, name: string, editorTool = 'image-zone') => {
     const canvas = artworkEditorCanvasRef.current;
-    if (!canvas) throw new Error('The artwork editor is still loading.');
+    if (!canvas) throw new Error('Hue Designer is still loading.');
     const image = await FabricImage.fromURL(dataUrl, dataUrl.startsWith('http') ? { crossOrigin: 'anonymous' } : undefined);
     const scale = Math.min((canvas.getWidth() * 0.7) / Math.max(1, image.width || 1), (canvas.getHeight() * 0.7) / Math.max(1, image.height || 1), 1);
     image.set({ left: canvas.getWidth() / 2, top: canvas.getHeight() / 2, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, ...FABRIC_CONTROL_STYLE });
@@ -4171,6 +4326,23 @@ export default function Home() {
       } else {
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved in this browser session.${isNewArtwork ? '' : ' Original preserved.'}`);
       }
+      if (artworkEditorOrderReturn) {
+        const returnContext = artworkEditorOrderReturn;
+        if (returnContext.side === 'back' && isAutoSidedRigidBuilder) {
+          setRigidBackArtwork(item);
+          setRigidPreviewSide('back');
+          setSignValues((previous) => ({ ...previous, width: String(returnContext.width), height: String(returnContext.height), sides: 'double' }));
+        } else {
+          await placeImageOnDesign(item.dataUrl, item.name);
+          setSignArtworkPreviewUrl(item.dataUrl);
+          setBannerArtworkName(item.name);
+          setSignValues((previous) => ({ ...previous, width: String(returnContext.width), height: String(returnContext.height) }));
+          setBannerArtworkFitState(returnContext.fitState);
+        }
+        setImageLibraryStatus(`${item.name} saved to Image Zone and returned to this ${selectedSignProduct.name} order.`);
+        setActiveCoroOptionPanel('images');
+        setArtworkEditorOrderReturn(null);
+      }
       setShowArtworkEditor(false);
     } catch (error) {
       setArtworkEditorStatus(`The edited copy could not be saved: ${error instanceof Error ? error.message : 'unknown error'}.`);
@@ -4504,6 +4676,28 @@ export default function Home() {
     }
   };
 
+  const openCurrentOrderArtworkEditor = async () => {
+    const editingBack = isRigidSignBuilder && rigidPreviewSide === 'back' && Boolean(rigidBackArtwork?.dataUrl);
+    const artworkUrl = editingBack ? rigidBackArtwork?.dataUrl : signArtworkPreviewUrl;
+    if (!artworkUrl) {
+      setImageLibraryStatus('Add artwork to this order before opening the editor.');
+      return;
+    }
+    try {
+      const librarySource = imageZoneItems.find((item) => item.dataUrl === artworkUrl || item.storageUrl === artworkUrl || (editingBack && item.backDataUrl === artworkUrl));
+      const naturalSize = librarySource?.width && librarySource?.height
+        ? { width: editingBack ? librarySource.backWidth || librarySource.width : librarySource.width, height: editingBack ? librarySource.backHeight || librarySource.height : librarySource.height }
+        : await getImageNaturalSize(artworkUrl);
+      const source: ImageZoneItem = librarySource
+        ? { ...librarySource, id: `${librarySource.id}-${editingBack ? 'back' : 'front'}-order-edit`, name: editingBack ? librarySource.backName || `${librarySource.name} back` : librarySource.name, dataUrl: artworkUrl, width: naturalSize.width, height: naturalSize.height, backDataUrl: undefined, editorProject: editingBack ? undefined : librarySource.editorProject }
+        : { id: `order-edit-${Date.now()}`, name: editingBack ? `${bannerArtworkName || 'artwork'}-back.png` : bannerArtworkName || 'order-artwork.png', dataUrl: artworkUrl, width: naturalSize.width, height: naturalSize.height, dpi: BANNER_PREVIEW_DPI, uploadedAt: new Date().toLocaleString(), source: 'local', mimeType: 'image/png', signWidth: signArtworkSize?.width || signWidth, signHeight: signArtworkSize?.height || signHeight };
+      setArtworkEditorOrderReturn({ side: editingBack ? 'back' : 'front', width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+      startArtworkEditor(source, `Quick editing ${editingBack ? 'back' : 'front'} artwork for this ${selectedSignProduct.name}. Save and return when you are ready.`);
+    } catch (error) {
+      setImageLibraryStatus(`Could not open this order artwork: ${error instanceof Error ? error.message : 'image failed to load'}.`);
+    }
+  };
+
   const connectCanvaAccount = () => {
     const authUrl = canvaImportStatus?.authUrl;
     if (!authUrl) {
@@ -4683,11 +4877,16 @@ export default function Home() {
     if (showArtworkEditor && artworkEditorCanvasRef.current) {
       try {
         await addArtworkEditorImageLayer(imageItem.dataUrl, imageItem.name, 'image-zone');
-        setImageLibraryStatus(`${imageItem.name} added to the artwork editor.`);
+        setImageLibraryStatus(`${imageItem.name} added to Hue Designer.`);
         setShowImageZone(false);
       } catch (error) {
         setImageLibraryStatus(`Could not add ${imageItem.name} to the editor: ${error instanceof Error ? error.message : 'image failed to load'}.`);
       }
+      return;
+    }
+    if (storeView !== 'builder') {
+      setImageZoneProductChoice(imageItem);
+      setImageLibraryStatus(`Choose a product for ${imageItem.name}.`);
       return;
     }
     if (isAutoSidedRigidBuilder && rigidArtworkTarget === 'back') {
@@ -4754,9 +4953,11 @@ export default function Home() {
     reader.onload = async () => {
       const dataUrl = reader.result as string;
       let imagePixels = { width: 0, height: 0 };
+      let embeddedResolution: ImageResolution | null = null;
       if (isImageFile) {
         try {
           imagePixels = await getImageNaturalSize(dataUrl);
+          embeddedResolution = await readEmbeddedImageResolution(file).catch(() => null);
           const analysis = await analyzeArtworkImage(file, dataUrl);
           setArtworkAnalysis(analysis);
           setArtworkAnalysisStatus(`Analyzed ${analysis.fileName}`);
@@ -4771,16 +4972,21 @@ export default function Home() {
       }
 
       const localItemId = `${Date.now()}-${file.name}`;
+      const detectedPrintSize = imagePixels.width > 0 && imagePixels.height > 0
+        ? getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution)
+        : null;
       const item: ImageZoneItem = {
         id: localItemId,
         name: file.name,
         dataUrl,
         width: imagePixels.width,
         height: imagePixels.height,
-        dpi: 300,
+        dpi: embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI,
         uploadedAt: new Date().toLocaleString(),
         source: 'local',
-        mimeType: file.type
+        mimeType: file.type,
+        signWidth: detectedPrintSize?.width,
+        signHeight: detectedPrintSize?.height
       };
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(item.id);
@@ -4800,7 +5006,7 @@ export default function Home() {
         }
         setSignArtworkPreviewUrl(dataUrl);
         setBannerArtworkName(file.name);
-        const printSize = applySignSizeFromPixels(imagePixels.width, imagePixels.height) || getArtworkPrintSize(imagePixels.width, imagePixels.height);
+        const printSize = applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
         setPendingBannerPlacement({ dataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height, printWidth: printSize.width, printHeight: printSize.height });
         setImageLibraryStatus(`${file.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       } else if (canPlaceOnCanvas) {
@@ -5090,7 +5296,7 @@ export default function Home() {
     }
   };
 
-  const handleAddCurrentDesignToCart = () => {
+  const handleAddCurrentDesignToCart = async () => {
     if (productMode !== 'signage') {
       setCartStatus('Apparel cart support is coming next. Use sign products for this cart test.');
       setShowCart(true);
@@ -5107,8 +5313,47 @@ export default function Home() {
       return;
     }
 
+    if (!isSupabaseStorageConfigured) {
+      setCartStatus('Final production artwork cannot be prepared because Supabase storage is not configured.');
+      setShowCart(true);
+      return;
+    }
+
     const findArtworkSource = (name: string | undefined, dataUrl: string | null | undefined) => imageZoneItems.find((item) => (name && item.name === name) || (dataUrl && item.dataUrl === dataUrl));
     const artworkFiles: CartArtworkFile[] = [];
+    setIsPreparingCartArtwork(true);
+    setCartStatus('Rendering the approved artwork exactly as shown and saving final production files...');
+    try {
+      const attachFinalProductionFile = async (options: { role: string; name: string; dataUrl: string; width: number; height: number; fitState: ArtworkFitState }) => {
+        const rendered = await renderProductionArtwork({ ...options, transparentBackground: selectedSignProduct.id === 'acrylic' });
+        const storageInfo = await uploadArtworkFileToSupabase(rendered.file, customerSession);
+        artworkFiles.push({ role: `FINAL PRODUCTION — ${options.role}`, name: rendered.name, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', previewUrl: storageInfo.storageUrl });
+      };
+
+      if (isCoroBuilder) {
+        for (let index = 0; index < coroSheetArtworkItems.length; index += 1) {
+          const item = coroSheetArtworkItems[index];
+          const itemWidth = Number(item.signWidth || signWidth);
+          const itemHeight = Number(item.signHeight || signHeight);
+          await attachFinalProductionFile({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: itemWidth, height: itemHeight, fitState: item.frontFitState || 'unresolved' });
+          if (item.backDataUrl) await attachFinalProductionFile({ role: `Artwork set ${index + 1} back`, name: item.backName || `${item.name}-back`, dataUrl: item.backDataUrl, width: itemWidth, height: itemHeight, fitState: item.backFitState || item.frontFitState || 'unresolved' });
+        }
+      } else if (isBannerBuilder) {
+        for (let index = 0; index < bannerOrderItems.length; index += 1) {
+          const item = bannerOrderItems[index];
+          if (item.dataUrl) await attachFinalProductionFile({ role: `Artwork set ${index + 1}`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState });
+        }
+        if (signArtworkPreviewUrl) await attachFinalProductionFile({ role: isAutoSidedRigidBuilder ? 'Front artwork' : `Artwork set ${bannerOrderItems.length + 1}`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachFinalProductionFile({ role: 'Back artwork', name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+      } else if (signArtworkPreviewUrl) {
+        await attachFinalProductionFile({ role: 'Artwork', name: bannerArtworkName || `${selectedSignProduct.name}-artwork`, dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+      }
+    } catch (error) {
+      setCartStatus(`The item was not added because its final production artwork could not be saved: ${error instanceof Error ? error.message : 'unknown rendering error'}.`);
+      setShowCart(true);
+      setIsPreparingCartArtwork(false);
+      return;
+    }
     if (isCoroBuilder) {
       coroSheetArtworkItems.forEach((item, index) => {
         artworkFiles.push({
@@ -5199,6 +5444,7 @@ export default function Home() {
       artworkFiles,
       productionSummary: [
         signArtworkStatusOk ? 'Artwork fit approved' : 'Artwork needs review',
+        'Approved Fit/Stretch placement flattened into FINAL PRODUCTION artwork and saved to Supabase',
         isCoroBuilder ? `Sheet layout: ${coroSheetLayout.columns} across x ${coroSheetLayout.rows} down` : '',
         hasCoroDoubleSided ? 'Double-sided CORO' : '',
         String(signValues.sides || 'single') === 'double' && isBannerBuilder ? 'Double-sided banner' : ''
@@ -5211,6 +5457,7 @@ export default function Home() {
     };
     setCartItems((prev) => [cartItem, ...prev]);
     setCartStatus(`${cartItem.productName} added to cart with ${artworkFiles.length} artwork file${artworkFiles.length === 1 ? '' : 's'} attached.`);
+    setIsPreparingCartArtwork(false);
     setShowCart(true);
   };
 
@@ -5404,6 +5651,38 @@ export default function Home() {
     if (product.signProductId) setActiveCoroOptionPanel('images');
   };
 
+  const chooseProductForImageZoneItem = (product: StoreProductCard) => {
+    const item = imageZoneProductChoice;
+    if (!item || product.disabled) return;
+    setImageZoneProductChoice(null);
+    setShowImageZone(false);
+    setStoreCategory(product.category);
+    setQueuedImageZonePlacementAttempt(0);
+    setQueuedImageZonePlacement({ item, product });
+    setImageLibraryStatus(`Opening ${product.title} and placing ${item.name}...`);
+    openStoreProduct(product);
+  };
+
+  useEffect(() => {
+    if (!queuedImageZonePlacement) return;
+    const { item, product } = queuedImageZonePlacement;
+    const productReady = storeView === 'builder'
+      && productMode === product.mode
+      && (!product.signProductId || signProductId === product.signProductId);
+    if (!productReady) return;
+    if (product.mode === 'apparel' && !fabricCanvasRef.current) {
+      if (queuedImageZonePlacementAttempt >= 40) {
+        setQueuedImageZonePlacement(null);
+        setImageLibraryStatus(`The apparel designer opened, but ${item.name} could not be placed automatically. Open Image Zone from the designer and choose Use again.`);
+        return;
+      }
+      const timer = window.setTimeout(() => setQueuedImageZonePlacementAttempt((attempt) => attempt + 1), 100);
+      return () => window.clearTimeout(timer);
+    }
+    setQueuedImageZonePlacement(null);
+    void useImageZoneItem(item);
+  }, [queuedImageZonePlacement, queuedImageZonePlacementAttempt, storeView, productMode, signProductId]);
+
   const selectSignProductForBuilder = (nextProductId: SignProductId) => {
     if (nextProductId !== signProductId) resetPlacedArtworkForProduct();
     const nextProduct = SIGN_PRODUCT_CONFIGS.find((config) => config.id === nextProductId);
@@ -5422,7 +5701,18 @@ export default function Home() {
         backFitState: item.backDataUrl ? 'unresolved' : item.backFitState
       })));
     }
-    setSignValues((prev) => ({ ...prev, [name]: value }));
+    setSignValues((prev) => {
+      const next = { ...prev, [name]: value };
+      if (isBannerBuilder && lockSignProportions && signArtworkSize && typeof value === 'string' && (name === 'width' || name === 'height')) {
+        const changedDimension = Number(value);
+        const artworkAspect = signArtworkSize.width / Math.max(0.01, signArtworkSize.height);
+        if (changedDimension > 0 && Number.isFinite(artworkAspect) && artworkAspect > 0) {
+          const linkedDimension = name === 'width' ? changedDimension / artworkAspect : changedDimension * artworkAspect;
+          next[name === 'width' ? 'height' : 'width'] = String(Number(linkedDimension.toFixed(2)));
+        }
+      }
+      return next;
+    });
     setSignEstimate(null);
   };
 
@@ -5524,7 +5814,7 @@ export default function Home() {
               <h1 className={`truncate font-black tracking-tight ${isProductionBuilder ? 'text-[2rem] leading-none text-white drop-shadow-[0_0_18px_rgba(56,189,248,0.26)]' : 'text-2xl text-[#05090b] md:text-3xl'}`}>
                 <span className={isProductionBuilder ? 'bg-gradient-to-r from-white via-[#dff7ff] to-[#57c8ff] bg-clip-text text-transparent' : ''}>Hue Studio</span>
               </h1>
-              <p className={`mt-1 text-[10px] font-bold uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>Print-ready ordering</p>
+              <p className={`mt-1 text-[10px] font-bold uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>Design · Upload · Order</p>
             </div>
           </div>
           {isProductionBuilder ? <nav className="order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
@@ -5544,7 +5834,7 @@ export default function Home() {
             {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') setShowImageZone(true); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
             {isProductionBuilder ? <button type="button" onClick={openCanvaImport} className="rounded border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-2 font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.34),0_0_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva</button> : null}
             <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
-            <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart{cartItems.length ? ` (${cartItems.length})` : ''}</button>
+            <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart &amp; Checkout{cartItems.length ? ` (${cartItems.length})` : ''}</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
         </div>
@@ -5554,9 +5844,9 @@ export default function Home() {
         <section className="mx-auto max-w-[1800px] px-4 py-5 md:px-6">
           <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className={`rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
-              <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Online ordering</p>
-              <h2 className={`mt-2 text-2xl font-black tracking-tight ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>Shop ready artwork products</h2>
-              <p className={`mt-2 text-sm leading-6 ${isProductionBuilder ? 'text-slate-300' : 'text-slate-600'}`}>Order with print-ready files, check fit, get online pricing, and checkout separately from the quote request system.</p>
+              <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Products</p>
+              <h2 className={`mt-2 text-2xl font-black tracking-tight ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>Choose a print product</h2>
+              <p className={`mt-2 text-sm leading-6 ${isProductionBuilder ? 'text-slate-300' : 'text-slate-600'}`}>Upload finished artwork, make quick changes, create a simple design, or import from Canva—then price and order online.</p>
               <div className="mt-5 space-y-2">
                 {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => setStoreCategory(category.id)} className={`w-full rounded-md border p-3 text-left transition ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
               </div>
@@ -5574,33 +5864,30 @@ export default function Home() {
                 <div aria-hidden="true" className="hue-store-hero-glow absolute inset-0" />
                 <div className="relative grid min-h-[350px] items-center gap-8 px-6 py-9 md:grid-cols-[minmax(0,1fr)_360px] lg:px-10">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.34em] text-[#67d8ff]">Hue Graphics online store</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.34em] text-[#67d8ff]">Hue Graphics design + ordering</p>
                     <h2 className="hue-store-hero-title mt-4 max-w-3xl uppercase leading-[0.84] drop-shadow-[0_10px_32px_rgba(0,0,0,0.55)]">
-                      <span className="block text-[clamp(3.4rem,7vw,6.8rem)] text-white">Art-Ready</span>
-                      <span className="mt-2 block text-[clamp(2.25rem,4.7vw,4.7rem)] text-[#16a9f5]">Online Ordering</span>
+                      <span className="block text-[clamp(2.8rem,5.8vw,5.8rem)] text-white">Create. Upload.</span>
+                      <span className="mt-2 block text-[clamp(2.4rem,4.9vw,4.9rem)] text-[#16a9f5]">Order Online.</span>
                     </h2>
-                    <p className="mt-5 text-[10px] font-black uppercase tracking-[0.42em] text-slate-300">Upload. Price. Checkout. We print.</p>
+                    <p className="mt-5 text-[10px] font-black uppercase tracking-[0.34em] text-slate-300">Upload. Edit. Import. Order. We print.</p>
                     <div className="mt-7 grid max-w-3xl grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-                      {[['✓', 'Production', 'Checked'], ['◷', 'Fast', 'Turnaround'], ['$', 'Competitive', 'Pricing'], ['⌂', 'Pickup', 'or shipping']].map(([icon, title, note]) => <div key={title} className="flex items-center gap-2 border-l border-[#16a9f5]/45 pl-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#16a9f5]/45 bg-[#071827]/80 font-black text-[#67d8ff] shadow-[0_0_18px_rgba(14,165,233,0.16)]">{icon}</span><span><strong className="block text-white">{title}</strong><span className="block text-slate-400">{note}</span></span></div>)}
+                      {[['↑', 'Upload', 'Ready artwork'], ['✎', 'Hue Designer', 'Create or edit'], ['C', 'Canva', 'Import designs'], ['$', 'Order Online', 'Size and price']].map(([icon, title, note]) => <div key={title} className="flex items-center gap-2 border-l border-[#16a9f5]/45 pl-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#16a9f5]/45 bg-[#071827]/80 font-black text-[#67d8ff] shadow-[0_0_18px_rgba(14,165,233,0.16)]">{icon}</span><span><strong className="block text-white">{title}</strong><span className="block text-slate-400">{note}</span></span></div>)}
                     </div>
-                    <p className="mt-6 max-w-3xl text-xs leading-5 text-slate-400">For approved, print-ready artwork. Confirm size, spelling, bleed, resolution, and layout before checkout. Our team performs a basic production check before printing.</p>
+                    <p className="mt-6 max-w-3xl text-xs leading-5 text-slate-300">Start wherever your artwork is. Upload a finished file, make quick changes or create a simple layout in Hue Designer, or import a saved Canva project. Then choose your product, confirm the size, get pricing, and order.</p>
                     <div className="mt-7 flex flex-wrap items-center gap-3">
-                      <button type="button" onClick={openCanvaImport} className="group inline-flex items-center gap-3 rounded-xl border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-5 py-4 text-sm font-black uppercase text-white shadow-[0_18px_42px_rgba(14,165,233,0.32),0_0_38px_rgba(124,58,237,0.25)] hover:border-white hover:brightness-110">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/18 text-base shadow-inner">C</span>
-                        Import Canva
-                        <span className="text-[#dff7ff] transition group-hover:translate-x-1">-&gt;</span>
-                      </button>
-                      <p className="max-w-md text-xs leading-5 text-slate-300"><strong className="text-white">Design in Canva, order in Hue Studio.</strong> Pull saved Canva projects into your artwork library, confirm the size, and checkout without emailing files back and forth.</p>
+                      <button type="button" onClick={() => setShowImageZone(true)} className="inline-flex items-center gap-2 rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(14,165,233,0.28)] hover:bg-[#0f75b5]">I Have Artwork <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={() => setShowImageZone(true)} className="inline-flex items-center gap-2 rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Use Hue Designer <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={openCanvaImport} className="inline-flex items-center gap-2 rounded-xl border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
                   <div className="rounded-xl border border-white/15 bg-[#0a1119]/90 p-5 shadow-[0_24px_70px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur">
-                    <p className="text-sm font-black text-white">Ready artwork checklist</p>
+                    <p className="text-sm font-black text-white">Choose your starting point</p>
                     <div className="mt-4 grid gap-3 text-xs text-slate-300">
-                      {['Artwork is final and print-ready', 'Size, bleed, and spelling are approved', 'Basic production check before printing', 'Streamlined pricing for self-service orders', 'Most orders finish in 3-4 business days', 'Local pickup or US shipping: $10'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
+                      {['Upload finished, print-ready artwork', 'Make quick changes in Hue Designer', 'Create a simple design from a blank canvas', 'Import saved projects from Canva', 'Choose a product, size, and options', 'Get pricing and complete checkout online'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
                     </div>
                     <div className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-amber-400">
-                      <strong className="block">Need design help or changes?</strong>
-                      <span className="text-amber-300/75">Submit a quote request on the main website.</span>
+                      <strong className="block">Need full custom design help?</strong>
+                      <span className="text-amber-300/75">For advanced design work, submit a quote request on the main website.</span>
                     </div>
                     <div className="mt-4 rounded-xl border border-[#8be3ff]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(124,58,237,0.18))] p-4">
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8be3ff]">Canva friendly</p>
@@ -5609,10 +5896,10 @@ export default function Home() {
                       <button type="button" onClick={openCanvaImport} className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-white px-4 py-3 text-xs font-black uppercase text-[#0f5f94] shadow-[0_10px_28px_rgba(14,165,233,0.22)] hover:bg-[#eaf8ff]">Import Canva</button>
                     </div>
                     <div className="mt-4 overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(7,24,39,0.92))] p-4 shadow-[0_0_28px_rgba(14,165,233,0.10)]">
-                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Artwork Studio</p>
+                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Designer</p>
                       <h3 className="mt-2 text-lg font-black leading-tight text-white">Have an idea? Give it some Hue.</h3>
                       <p className="mt-2 text-[11px] leading-5 text-slate-300">Build a simple sign or banner, create a quick layout, or make basic artwork changes—all right in your browser.</p>
-                      <button type="button" onClick={() => { setShowImageZone(true); setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Try the online editor <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={() => { setShowImageZone(true); setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Create in Hue Designer <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
                 </div>
@@ -5622,7 +5909,7 @@ export default function Home() {
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <h3 className={`text-xl font-black ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>{STORE_CATEGORIES.find((category) => category.id === storeCategory)?.label || 'Products'}</h3>
-                    <p className={`mt-1 text-sm ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>Choose a product to open the print-ready builder.</p>
+                    <p className={`mt-1 text-sm ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>Choose a product to open its Order Builder.</p>
                   </div>
                   <button type="button" onClick={() => setStoreCategory('apparel')} className={`rounded-md border px-3 py-2 text-sm font-medium ${isProductionBuilder ? 'border-white/20 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : 'border-slate-300 bg-white hover:bg-slate-50'}`}>Apparel Designer</button>
                 </div>
@@ -5637,7 +5924,7 @@ export default function Home() {
                       <p className="mt-5 text-xl font-black tracking-tight text-white">{product.title}</p>
                       <p className="mt-1 text-xs font-semibold text-[#38bdf8]">{product.subtitle}</p>
                       <p className="mt-3 text-xs leading-5 text-slate-400">{product.description}</p>
-                      <span className={`mt-4 inline-flex items-center gap-2 text-xs font-black ${product.disabled ? 'text-slate-500' : 'text-[#67d8ff] group-hover:text-white'}`}>{product.disabled ? 'Coming soon' : 'Start order'}<span aria-hidden="true">→</span></span>
+                      <span className={`mt-4 inline-flex items-center gap-2 text-xs font-black ${product.disabled ? 'text-slate-500' : 'text-[#67d8ff] group-hover:text-white'}`}>{product.disabled ? 'Coming soon' : 'Open Order Builder'}<span aria-hidden="true">→</span></span>
                     </div>
                   </button>)}
                 </div>
@@ -5766,7 +6053,7 @@ export default function Home() {
                 <div className={`flex items-start gap-3 ${isProductionBuilder ? 'max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-3 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur' : ''}`}>
                   <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
-                    <p className={`${isProductionBuilder ? 'hidden' : 'text-[10px] font-black uppercase tracking-[0.22em] text-[#1678b8]'}`}>Hue Production Builder</p>
+                    <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-[#1678b8]'}`}>Order Builder</p>
                     <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name}</p>
                     <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {selectedSignProduct.id === 'vehicle-magnet' ? '' : isBannerBuilder ? selectedBannerMaterial?.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
                   </div>
@@ -5825,7 +6112,7 @@ export default function Home() {
                   {isBannerBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
                   {isProductionBuilder && signEstimateStatus ? <p className={`mt-2 max-w-[240px] text-xs leading-4 ${signEstimate ? 'text-emerald-300' : isSignEstimateLoading ? 'text-[#8be3ff]' : 'text-amber-300'}`}>{signEstimateStatus}</p> : null}
                   {hasCoroSheetWarning ? <button type="button" onClick={() => setShowCoroSheetWarning(true)} className="mt-3 rounded bg-red-600 px-3 py-1.5 text-xs font-black text-white shadow-[0_10px_24px_rgba(220,38,38,0.24)] hover:bg-red-500">{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0)} warning{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0) === 1 ? '' : 's'}</button> : null}
-                  {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading} className="mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSignEstimateLoading ? 'Pricing...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
+                  {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading || isPreparingCartArtwork} className="mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isPreparingCartArtwork ? 'Preparing Final Artwork...' : isSignEstimateLoading ? 'Pricing...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
                 </div>
                 <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className={`${isProductionBuilder ? 'hidden' : 'min-h-14'} bg-[#1678b8] px-4 text-sm font-bold uppercase text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70`}>{isSignEstimateLoading ? 'Pricing...' : signEstimate ? 'Update Price' : 'Price It'}</button>
               </div> : null}
@@ -5927,7 +6214,7 @@ export default function Home() {
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3">
                     <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
-                    <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork studio</p></div>
+                    <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Order Builder</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p></div>
                   </div>
                   <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
                 </div>
@@ -5947,17 +6234,17 @@ export default function Home() {
                   </label>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><button type="button" className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button><button type="button" className="rounded-lg border border-slate-300 bg-white px-2 py-2">Color Matching</button></div>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2"><label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label><button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open library</button></div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label><button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button></div>
                 {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close Artwork Setup</button>
               </aside> : null}
               {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-                  <div className="flex items-center gap-3"><span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork studio</p></div></div>
+                  <div className="flex items-center gap-3"><span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Order Builder</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p></div></div>
                   <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
                 </div>
                 {bannerOrderItems.length > 0 ? <div className="mb-3 space-y-3">
@@ -5989,6 +6276,10 @@ export default function Home() {
                         <label>height<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                         <label>qty<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 h-7 w-full rounded border border-slate-300 bg-white px-1 text-right text-xs font-bold text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" /></label>
                       </div>
+                      <button type="button" role="switch" aria-checked={lockSignProportions} onClick={() => setLockSignProportions((locked) => !locked)} className={`mt-2 flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-[10px] font-bold transition ${lockSignProportions ? 'border-[#38bdf8]/45 bg-[#eaf7ff] text-[#0f5f94]' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                        <span className="flex items-center gap-2"><span className={`flex h-5 w-5 items-center justify-center rounded-full ${lockSignProportions ? 'bg-[#1678b8] text-white' : 'bg-slate-100 text-slate-500'}`}><svg viewBox="0 0 24 24" aria-hidden="true" className="h-3 w-3 fill-none stroke-current stroke-2.2"><path d="M9.5 14.5 14.5 9.5" /><path d="m7 17-1.5 1.5a3.54 3.54 0 0 1-5-5L4 10a3.54 3.54 0 0 1 5 0" /><path d="m17 7 1.5-1.5a3.54 3.54 0 0 1 5 5L20 14a3.54 3.54 0 0 1-5 0" /></svg></span>Lock proportions</span>
+                        <span className="uppercase tracking-wide">{lockSignProportions ? 'On' : 'Off'}</span>
+                      </button>
                     </div>
                     <button type="button" onClick={deleteCurrentBannerArtworkSet} disabled={!signArtworkPreviewUrl && layers.length === 0 && bannerOrderItems.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
                   </div>
@@ -6005,7 +6296,8 @@ export default function Home() {
                     </button>
                     {rigidBackArtwork ? <button type="button" onClick={removeRigidBackArtwork} className="mt-2 w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase text-red-600 hover:bg-red-100">Remove back artwork</button> : null}
                   </div> : null}
-                  {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve proportion or Stretch to force {signWidth}&quot; x {signHeight}&quot;.</p> : null}
+                  {signArtworkPreviewUrl ? <button type="button" onClick={() => { void openCurrentOrderArtworkEditor(); }} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-[#38bdf8]/35 bg-[#08243a] px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.08em] text-[#9be8ff] shadow-[0_8px_20px_rgba(14,165,233,0.12)] transition hover:border-[#67d8ff]/70 hover:bg-[#0c304c] hover:text-white"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 fill-none stroke-current stroke-2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>Edit {isRigidSignBuilder && rigidPreviewSide === 'back' && rigidBackArtwork ? 'back' : 'front'} in Hue Designer</button> : null}
+                  {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve the artwork or Stretch to fill {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <button type="button" onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject && !signArtworkPreviewUrl} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
                     <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
@@ -6016,14 +6308,14 @@ export default function Home() {
                 <button type="button" onClick={startAddBannerItem} className="hue-add-artwork mt-3 flex h-20 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#38bdf8]/40 bg-white/[0.04] text-sm font-black text-[#8be3ff] hover:border-[#38bdf8]/80 hover:bg-[#0ea5e9]/10"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0ea5e9]/15 text-lg leading-none">+</span>Add another set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label htmlFor="artwork-upload-input" onClick={(event) => { if (requestAcrylicArtworkNotice('upload')) { event.preventDefault(); return; } setImageLibraryStatus('Choose finished banner artwork.'); }} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label>
-                  <button type="button" onClick={openArtworkLibrary} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open library</button>
+                  <button type="button" onClick={openArtworkLibrary} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button>
                 </div>
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close Artwork Setup</button>
               </aside> : null}
               {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -6031,7 +6323,7 @@ export default function Home() {
                     <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
                     <div className="min-w-0">
                       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p>
-                      <p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork studio</p>
+                      <p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p>
                     </div>
                   </div>
                   <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
@@ -6150,7 +6442,7 @@ export default function Home() {
                 <button type="button" onClick={startAddCoroSign} className="hue-add-artwork mt-3 flex h-20 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#38bdf8]/40 bg-white/[0.04] text-sm font-black text-[#8be3ff] hover:border-[#38bdf8]/80 hover:bg-[#0ea5e9]/10"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0ea5e9]/15 text-lg leading-none">+</span>Add another set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label>
-                  <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open library</button>
+                  <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button>
                 </div>
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
@@ -6173,7 +6465,7 @@ export default function Home() {
                     })}
                   </div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close artwork studio</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close Artwork Setup</button>
               </aside> : null}
               {isProductionBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-20 left-1/2 z-20 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
                 <div className="flex items-start justify-between gap-3">
@@ -6200,6 +6492,7 @@ export default function Home() {
                   <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Width inches<input type="number" min={1} step="0.25" value={String(signValues.width ?? signWidth)} onChange={(event) => updateSignOption('width', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
                   <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Height inches<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
                   <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Quantity<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
+                  <button type="button" role="switch" aria-checked={lockSignProportions} onClick={() => setLockSignProportions((locked) => !locked)} className={`flex items-center justify-between rounded border px-3 py-2 text-xs font-bold sm:col-span-3 ${lockSignProportions ? 'border-[#38bdf8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-300 bg-white text-slate-600'}`}><span>Lock artwork proportions</span><span className="uppercase">{lockSignProportions ? 'On' : 'Off'}</span></button>
                   <p className="rounded bg-[#eaf5fb] px-3 py-2 text-xs leading-5 text-[#0f5f94] sm:col-span-3">Uploading artwork will auto-fill a starting banner size from the file pixels. You can override it here, then use Fit or Stretch in the Images panel.</p>
                 </div> : null}
                 {activeCoroOptionPanel === 'size' && isCoroBuilder ? <div className="mt-4 grid gap-4 lg:grid-cols-[240px_1fr]">
@@ -6558,7 +6851,7 @@ export default function Home() {
           <div className="border-b border-white/10 bg-[linear-gradient(90deg,#07111f,#0b263d)] px-5 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Hue Cart</p>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-[#62d4ff]">Cart &amp; Checkout</p>
                 <h2 className="mt-1 text-2xl font-black text-white">Print-ready order</h2>
                 <p className="mt-1 text-sm text-slate-300">{cartItems.length} item{cartItems.length === 1 ? '' : 's'} / {formatSignPrice(cartSubtotal, 'USD')} subtotal</p>
               </div>
@@ -6626,7 +6919,7 @@ export default function Home() {
               </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => { setCartItems([]); setCartStatus('Cart cleared.'); }} disabled={cartItems.length === 0} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-red-400/60 disabled:cursor-not-allowed disabled:opacity-40">Clear</button>
-                <button type="button" onClick={openTestCheckout} disabled={cartItems.length === 0} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(14,165,233,0.20)] hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Test Checkout</button>
+                <button type="button" onClick={openTestCheckout} disabled={cartItems.length === 0} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(14,165,233,0.20)] hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Continue to Checkout</button>
               </div>
             </div>
           </div>
@@ -6638,8 +6931,8 @@ export default function Home() {
           <div className="border-b border-white/10 bg-[linear-gradient(135deg,#07111f,#0b263d_58%,#102b45)] px-6 py-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#62d4ff]">Test Checkout</p>
-                <h2 className="mt-1 text-2xl font-black text-white">{checkoutStep === 'complete' ? 'Order submitted' : 'Print-ready checkout'}</h2>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#62d4ff]">Cart &amp; Checkout</p>
+                <h2 className="mt-1 text-2xl font-black text-white">{checkoutStep === 'complete' ? 'Order submitted' : 'Review and submit your order'}</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-300">No payment will be collected. This creates a realistic test order for your team to review.</p>
               </div>
               <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
@@ -6874,7 +7167,7 @@ export default function Home() {
           <section className="flex max-h-[min(820px,94vh)] w-[min(1080px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_36px_130px_rgba(0,0,0,0.78),0_0_70px_rgba(14,165,233,0.18)]">
             <header className="flex items-center gap-4 border-b border-white/10 bg-[linear-gradient(135deg,#071522,#08243a_55%,#071522)] px-6 py-5">
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-2xl font-black text-[#67d8ff]">+</span>
-              <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Artwork Studio</p><h2 className="mt-1 text-2xl font-black">Build New Artwork</h2><p className="mt-1 text-sm text-slate-400">Choose a common production size or enter your own dimensions.</p></div>
+              <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="mt-1 text-2xl font-black">Create New Artwork</h2><p className="mt-1 text-sm text-slate-400">Choose a common production size or enter your own dimensions.</p></div>
               <button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
             </header>
             <div className="grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)]">
@@ -6903,7 +7196,7 @@ export default function Home() {
                 </div>}
               </main>
             </div>
-            <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4"><p className={`min-w-0 flex-1 text-xs ${newArtworkError ? 'font-bold text-amber-300' : 'text-slate-500'}`}>{newArtworkError || 'A blank print-ready artboard will open in the editor. Nothing is saved until you choose Save as new image.'}</p><button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1]">Cancel</button><button type="button" onClick={buildNewArtwork} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Start Designing</button></footer>
+            <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4"><p className={`min-w-0 flex-1 text-xs ${newArtworkError ? 'font-bold text-amber-300' : 'text-slate-500'}`}>{newArtworkError || 'A blank print-ready artboard will open in Hue Designer. Nothing is saved until you choose Save to Image Zone.'}</p><button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1]">Cancel</button><button type="button" onClick={buildNewArtwork} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Open Hue Designer</button></footer>
           </section>
         </div>;
       })() : null}
@@ -6912,14 +7205,14 @@ export default function Home() {
         <section className="flex min-h-0 w-full flex-col overflow-hidden rounded-[22px] border border-[#38bdf8]/25 bg-[#07111f] text-white shadow-[0_36px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.18)]">
           <header className="flex flex-wrap items-center gap-3 border-b border-white/10 bg-[#071522] px-5 py-3">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#67d8ff]/25 bg-[#0c2a40] text-xl text-[#67d8ff]">✎</span>
-            <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Artwork Studio</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Build New Artwork' : `Edit a copy of ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
+            <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Create New Artwork' : `Editing ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
             <div className="flex items-center gap-1 rounded-xl border border-[#38bdf8]/25 bg-black/25 p-1"><button type="button" onClick={() => switchArtworkEditorSide('front')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'front' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>Front</button><button type="button" onClick={() => switchArtworkEditorSide('back')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'back' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{artworkEditorHasBackSide ? 'Back' : '+ Add Back'}</button></div>
             <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <select value="" onChange={(event) => restoreArtworkEditorVersion(event.target.value)} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-2 text-[10px] text-slate-200"><option value="" disabled>Restore…</option>{artworkEditorVersions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}</select> : null}</div>
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
               <button type="button" disabled={!artworkEditorCanUndo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(-1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">↶ Undo</button>
               <button type="button" disabled={!artworkEditorCanRedo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">Redo ↷</button>
             </div>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => setShowArtworkEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { setShowArtworkEditor(false); setArtworkEditorOrderReturn(null); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
           </header>
           <div className={`grid min-h-0 flex-1 transition-[grid-template-columns] duration-300 ${artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
             <aside className={`relative min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
@@ -7027,8 +7320,8 @@ export default function Home() {
           </div>
           <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-5 py-3">
             <p className={`min-w-0 flex-1 text-xs leading-5 ${artworkEditorStatus.toLowerCase().includes('could not') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{artworkEditorStatus}</p>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => setShowArtworkEditor(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Saving design...' : 'Save Editable Design'}</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { setShowArtworkEditor(false); setArtworkEditorOrderReturn(null); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Saving design...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
           </footer>
         </section>
       </div> : null}
@@ -7082,12 +7375,30 @@ export default function Home() {
         </div>;
       })() : null}
 
+      {imageZoneProductChoice ? <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[#01060c]/90 p-4 backdrop-blur-lg">
+        <section className="flex max-h-[90vh] w-[min(1080px,96vw)] flex-col overflow-hidden rounded-[24px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_40px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.18)]">
+          <header className="flex items-center gap-4 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.2),transparent_38%),#071522] px-5 py-5 md:px-7">
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#38bdf8]/30 bg-white p-1 shadow-[0_0_24px_rgba(14,165,233,0.18)]">{canPlaceImageZoneItem(imageZoneProductChoice) ? <img src={imageZoneProductChoice.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="text-xs font-black text-slate-500">PDF</span>}</span>
+            <div className="min-w-0 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Use this artwork</p><h2 className="mt-1 text-2xl font-black">What product are you making?</h2><p className="mt-1 truncate text-xs text-slate-400">{imageZoneProductChoice.name}</p></div>
+            <button type="button" onClick={() => setImageZoneProductChoice(null)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold text-slate-300 hover:bg-white/[0.1]">Cancel</button>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
+            <p className="mb-5 rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/55 px-4 py-3 text-sm leading-6 text-slate-300">Choose a product and Hue Studio will open its builder, apply the correct defaults, and place this artwork automatically.</p>
+            <div className="space-y-6">{STORE_CATEGORIES.map((category) => {
+              const products = STORE_PRODUCTS.filter((product) => product.category === category.id && !product.disabled);
+              if (!products.length) return null;
+              return <section key={category.id}><div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-sm font-black uppercase tracking-[0.16em] text-[#8be3ff]">{category.label}</h3><p className="mt-1 text-xs text-slate-500">{category.description}</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{products.map((product) => <button key={product.id} type="button" onClick={() => chooseProductForImageZoneItem(product)} className="group flex min-h-24 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] p-4 text-left transition hover:-translate-y-0.5 hover:border-[#38bdf8]/55 hover:bg-[#0c2a40]/70 hover:shadow-[0_14px_34px_rgba(0,0,0,0.3)]"><span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#38bdf8]/25 bg-[#071827] text-[10px] font-black text-[#8be3ff]">{product.image ? <img src={product.image} alt="" className="h-full w-full object-cover" /> : product.title.slice(0, 2).toUpperCase()}</span><span className="min-w-0 flex-1"><span className="block font-black text-white">{product.title}</span><span className="mt-1 block text-xs text-slate-400">{product.subtitle}</span></span><span className="text-lg text-[#38bdf8] transition group-hover:translate-x-1">→</span></button>)}</div></section>;
+            })}</div>
+          </div>
+        </section>
+      </div> : null}
+
       {showImageZone ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/80 p-4 backdrop-blur-md">
         <section className="hue-image-library flex h-[min(800px,90vh)] w-[min(1380px,96vw)] flex-col overflow-hidden rounded-[22px] border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)]">
           <div className="relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
             <div className="mr-auto flex min-w-[280px] items-center gap-3">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
-              <div><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Graphics</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Library</h2><p className="mt-0.5 text-xs text-slate-400">Your print-ready artwork vault</p></div>
+              <div><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Studio</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Zone</h2><p className="mt-0.5 text-xs text-slate-400">Your saved artwork library</p></div>
             </div>
             <select className="h-10 min-w-48 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
               <option>Home</option>
@@ -7096,8 +7407,8 @@ export default function Home() {
             </select>
             <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</label>
             <button type="button" onClick={openCanvaImport} className="h-10 rounded-xl border border-[#22d3ee]/35 bg-[#083044] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#0c3b55]">Import Canva</button>
-            <button type="button" onClick={() => { setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Build New</button>
-            <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit Artwork</button>
+            <button type="button" onClick={() => { setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
+            <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={openAiEditor} className="h-10 rounded-xl border border-violet-300/30 bg-violet-500/10 px-4 text-xs font-black uppercase text-violet-100 hover:border-violet-300/60 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-35">AI Tools</button>
             <button type="button" className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Image setup</button>
             <div className="order-last flex w-full items-center gap-2 pt-2"><span className="text-lg text-[#67d8ff]">⌕</span><input className="h-10 min-w-56 flex-1 rounded-xl border border-white/15 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" placeholder="Search your artwork library" />
@@ -7106,7 +7417,7 @@ export default function Home() {
               <option>Sort: Name</option>
               <option>Sort: Size</option>
             </select>
-            <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close</button></div>
+            <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close Image Zone</button></div>
           </div>
           <div className="flex items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
             <button type="button" className="rounded-lg border border-[#38bdf8]/35 bg-[#0c2a40] px-4 py-2 font-black uppercase text-[#8be3ff] hover:bg-[#10364f]">Select all</button>
@@ -7153,7 +7464,7 @@ export default function Home() {
                 const item = imageZoneItems.find((entry) => entry.id === selectedImageZoneId);
                 if (!item) return;
                 await useImageZoneItem(item);
-              }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Use selected artwork</button>
+              }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">Use Selected Artwork</button>
             </div>
           </div>
         </section>
@@ -7170,7 +7481,7 @@ export default function Home() {
                 <p className="mt-1 text-xs text-slate-400 md:text-sm">Pick a project and Hue Studio will save a print-ready copy directly into Image Zone.</p>
               </div>
               {canvaImportStatus?.connected ? <span className="hidden items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-200 sm:flex"><span className="h-2 w-2 rounded-full bg-emerald-400" /> Canva connected</span> : null}
-              <button type="button" onClick={() => setShowCanvaImport(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/45 hover:bg-white/[0.1]">Back to Hue Studio</button>
+              <button type="button" onClick={() => setShowCanvaImport(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/45 hover:bg-white/[0.1]">Back to Image Zone</button>
             </div>
           </header>
           <div className="mx-auto grid min-h-0 w-full max-w-[1600px] flex-1 gap-5 overflow-y-auto px-5 py-5 md:px-8 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -7232,7 +7543,7 @@ export default function Home() {
             <p className="truncate text-slate-600">{productMode === 'apparel' ? `${selectedColorName} / Qty: ${totalQuantity} / Est: $${displayedPerShirt.toFixed(2)}/ea` : isCoroBuilder ? `${signWidth}" x ${signHeight}" / Qty ${designerQuantity} / ${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'}` : `Qty: ${designerQuantity} / Est: ${signEstimate ? formatSignPrice(signEstimate.price?.each, signEstimate.currency) + '/ea' : 'Run sign estimate'}`}</p>
           </div>
           <button onClick={saveDraftToLocal} className={`rounded-md border border-[#1678b8] bg-white px-4 py-3 font-bold text-[#1678b8] hover:bg-[#eaf5fb] ${isCoroBuilder ? 'hidden sm:block' : ''}`}>{isCoroBuilder ? 'Save' : 'Save | Share'}</button>
-          <button onClick={productMode === 'apparel' ? requestApparelEstimate : canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} className="rounded-md bg-[#1f73be] px-5 py-3 font-bold text-white hover:bg-[#2a86d8]">{productMode === 'apparel' ? 'Get Price' : canAddCurrentDesignToCart ? 'Add to Cart' : 'Price It'}</button>
+          <button disabled={isPreparingCartArtwork} onClick={productMode === 'apparel' ? requestApparelEstimate : canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} className="rounded-md bg-[#1f73be] px-5 py-3 font-bold text-white hover:bg-[#2a86d8] disabled:cursor-wait disabled:opacity-60">{isPreparingCartArtwork ? 'Preparing Final Artwork...' : productMode === 'apparel' ? 'Get Price' : canAddCurrentDesignToCart ? 'Add to Cart' : 'Price It'}</button>
         </div>
       </div>
       </>
