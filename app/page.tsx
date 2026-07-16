@@ -17,6 +17,24 @@ type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean; isLocked?: boolean };
 type NewArtworkPreset = { width: number; height: number; label?: string; popular?: boolean };
 type NewArtworkPresetGroup = { id: string; label: string; description: string; sizes: NewArtworkPreset[] };
+type SmartTemplateCategory = 'Real Estate' | 'Business' | 'Contractors' | 'Events' | 'Parking & Directional';
+type SmartTemplateStyle = 'Modern' | 'Bold' | 'Premium' | 'Minimal' | 'Classic';
+type SmartTemplate = {
+  id: string;
+  name: string;
+  category: SmartTemplateCategory;
+  style: SmartTemplateStyle;
+  description: string;
+  headline: string;
+  subheadline: string;
+  callout: string;
+  primary: string;
+  accent: string;
+  background: string;
+  layout: 'band' | 'split' | 'frame';
+  suggestedSizes: string[];
+};
+type SmartTemplateForm = { headline: string; subheadline: string; name: string; phone: string; website: string; detailLine: string; footerNote: string; qrValue: string; primary: string; accent: string; background: string; includeQr: boolean };
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
@@ -115,7 +133,7 @@ type ArtworkAnalysis = {
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://zcugxtcbvkrquxeuonop.supabase.co').replace(/\/$/, '');
 const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_cK1tQvEVsg69SIMrrdLQpQ_Sw2ot5qb';
 const SUPABASE_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || 'artwork-files';
-const SUPABASE_LIBRARY_PREFIX = 'test-library';
+const GUEST_UPLOAD_SESSION_KEY = 'hue-guest-upload-session';
 const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
@@ -185,8 +203,19 @@ const getSafeStorageFileName = (name: string) => {
 
 const getSafeStorageFolderName = (name: string, fallback: string) => getSafeStorageFileName(name.toLowerCase()).slice(0, 80) || fallback;
 
+const getGuestUploadSessionId = () => {
+  if (typeof window === 'undefined') return `guest-${Date.now()}`;
+  const existing = window.localStorage.getItem(GUEST_UPLOAD_SESSION_KEY);
+  if (existing && /^[a-zA-Z0-9-]{20,80}$/.test(existing)) return existing;
+  const sessionId = typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem(GUEST_UPLOAD_SESSION_KEY, sessionId);
+  return sessionId;
+};
+
 const getCustomerLibraryPrefix = (session: CustomerSession | null) => {
-  if (!session?.user?.id) return SUPABASE_LIBRARY_PREFIX;
+  if (!session?.user?.id) return `guest-orders/${getGuestUploadSessionId()}`;
   const customerLabel = getSafeStorageFolderName(session.user.email || 'customer', 'customer');
   return `customers/${session.user.id}/${customerLabel}`;
 };
@@ -503,6 +532,26 @@ const ARTWORK_EDITOR_TEMPLATES = [
   { id: 'directional', label: 'Directional', headline: 'THIS WAY →', detail: 'WELCOME', color: '#0b1f44', accent: '#0ea5e9' },
   { id: 'vote', label: 'Campaign', headline: 'VOTE', detail: 'ELECTION DAY', color: '#1e3a8a', accent: '#dc2626' }
 ] as const;
+
+const SMART_TEMPLATE_CATEGORIES: Array<'All' | SmartTemplateCategory> = ['All', 'Real Estate', 'Business', 'Contractors', 'Events', 'Parking & Directional'];
+const SMART_TEMPLATE_STYLES: Array<'All' | SmartTemplateStyle> = ['All', 'Modern', 'Bold', 'Premium', 'Minimal', 'Classic'];
+const SMART_TEMPLATES: SmartTemplate[] = [
+  { id: 'realty-modern-sale', name: 'Modern For Sale', category: 'Real Estate', style: 'Modern', description: 'Clean agent-focused yard sign with strong contact details.', headline: 'FOR SALE', subheadline: 'Beautiful Home Available', callout: 'YOUR NAME', primary: '#0b1f44', accent: '#0ea5e9', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'realty-premium-open', name: 'Premium Open House', category: 'Real Estate', style: 'Premium', description: 'Upscale open-house layout with space for a QR code.', headline: 'OPEN HOUSE', subheadline: 'SUNDAY · 1–4 PM', callout: 'YOUR NAME', primary: '#111827', accent: '#d4a853', background: '#fffdf7', layout: 'frame', suggestedSizes: ['24 × 18', '18 × 24'] },
+  { id: 'realty-bold-sold', name: 'Bold Sold', category: 'Real Estate', style: 'Bold', description: 'High-impact sold or pending announcement.', headline: 'SOLD', subheadline: 'Another Home Successfully Closed', callout: 'YOUR NAME', primary: '#991b1b', accent: '#facc15', background: '#ffffff', layout: 'split', suggestedSizes: ['24 × 18'] },
+  { id: 'business-grand-opening', name: 'Grand Opening', category: 'Business', style: 'Bold', description: 'High-energy launch sign for a new location or business.', headline: 'GRAND OPENING', subheadline: 'JOIN US THIS WEEKEND', callout: 'YOUR BUSINESS', primary: '#0b1f44', accent: '#f97316', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24', '48 × 36'] },
+  { id: 'business-now-hiring', name: 'Modern Now Hiring', category: 'Business', style: 'Modern', description: 'Clear recruiting sign with a direct call to action.', headline: 'NOW HIRING', subheadline: 'APPLY TODAY', callout: 'YOUR BUSINESS', primary: '#082f49', accent: '#22c55e', background: '#f8fafc', layout: 'split', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'business-hours', name: 'Classic Business Hours', category: 'Business', style: 'Classic', description: 'Professional hours and contact-information sign.', headline: 'BUSINESS HOURS', subheadline: 'MON–FRI · 8 AM–5 PM', callout: 'YOUR BUSINESS', primary: '#1e3a5f', accent: '#c9a227', background: '#fffef8', layout: 'frame', suggestedSizes: ['18 × 24', '24 × 18'] },
+  { id: 'contractor-roofing', name: 'Roofing Lead Builder', category: 'Contractors', style: 'Bold', description: 'Readable roadside layout built around phone leads.', headline: 'ROOFING', subheadline: 'FREE ESTIMATES', callout: 'YOUR COMPANY', primary: '#172554', accent: '#ef4444', background: '#ffffff', layout: 'split', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'contractor-landscape', name: 'Landscape Services', category: 'Contractors', style: 'Modern', description: 'Fresh service sign with company and website fields.', headline: 'LANDSCAPING', subheadline: 'DESIGN · INSTALL · MAINTAIN', callout: 'YOUR COMPANY', primary: '#14532d', accent: '#84cc16', background: '#f7fee7', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'contractor-premium', name: 'Premium Home Services', category: 'Contractors', style: 'Premium', description: 'Refined layout for established home-service brands.', headline: 'HOME SERVICES', subheadline: 'LICENSED · INSURED · LOCAL', callout: 'YOUR COMPANY', primary: '#111827', accent: '#c59d5f', background: '#fafaf9', layout: 'frame', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'event-yard-sale', name: 'Big Yard Sale', category: 'Events', style: 'Bold', description: 'Bright, readable sale sign with date and direction.', headline: 'YARD SALE', subheadline: 'SATURDAY · 8 AM–2 PM', callout: '123 MAIN STREET', primary: '#dc2626', accent: '#facc15', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18'] },
+  { id: 'event-fundraiser', name: 'Community Fundraiser', category: 'Events', style: 'Modern', description: 'Friendly event layout with time and web details.', headline: 'FUNDRAISER', subheadline: 'SATURDAY · 6 PM', callout: 'COMMUNITY EVENT', primary: '#312e81', accent: '#ec4899', background: '#faf5ff', layout: 'split', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'event-wedding', name: 'Wedding Welcome', category: 'Events', style: 'Premium', description: 'Elegant welcome or directional wedding sign.', headline: 'WELCOME', subheadline: 'THE CELEBRATION STARTS HERE', callout: 'NAME & NAME', primary: '#3f3f46', accent: '#d4a373', background: '#fffbf5', layout: 'frame', suggestedSizes: ['18 × 24', '24 × 36'] },
+  { id: 'parking-no-parking', name: 'No Parking', category: 'Parking & Directional', style: 'Classic', description: 'Immediate regulatory message with optional details.', headline: 'NO PARKING', subheadline: 'AUTHORIZED VEHICLES ONLY', callout: 'TOW AWAY ZONE', primary: '#b91c1c', accent: '#111827', background: '#ffffff', layout: 'frame', suggestedSizes: ['12 × 18', '18 × 24'] },
+  { id: 'parking-directional', name: 'Directional Arrow', category: 'Parking & Directional', style: 'Bold', description: 'Large directional message for fast roadside reading.', headline: 'THIS WAY →', subheadline: 'ENTRANCE', callout: 'WELCOME', primary: '#0b1f44', accent: '#0ea5e9', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24'] },
+  { id: 'parking-reserved', name: 'Reserved Parking', category: 'Parking & Directional', style: 'Minimal', description: 'Clean reserved-space sign with customizable label.', headline: 'RESERVED', subheadline: 'PARKING', callout: 'CUSTOMER ONLY', primary: '#0f3d56', accent: '#38bdf8', background: '#f8fafc', layout: 'split', suggestedSizes: ['12 × 18', '18 × 24'] }
+];
 
 const ARTWORK_EDITOR_ICONS = [
   ['★', 'Star', 'favorite rating'], ['☆', 'Outline Star', 'favorite rating'], ['➜', 'Right Arrow', 'direction arrow'], ['←', 'Left Arrow', 'direction arrow'],
@@ -1621,6 +1670,16 @@ export default function Home() {
   const [artworkEditorMobileView, setArtworkEditorMobileView] = useState<'canvas' | 'tools' | 'properties'>('canvas');
   const [artworkEditorSnapToCenter, setArtworkEditorSnapToCenter] = useState(true);
   const [artworkEditorShowGuides, setArtworkEditorShowGuides] = useState(true);
+  const [artworkEditorPrintView, setArtworkEditorPrintView] = useState(false);
+  const [showSmartTemplateLibrary, setShowSmartTemplateLibrary] = useState(false);
+  const [smartTemplateCategory, setSmartTemplateCategory] = useState<'All' | SmartTemplateCategory>('All');
+  const [smartTemplateStyle, setSmartTemplateStyle] = useState<'All' | SmartTemplateStyle>('All');
+  const [smartTemplateSearch, setSmartTemplateSearch] = useState('');
+  const [selectedSmartTemplateId, setSelectedSmartTemplateId] = useState<string | null>(null);
+  const [smartTemplateForm, setSmartTemplateForm] = useState<SmartTemplateForm>({ headline: '', subheadline: '', name: '', phone: '', website: '', detailLine: '', footerNote: '', qrValue: '', primary: '#0b1f44', accent: '#0ea5e9', background: '#ffffff', includeQr: false });
+  const [smartTemplateLogo, setSmartTemplateLogo] = useState<{ name: string; dataUrl: string } | null>(null);
+  const [smartTemplatePhoto, setSmartTemplatePhoto] = useState<{ name: string; dataUrl: string } | null>(null);
+  const [isGeneratingSmartTemplate, setIsGeneratingSmartTemplate] = useState(false);
   const [artworkEditorVerticalGuides, setArtworkEditorVerticalGuides] = useState<number[]>([]);
   const [artworkEditorHorizontalGuides, setArtworkEditorHorizontalGuides] = useState<number[]>([]);
   const [artworkEditorTextCurve, setArtworkEditorTextCurve] = useState(0);
@@ -1784,6 +1843,13 @@ export default function Home() {
   }, [testOrders]);
 
   useEffect(() => {
+    if (!customerSession?.access_token || !customerSession.user?.id) {
+      setImageZoneItems((prev) => prev.filter((item) => item.source !== 'supabase'));
+      setSelectedImageZoneId(null);
+      setIsImageLibraryLoading(false);
+      setImageLibraryStatus('Guest session: artwork stays in this browser until you sign in. Create an account or sign in to save a private cloud library.');
+      return;
+    }
     if (!isSupabaseStorageConfigured) {
       setImageLibraryStatus('Supabase storage is not configured. Uploads will stay in this browser session.');
       return;
@@ -1885,9 +1951,7 @@ export default function Home() {
           const localItems = prev.filter((item) => item.source !== 'supabase');
           return [...remoteItems, ...localItems];
         });
-        setImageLibraryStatus(customerSession?.user?.email
-          ? `Signed in as ${customerSession.user.email}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.`
-          : `Guest library ready. ${remoteItems.length} stored file${remoteItems.length === 1 ? '' : 's'} found.`);
+        setImageLibraryStatus(`Signed in as ${customerSession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.`);
       } catch (error) {
         if (!mounted) return;
         setImageLibraryStatus(`Supabase library not readable yet: ${error instanceof Error ? error.message : 'unknown error'}. Local previews still work.`);
@@ -3701,6 +3765,7 @@ export default function Home() {
     setArtworkEditorSnapToCenter(true);
     artworkEditorSnapToCenterRef.current = true;
     setArtworkEditorShowGuides(true);
+    setArtworkEditorPrintView(false);
     setArtworkEditorBrightness(0);
     setArtworkEditorContrast(0);
     setArtworkEditorSaturation(0);
@@ -3717,7 +3782,33 @@ export default function Home() {
     setShowArtworkEditor(false);
     setArtworkEditorOrderReturn(null);
     setShowNewArtworkDialog(false);
+    setArtworkEditorPrintView(false);
     if (returnToImageZone) setShowImageZone(true);
+  };
+
+  const clearArtworkEditorSelection = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (!canvas) return;
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    setArtworkEditorActiveObject(null);
+    refreshArtworkEditorLayers(canvas);
+  };
+
+  const toggleArtworkEditorPrintView = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const nextPrintView = !artworkEditorPrintView;
+    if (canvas) {
+      canvas.discardActiveObject();
+      canvas.selection = !nextPrintView;
+      (canvas as Canvas & { skipTargetFind: boolean }).skipTargetFind = nextPrintView;
+      canvas.requestRenderAll();
+      setArtworkEditorActiveObject(null);
+      refreshArtworkEditorLayers(canvas);
+    }
+    setArtworkEditorPrintView(nextPrintView);
+    setArtworkEditorMobileView('canvas');
+    setArtworkEditorStatus(nextPrintView ? 'Print View is showing the clean design. Editing controls and production guides are temporarily hidden.' : 'Print View closed. Select an element to continue editing.');
   };
 
   const openArtworkEditor = async () => {
@@ -4379,6 +4470,164 @@ export default function Home() {
     }
   };
 
+  const chooseSmartTemplate = (template: SmartTemplate) => {
+    const categoryDetails: Record<SmartTemplateCategory, { detailLine: string; footerNote: string }> = {
+      'Real Estate': { detailLine: '123 Main Street', footerNote: 'Licensed Real Estate Professional' },
+      'Business': { detailLine: '123 Main Street · Your City', footerNote: 'Locally owned and operated' },
+      'Contractors': { detailLine: 'Residential · Commercial', footerNote: 'Licensed · Insured · Free Estimates' },
+      'Events': { detailLine: '123 Main Street · Your City', footerNote: 'Everyone is welcome' },
+      'Parking & Directional': { detailLine: 'CUSTOMER PARKING', footerNote: 'Please follow posted instructions' }
+    };
+    setSelectedSmartTemplateId(template.id);
+    setSmartTemplateForm({
+      headline: template.headline,
+      subheadline: template.subheadline,
+      name: template.callout,
+      phone: '(555) 555-0123',
+      website: 'yourwebsite.com',
+      detailLine: categoryDetails[template.category].detailLine,
+      footerNote: categoryDetails[template.category].footerNote,
+      qrValue: 'https://yourwebsite.com',
+      primary: template.primary,
+      accent: template.accent,
+      background: template.background,
+      includeQr: template.category === 'Real Estate' || template.category === 'Business'
+    });
+    setSmartTemplateLogo(null);
+    setSmartTemplatePhoto(null);
+  };
+
+  const readSmartTemplateAsset = (file: File | undefined, kind: 'logo' | 'photo') => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setArtworkEditorStatus('Smart Template logo and photo files must be PNG, JPG, WebP, GIF, or SVG images.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const asset = { name: file.name, dataUrl: String(reader.result || '') };
+      if (kind === 'logo') setSmartTemplateLogo(asset);
+      else setSmartTemplatePhoto(asset);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const openSmartTemplateLibrary = () => {
+    setShowSmartTemplateLibrary(true);
+    if (!selectedSmartTemplateId) chooseSmartTemplate(SMART_TEMPLATES[0]);
+  };
+
+  const generateSmartTemplate = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const template = SMART_TEMPLATES.find((entry) => entry.id === selectedSmartTemplateId);
+    if (!canvas || !template) return;
+    const existingEditableObjects = canvas.getObjects().filter((object) => (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole !== 'base');
+    if (existingEditableObjects.length && !window.confirm('Replace the current editable design with this Hue Smart Template? Your original uploaded artwork will remain preserved.')) return;
+    setIsGeneratingSmartTemplate(true);
+    try {
+      existingEditableObjects.forEach((object) => canvas.remove(object));
+      canvas.backgroundColor = smartTemplateForm.background;
+      setArtworkEditorBackground(smartTemplateForm.background);
+      const width = canvas.getWidth();
+      const height = canvas.getHeight();
+      const stamp = Date.now();
+      const addLayerData = (object: FabricObject, name: string, locked = false) => {
+        (object as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean; smartTemplateId?: string } }).data = { layerId: `smart-${template.id}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${stamp}`, layerName: name, locked, smartTemplateId: template.id };
+      };
+      const addText = (text: string, options: Record<string, unknown>, name: string, maxWidth = width * 0.82) => {
+        const object = new IText(text || ' ', { originX: 'center', originY: 'center', textAlign: 'center', fontFamily: 'Arial, sans-serif', ...FABRIC_CONTROL_STYLE, ...options });
+        if (object.width && object.width > maxWidth) object.scaleX = maxWidth / object.width;
+        addLayerData(object, name);
+        canvas.add(object);
+        return object;
+      };
+      const addShape = (options: ConstructorParameters<typeof Rect>[0], name: string, locked = true) => {
+        const object = new Rect({ selectable: !locked, evented: !locked, ...options });
+        addLayerData(object, name, locked);
+        canvas.add(object);
+        return object;
+      };
+      const loadAsset = async (asset: { name: string; dataUrl: string } | null, layerName: string) => {
+        if (!asset) return null;
+        const image = await FabricImage.fromURL(asset.dataUrl);
+        (image as FabricImage & { data?: { layerId?: string; layerName?: string; smartTemplateId?: string; sourceName?: string } }).data = { layerId: `smart-${template.id}-${layerName.toLowerCase()}-${stamp}`, layerName, smartTemplateId: template.id, sourceName: asset.name };
+        image.set({ ...FABRIC_CONTROL_STYLE });
+        return image;
+      };
+      const placeAsset = (image: FabricImage, x: number, y: number, maxWidth: number, maxHeight: number) => {
+        const scale = Math.min(maxWidth / Math.max(1, image.width || 1), maxHeight / Math.max(1, image.height || 1));
+        image.set({ left: x, top: y, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale });
+        canvas.add(image);
+      };
+      const photoAsset = await loadAsset(smartTemplatePhoto, 'Photo');
+      const logoAsset = await loadAsset(smartTemplateLogo, 'Logo');
+      const hasPhoto = Boolean(photoAsset);
+
+      if (template.layout === 'band') {
+        addShape({ left: 0, top: 0, originX: 'left', originY: 'top', width, height: height * 0.25, fill: smartTemplateForm.primary }, 'Primary Header');
+        addShape({ left: 0, top: height * 0.25, originX: 'left', originY: 'top', width, height: height * 0.045, fill: smartTemplateForm.accent }, 'Accent Band');
+        addShape({ left: 0, top: height * 0.81, originX: 'left', originY: 'top', width, height: height * 0.19, fill: smartTemplateForm.primary }, 'Contact Footer');
+        if (photoAsset) { addShape({ left: width * 0.69, top: height * 0.34, originX: 'left', originY: 'top', width: width * 0.25, height: height * 0.39, fill: '#ffffff', stroke: smartTemplateForm.accent, strokeWidth: 5 }, 'Photo Frame'); placeAsset(photoAsset, width * 0.815, height * 0.535, width * 0.22, height * 0.34); }
+        addText(smartTemplateForm.headline, { left: width / 2, top: height * 0.125, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(44, width * 0.09), fontWeight: 'bold', fill: '#ffffff' }, 'Headline');
+        addText(smartTemplateForm.subheadline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.43, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(30, width * 0.055), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Subheadline', hasPhoto ? width * 0.58 : width * 0.82);
+        addText(smartTemplateForm.name, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.59, fontSize: Math.max(24, width * 0.038), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Name or Company', hasPhoto ? width * 0.56 : width * 0.82);
+        if (smartTemplateForm.detailLine.trim()) addText(smartTemplateForm.detailLine, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.71, fontSize: Math.max(17, width * 0.024), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Industry Details', hasPhoto ? width * 0.55 : width * 0.72);
+      } else if (template.layout === 'split') {
+        addShape({ left: 0, top: 0, originX: 'left', originY: 'top', width: width * 0.38, height, fill: smartTemplateForm.primary }, 'Primary Panel');
+        addShape({ left: width * 0.38, top: 0, originX: 'left', originY: 'top', width: width * 0.035, height, fill: smartTemplateForm.accent }, 'Accent Divider');
+        if (photoAsset) placeAsset(photoAsset, width * 0.19, height * 0.7, width * 0.29, height * 0.3);
+        addText(smartTemplateForm.headline, { left: width * 0.19, top: hasPhoto ? height * 0.25 : height * 0.38, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(38, width * 0.072), fontWeight: 'bold', fill: '#ffffff' }, 'Headline', width * 0.31);
+        addText(smartTemplateForm.subheadline, { left: width * 0.7, top: height * 0.35, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(30, width * 0.05), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Subheadline', width * 0.5);
+        addText(smartTemplateForm.name, { left: width * 0.7, top: height * 0.57, fontSize: Math.max(24, width * 0.034), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Name or Company', width * 0.48);
+        if (smartTemplateForm.detailLine.trim()) addText(smartTemplateForm.detailLine, { left: width * 0.7, top: height * 0.68, fontSize: Math.max(17, width * 0.023), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Industry Details', width * 0.46);
+      } else {
+        addShape({ left: 20, top: 20, originX: 'left', originY: 'top', width: width - 40, height: height - 40, fill: 'transparent', stroke: smartTemplateForm.primary, strokeWidth: Math.max(8, width * 0.012) }, 'Outer Frame');
+        addShape({ left: width * 0.1, top: height * 0.12, originX: 'left', originY: 'top', width: width * 0.8, height: height * 0.06, fill: smartTemplateForm.accent }, 'Accent Rule');
+        if (photoAsset) { addShape({ left: width * 0.64, top: height * 0.25, originX: 'left', originY: 'top', width: width * 0.25, height: height * 0.42, fill: '#ffffff', stroke: smartTemplateForm.accent, strokeWidth: 4 }, 'Photo Frame'); placeAsset(photoAsset, width * 0.765, height * 0.46, width * 0.22, height * 0.37); }
+        addText(smartTemplateForm.headline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.34, fontFamily: 'Georgia, serif', fontSize: Math.max(42, width * 0.078), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Headline', hasPhoto ? width * 0.48 : width * 0.82);
+        addText(smartTemplateForm.subheadline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.51, fontFamily: 'Arial, sans-serif', fontSize: Math.max(26, width * 0.04), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Subheadline', hasPhoto ? width * 0.48 : width * 0.82);
+        addText(smartTemplateForm.name, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.64, fontFamily: 'Georgia, serif', fontSize: Math.max(22, width * 0.032), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Name or Company', hasPhoto ? width * 0.48 : width * 0.82);
+        if (smartTemplateForm.detailLine.trim()) addText(smartTemplateForm.detailLine, { left: width / 2, top: height * 0.75, fontSize: Math.max(16, width * 0.022), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Industry Details', width * 0.7);
+      }
+
+      if (logoAsset) {
+        const logoX = template.layout === 'split' ? width * 0.19 : width * 0.13;
+        const logoY = template.layout === 'band' ? height * 0.125 : height * 0.16;
+        placeAsset(logoAsset, logoX, logoY, width * 0.16, height * 0.14);
+      }
+
+      const contactY = template.layout === 'band' ? height * 0.9 : height * 0.81;
+      const contactColor = template.layout === 'band' ? '#ffffff' : smartTemplateForm.primary;
+      const contactText = [smartTemplateForm.phone.trim(), smartTemplateForm.website.trim()].filter(Boolean).join('  •  ');
+      if (contactText) addText(contactText, { left: width / 2, top: contactY, fontSize: Math.max(18, width * 0.027), fontWeight: 'bold', fill: contactColor }, 'Contact Details', width * 0.78);
+      if (smartTemplateForm.footerNote.trim() && template.layout !== 'band') addText(smartTemplateForm.footerNote, { left: width / 2, top: height * 0.91, fontSize: Math.max(13, width * 0.017), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Footer Note', width * 0.72);
+
+      if (smartTemplateForm.includeQr && smartTemplateForm.qrValue.trim().length > 3) {
+        const qrDataUrl = await QRCode.toDataURL(smartTemplateForm.qrValue.trim(), { width: 1000, margin: 2, color: { dark: smartTemplateForm.primary, light: '#ffffff' } });
+        const qr = await FabricImage.fromURL(qrDataUrl);
+        const qrSize = Math.min(width, height) * 0.18;
+        const qrScale = qrSize / Math.max(1, qr.width || 1);
+        qr.set({ left: width * 0.88, top: height * 0.68, originX: 'center', originY: 'center', scaleX: qrScale, scaleY: qrScale, ...FABRIC_CONTROL_STYLE });
+        (qr as FabricImage & { data?: { layerId?: string; layerName?: string; qrValue?: string; qrColor?: string; smartTemplateId?: string } }).data = { layerId: `smart-${template.id}-qr-${stamp}`, layerName: 'QR Code', qrValue: smartTemplateForm.qrValue.trim(), qrColor: smartTemplateForm.primary, smartTemplateId: template.id };
+        canvas.add(qr);
+      }
+
+      const firstEditable = canvas.getObjects().find((object) => !(object as FabricObject & { data?: { locked?: boolean; editorRole?: string } }).data?.locked && (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole !== 'base');
+      if (firstEditable) canvas.setActiveObject(firstEditable);
+      canvas.requestRenderAll();
+      commitArtworkEditorChange(firstEditable || null);
+      if (firstEditable) syncArtworkEditorControls(firstEditable);
+      setArtworkEditorBrandColors((colors) => [smartTemplateForm.primary, smartTemplateForm.accent, smartTemplateForm.background, ...colors].filter((color, index, all) => all.indexOf(color) === index).slice(0, 12));
+      setArtworkEditorStatus(`${template.name} generated as editable layers. Select any text, color, or object to fine-tune it.`);
+      setShowSmartTemplateLibrary(false);
+      setArtworkEditorMobileView('canvas');
+    } catch (error) {
+      setArtworkEditorStatus(`The smart template could not be generated: ${error instanceof Error ? error.message : 'unknown error'}.`);
+    } finally {
+      setIsGeneratingSmartTemplate(false);
+    }
+  };
+
   const applyArtworkEditorTemplate = (template: string) => {
     const canvas = artworkEditorCanvasRef.current;
     if (!canvas) return;
@@ -4556,7 +4805,7 @@ export default function Home() {
       const item: ImageZoneItem = { id: localId, name: normalizedFront.fileName, dataUrl: normalizedFront.dataUrl, width: normalizedFront.width, height: normalizedFront.height, dpi: Math.min(source.dpi || 300, GENERATED_ARTWORK_MAX_DPI), uploadedAt: new Date().toLocaleString(), source: 'local', mimeType: normalizedFront.mimeType, signWidth: printSize.width, signHeight: printSize.height, backDataUrl: normalizedBack?.dataUrl, backName: backFileName, backWidth: normalizedBack?.width, backHeight: normalizedBack?.height, backCopiedFromFront: false, editorProject };
       setImageZoneItems((previous) => [item, ...previous]);
       setSelectedImageZoneId(localId);
-      if (isSupabaseStorageConfigured) {
+      if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
         setImageZoneItems((previous) => previous.map((entry) => entry.id === localId ? { ...entry, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || entry.backDataUrl, backName: backFileName || entry.backName, backStoragePath: backStorageInfo?.storagePath, projectStoragePath: projectStorageInfo.storagePath } : entry));
         setSelectedImageZoneId(storageInfo.storagePath);
@@ -5107,7 +5356,7 @@ export default function Home() {
       setImageZoneItems((prev) => [item, ...prev]);
       setSelectedImageZoneId(localId);
 
-      if (isSupabaseStorageConfigured) {
+      if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const storageInfo = await uploadArtworkFileToSupabase(normalized.file, customerSession);
         setImageZoneItems((prev) => prev.map((entry) => entry.id === localId ? {
           ...entry,
@@ -5119,7 +5368,7 @@ export default function Home() {
         setSelectedImageZoneId(storageInfo.storagePath);
         setImageLibraryStatus(`AI edit saved as a new image${customerSession?.user?.email ? ` in ${customerSession.user.email}'s library` : ''}.`);
       } else {
-        setImageLibraryStatus('AI edit saved as a new browser image. Connect storage to keep it for future sessions.');
+        setImageLibraryStatus('AI edit saved in this browser session. Sign in to keep it in a private cloud library.');
       }
       if (showArtworkEditor && artworkEditorCanvasRef.current) {
         await addArtworkEditorImageLayer(normalized.dataUrl, normalized.fileName, 'ai-edit');
@@ -5314,7 +5563,7 @@ export default function Home() {
       }
       event.target.value = '';
 
-      if (isSupabaseStorageConfigured) {
+      if (isSupabaseStorageConfigured && customerSession?.access_token) {
         setImageLibraryStatus(`${canPlaceOnCanvas ? 'Preview ready' : 'Library file ready'}. Saving original file to ${SUPABASE_STORAGE_BUCKET}...`);
         try {
           const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
@@ -5347,7 +5596,9 @@ export default function Home() {
           setImageLibraryStatus(`Preview ready. Supabase upload failed: ${error instanceof Error ? error.message : 'unknown error'}. Check bucket policies.`);
         }
       } else {
-        setImageLibraryStatus('Local preview only. Supabase storage is not configured.');
+        setImageLibraryStatus(customerSession?.access_token
+          ? 'Local preview only. Cloud storage is not configured.'
+          : 'Guest session: artwork is available in this browser only. Sign in to save it to a private Image Zone library.');
       }
     };
     reader.onerror = () => {
@@ -5930,7 +6181,7 @@ export default function Home() {
     setCustomerSession(null);
     setIsGuestCheckout(true);
     window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
-    setImageZoneItems((prev) => prev.filter((item) => item.source !== 'supabase'));
+    setImageZoneItems([]);
     setSelectedImageZoneId(null);
     setCustomerAuthStatus('Signed out. Quick checkout is active.');
     setImageLibraryStatus('Signed out. Quick checkout is active.');
@@ -7707,13 +7958,13 @@ export default function Home() {
             </div>
             <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
           </header>
-          <nav className="hue-mobile-editor-tabs" aria-label="Hue Designer mobile workspace">
+          <nav className={`hue-mobile-editor-tabs ${artworkEditorPrintView ? 'hidden' : ''}`} aria-label="Hue Designer mobile workspace">
             <button type="button" onClick={() => setArtworkEditorMobileView('canvas')} className={artworkEditorMobileView === 'canvas' ? 'is-active' : ''}>Canvas</button>
             <button type="button" onClick={() => setArtworkEditorMobileView('tools')} className={artworkEditorMobileView === 'tools' ? 'is-active' : ''}>Add &amp; Edit</button>
             <button type="button" onClick={() => setArtworkEditorMobileView('properties')} className={artworkEditorMobileView === 'properties' ? 'is-active' : ''}>Properties &amp; Layers</button>
           </nav>
-          <div data-mobile-view={artworkEditorMobileView} className={`hue-mobile-editor-body grid min-h-0 flex-1 overflow-y-auto transition-[grid-template-columns] duration-300 lg:overflow-hidden ${artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
-            <aside className={`hue-mobile-editor-tools relative max-h-[42vh] min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 lg:max-h-none ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+          <div data-mobile-view={artworkEditorMobileView} className={`hue-mobile-editor-body grid min-h-0 flex-1 overflow-y-auto transition-[grid-template-columns] duration-300 lg:overflow-hidden ${artworkEditorPrintView ? 'lg:grid-cols-[minmax(0,1fr)]' : artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
+            <aside className={`hue-mobile-editor-tools relative max-h-[42vh] min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 lg:max-h-none ${artworkEditorPrintView ? 'hidden' : ''} ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
               <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
               <button type="button" onClick={() => setArtworkEditorLeftPanelOpen((open) => !open)} className={`sticky top-0 z-20 mb-3 flex h-9 items-center justify-center rounded-xl border border-[#38bdf8]/25 bg-[#081827]/95 text-xs font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_12px_24px_rgba(0,0,0,0.22)] hover:border-[#67d8ff] hover:bg-[#0c2a40] ${artworkEditorLeftPanelOpen ? 'ml-auto w-28' : 'w-full'}`} aria-label={artworkEditorLeftPanelOpen ? 'Collapse artwork tools' : 'Expand artwork tools'}>{artworkEditorLeftPanelOpen ? 'Hide tools' : 'Tools'}</button>
               {!artworkEditorLeftPanelOpen ? <div className="flex flex-col items-center gap-3 pt-1">
@@ -7728,6 +7979,9 @@ export default function Home() {
               <div className="mt-3 space-y-2">
                 <textarea value={artworkEditorText} onChange={(event) => setArtworkEditorText(event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-white/15 bg-black/25 p-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" placeholder="Enter replacement text" />
                 <button type="button" onClick={artworkEditorActiveObject?.type === 'i-text' ? applyArtworkEditorText : addArtworkEditorText} className="w-full rounded-xl bg-[#1686c9] px-3 py-3 text-xs font-black uppercase text-white hover:bg-[#0f6da8]">{artworkEditorActiveObject?.type === 'i-text' ? 'Apply text changes' : '+ Add text'}</button>
+              </div>
+              <div className="mt-6 overflow-hidden rounded-2xl border border-[#67d8ff]/35 bg-[radial-gradient(circle_at_top_right,rgba(139,92,246,0.24),transparent_45%),linear-gradient(145deg,#0c2a40,#071827)] shadow-[0_0_28px_rgba(14,165,233,0.12)]">
+                <div className="p-4"><div className="flex items-center justify-between gap-3"><span className="rounded-full border border-[#67d8ff]/30 bg-[#38bdf8]/10 px-2 py-1 text-[8px] font-black uppercase tracking-[0.14em] text-[#9be8ff]">Smart Templates</span><span className="text-lg text-violet-300">✦</span></div><h3 className="mt-3 text-base font-black text-white">Hue Template Library</h3><p className="mt-1 text-[10px] leading-4 text-slate-300">Professional, guided layouts for real estate, business, contractors, events, and directional signs.</p><button type="button" onClick={openSmartTemplateLibrary} className="mt-3 w-full rounded-xl bg-gradient-to-r from-[#1686c9] to-violet-600 px-3 py-3 text-[10px] font-black uppercase tracking-wide text-white shadow-[0_10px_24px_rgba(14,165,233,0.2)] hover:brightness-110">Browse Template Library →</button></div>
               </div>
               <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Starter templates</p>
               <div className="mt-2 grid grid-cols-2 gap-1.5">{ARTWORK_EDITOR_TEMPLATES.map((template) => <button key={template.id} type="button" onClick={() => applyArtworkEditorTemplate(template.id)} className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-left text-[9px] font-bold text-slate-300 hover:border-[#38bdf8]/45 hover:text-white">{template.label}</button>)}</div>
@@ -7776,18 +8030,19 @@ export default function Home() {
               <div className="mt-6 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/55 p-3 text-xs leading-5 text-slate-300"><strong className="text-[#8be3ff]">Next phase:</strong> smart removal, background replacement, recoloring, and restoration through Cloudinary.</div>
               </div>}
             </aside>
-            <main className="hue-mobile-editor-canvas relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-3 sm:p-5">
+            <main onPointerDown={(event: ReactPointerEvent<HTMLElement>) => { const target = event.target as HTMLElement; if (!target.closest('[data-artwork-artboard]') && !target.closest('[data-print-view-toggle]')) clearArtworkEditorSelection(); }} className="hue-mobile-editor-canvas relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-3 sm:p-5">
+              <button data-print-view-toggle type="button" onClick={toggleArtworkEditorPrintView} className={`absolute right-3 top-3 z-40 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-[0_10px_28px_rgba(0,0,0,0.3)] backdrop-blur sm:right-5 sm:top-5 ${artworkEditorPrintView ? 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25' : 'border-[#38bdf8]/40 bg-[#071827]/90 text-[#9be8ff] hover:border-[#67d8ff] hover:bg-[#0c2a40]'}`}>{artworkEditorPrintView ? 'Exit Print View' : 'Print View'}</button>
               <div className="relative max-h-full max-w-full overflow-visible pl-5 pt-5">
-                {artworkEditorShowGuides && artworkEditorSource ? <>
+                {artworkEditorShowGuides && !artworkEditorPrintView && artworkEditorSource ? <>
                   <div className="pointer-events-none absolute left-5 right-0 top-0 z-20 h-4 rounded-t border border-b-0 border-sky-400/35 bg-[repeating-linear-gradient(90deg,rgba(14,165,233,.65)_0_1px,transparent_1px_10px)] bg-slate-950/75" />
                   <div className="pointer-events-none absolute bottom-0 left-0 top-5 z-20 w-4 rounded-l border border-r-0 border-sky-400/35 bg-[repeating-linear-gradient(0deg,rgba(14,165,233,.65)_0_1px,transparent_1px_10px)] bg-slate-950/75" />
                   <span className="pointer-events-none absolute left-1/2 top-0 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#38bdf8]/40 bg-[#061524]/95 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-[#9be8ff] shadow-[0_0_24px_rgba(14,165,233,0.22)]">Artboard {formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight)}</span>
                 </> : null}
-                <div ref={artworkEditorViewportRef} className="relative max-h-full max-w-full overflow-auto rounded-lg border border-[#67d8ff]/35 bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)]"><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}</div>
+                <div data-artwork-artboard ref={artworkEditorViewportRef} className={`relative max-h-full max-w-full overflow-auto rounded-lg bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)] ${artworkEditorPrintView ? 'border border-white/20' : 'border border-[#67d8ff]/35'}`}><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && !artworkEditorPrintView && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}</div>
               </div>
-              <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#02070d]/75 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{artworkEditorSide} side · Drag handles to resize · Double-click text to edit</span>
+              {!artworkEditorPrintView ? <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#02070d]/75 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{artworkEditorSide} side · Drag handles to resize · Double-click text to edit</span> : null}
             </main>
-            <aside className="hue-mobile-editor-properties max-h-[55vh] min-h-0 overflow-y-auto border-l border-white/10 bg-[#07131f] p-4 lg:max-h-none">
+            <aside className={`hue-mobile-editor-properties max-h-[55vh] min-h-0 overflow-y-auto border-l border-white/10 bg-[#07131f] p-4 lg:max-h-none ${artworkEditorPrintView ? 'hidden' : ''}`}>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Properties</p>
               {artworkEditorActiveObject ? <div className="mt-3 space-y-3">
                 <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Exact position & size (inches)</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] font-bold uppercase text-slate-500">Center X<input type="number" step="0.01" value={artworkEditorExactX} onChange={(event) => setArtworkEditorExactX(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('x', artworkEditorExactX)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Center Y<input type="number" step="0.01" value={artworkEditorExactY} onChange={(event) => setArtworkEditorExactY(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('y', artworkEditorExactY)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Width<input type="number" min="0.01" step="0.01" value={artworkEditorExactWidth} onChange={(event) => setArtworkEditorExactWidth(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('width', artworkEditorExactWidth)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Height<input type="number" min="0.01" step="0.01" value={artworkEditorExactHeight} onChange={(event) => setArtworkEditorExactHeight(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('height', artworkEditorExactHeight)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="col-span-2 text-[8px] font-bold uppercase text-slate-500">Rotation<input type="number" step="1" value={artworkEditorExactRotation} onChange={(event) => setArtworkEditorExactRotation(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('rotation', artworkEditorExactRotation)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label></div></div>
@@ -7823,6 +8078,61 @@ export default function Home() {
           </footer>
         </section>
       </div> : null}
+
+      {showSmartTemplateLibrary ? (() => {
+        const query = smartTemplateSearch.trim().toLowerCase();
+        const filteredTemplates = SMART_TEMPLATES.filter((template) => (smartTemplateCategory === 'All' || template.category === smartTemplateCategory) && (smartTemplateStyle === 'All' || template.style === smartTemplateStyle) && (!query || `${template.name} ${template.category} ${template.style} ${template.headline} ${template.description}`.toLowerCase().includes(query)));
+        const selectedTemplate = SMART_TEMPLATES.find((template) => template.id === selectedSmartTemplateId) || null;
+        return <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[#01050a]/92 p-0 backdrop-blur-xl sm:p-4">
+          <section className="flex h-full w-full flex-col overflow-hidden border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_40px_140px_rgba(0,0,0,0.85),0_0_80px_rgba(14,165,233,0.2)] sm:h-[min(900px,94vh)] sm:w-[min(1500px,97vw)] sm:rounded-[26px]">
+            <header className="flex flex-wrap items-center gap-3 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.2),transparent_38%),#071522] px-4 py-4 sm:px-6">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#67d8ff]/35 bg-gradient-to-br from-[#0c2a40] to-violet-700/40 text-xl text-[#9be8ff] shadow-[0_0_28px_rgba(14,165,233,0.18)]">✦</span>
+              <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="text-xl font-black sm:text-2xl">Smart Template Library</h2><p className="mt-1 text-xs text-slate-400">Choose a professional layout, add your details, then fine-tune every layer.</p></div>
+              <button type="button" onClick={() => setShowSmartTemplateLibrary(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
+            </header>
+            <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_370px] lg:overflow-hidden">
+              <div className="min-h-0 p-4 lg:flex lg:flex-col lg:overflow-hidden lg:p-5">
+                <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_190px_150px]">
+                  <input value={smartTemplateSearch} onChange={(event) => setSmartTemplateSearch(event.target.value)} placeholder="Search templates, industries, or styles…" className="h-11 rounded-xl border border-white/15 bg-black/25 px-4 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" />
+                  <select value={smartTemplateCategory} onChange={(event) => setSmartTemplateCategory(event.target.value as 'All' | SmartTemplateCategory)} className="h-11 rounded-xl border border-white/15 bg-[#0a1928] px-3 text-xs font-bold text-white outline-none focus:border-[#38bdf8]">{SMART_TEMPLATE_CATEGORIES.map((category) => <option key={category} value={category}>{category === 'All' ? 'All industries' : category}</option>)}</select>
+                  <select value={smartTemplateStyle} onChange={(event) => setSmartTemplateStyle(event.target.value as 'All' | SmartTemplateStyle)} className="h-11 rounded-xl border border-white/15 bg-[#0a1928] px-3 text-xs font-bold text-white outline-none focus:border-[#38bdf8]">{SMART_TEMPLATE_STYLES.map((style) => <option key={style} value={style}>{style === 'All' ? 'All styles' : style}</option>)}</select>
+                </div>
+                <div className="mt-4 flex items-center justify-between gap-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{filteredTemplates.length} professional starting points</p><p className="text-[10px] text-slate-500">All text and colors remain editable</p></div>
+                <div className="mt-3 grid gap-3 pb-5 sm:grid-cols-2 xl:grid-cols-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+                  {filteredTemplates.map((template) => {
+                    const selected = template.id === selectedSmartTemplateId;
+                    return <button key={template.id} type="button" onClick={() => chooseSmartTemplate(template)} className={`group overflow-hidden rounded-2xl border text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_28px_rgba(14,165,233,0.2)]' : 'border-white/10 bg-white/[0.035] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}>
+                      <div className="relative aspect-[4/2.45] overflow-hidden" style={{ backgroundColor: template.background }}>
+                        {template.layout === 'band' ? <><div className="absolute inset-x-0 top-0 h-[27%]" style={{ backgroundColor: template.primary }} /><div className="absolute inset-x-0 top-[27%] h-[5%]" style={{ backgroundColor: template.accent }} /><div className="absolute inset-x-0 bottom-0 h-[18%]" style={{ backgroundColor: template.primary }} /></> : template.layout === 'split' ? <><div className="absolute inset-y-0 left-0 w-[38%]" style={{ backgroundColor: template.primary }} /><div className="absolute inset-y-0 left-[38%] w-[4%]" style={{ backgroundColor: template.accent }} /></> : <><div className="absolute inset-3 border-[5px]" style={{ borderColor: template.primary }} /><div className="absolute left-[10%] right-[10%] top-[18%] h-1" style={{ backgroundColor: template.accent }} /></>}
+                        <div className={`absolute font-black leading-none ${template.layout === 'split' ? 'left-[5%] top-[35%] w-[28%] text-center text-[clamp(10px,1.2vw,18px)] text-white' : 'left-[8%] right-[8%] top-[39%] text-center text-[clamp(13px,1.5vw,23px)]'}`} style={template.layout === 'split' ? undefined : { color: template.primary }}>{template.headline}</div>
+                        <div className={`absolute text-center text-[clamp(6px,.65vw,10px)] font-bold ${template.layout === 'split' ? 'left-[45%] right-[5%] top-[52%]' : 'left-[10%] right-[10%] top-[65%]'}`} style={{ color: template.accent }}>{template.subheadline}</div>
+                        <span className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 px-2 py-1 text-[7px] font-black uppercase tracking-wide text-slate-700">Smart</span>
+                      </div>
+                      <div className="p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-black text-white">{template.name}</p><p className="mt-1 text-[9px] font-black uppercase tracking-wide text-[#67d8ff]">{template.category} · {template.style}</p></div>{selected ? <span className="rounded-full bg-[#22c55e]/15 px-2 py-1 text-[8px] font-black uppercase text-emerald-300">Selected</span> : null}</div><p className="mt-2 text-[10px] leading-4 text-slate-400">{template.description}</p><p className="mt-2 text-[9px] font-bold text-slate-500">Suggested: {template.suggestedSizes.join(' · ')}</p></div>
+                    </button>;
+                  })}
+                  {!filteredTemplates.length ? <div className="col-span-full rounded-2xl border border-dashed border-white/15 p-10 text-center text-sm text-slate-400">No templates match those filters. Try another industry or style.</div> : null}
+                </div>
+              </div>
+              <aside className="border-t border-white/10 bg-[#06111d] p-5 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
+                {selectedTemplate ? <><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Customize your template</p><h3 className="mt-1 text-xl font-black">{selectedTemplate.name}</h3><p className="mt-1 text-xs leading-5 text-slate-400">Enter what you know now. You can move, resize, recolor, or replace every generated layer afterward.</p>
+                  <div className="mt-5 space-y-3">
+                    <label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Main headline<input value={smartTemplateForm.headline} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, headline: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm font-bold text-white outline-none focus:border-[#38bdf8]" /></label>
+                    <label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Supporting message<input value={smartTemplateForm.subheadline} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, subheadline: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none focus:border-[#38bdf8]" /></label>
+                    <label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Name, company, or callout<input value={smartTemplateForm.name} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, name: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none focus:border-[#38bdf8]" /></label>
+                    <div className="grid grid-cols-2 gap-2"><label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Phone<input value={smartTemplateForm.phone} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, phone: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-xs text-white outline-none focus:border-[#38bdf8]" /></label><label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Website<input value={smartTemplateForm.website} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, website: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-xs text-white outline-none focus:border-[#38bdf8]" /></label></div>
+                    <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-wide text-slate-500">Brand colors</p><div className="mt-2 grid grid-cols-3 gap-2">{([['primary', 'Primary'], ['accent', 'Accent'], ['background', 'Canvas']] as const).map(([key, label]) => <label key={key} className="text-center text-[8px] font-bold text-slate-400"><input type="color" value={smartTemplateForm[key]} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, [key]: event.target.value }))} className="h-9 w-full cursor-pointer rounded bg-transparent" /><span>{label}</span></label>)}</div></div>
+                    <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.035] px-3 py-3 text-xs font-bold text-slate-300">Include editable QR Code<input type="checkbox" checked={smartTemplateForm.includeQr} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, includeQr: event.target.checked }))} className="h-5 w-5 accent-[#1686c9]" /></label>
+                    {smartTemplateForm.includeQr ? <label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">QR destination<input value={smartTemplateForm.qrValue} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, qrValue: event.target.value }))} placeholder="https://yourwebsite.com" className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-xs text-white outline-none focus:border-[#38bdf8]" /></label> : null}
+                  </div>
+                  <div className="mt-5 rounded-xl border border-amber-300/15 bg-amber-300/[0.06] p-3 text-[10px] leading-4 text-amber-100/80"><strong className="text-amber-200">Your current editable layers will be replaced.</strong> Hue Designer will ask for confirmation if the canvas already contains a design.</div>
+                  <button type="button" disabled={isGeneratingSmartTemplate || !smartTemplateForm.headline.trim()} onClick={() => { void generateSmartTemplate(); }} className="mt-4 w-full rounded-xl bg-gradient-to-r from-[#1686c9] to-violet-600 px-4 py-4 text-xs font-black uppercase tracking-wide text-white shadow-[0_14px_32px_rgba(14,165,233,0.25)] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">{isGeneratingSmartTemplate ? 'Generating Editable Design…' : 'Generate This Design →'}</button>
+                </> : <div className="rounded-2xl border border-dashed border-white/15 p-8 text-center text-sm text-slate-400">Choose a template to customize it.</div>}
+              </aside>
+            </div>
+          </section>
+        </div>;
+      })() : null}
 
       {showAiImageEditor ? (() => {
         const source = aiEditSource;
@@ -7955,7 +8265,9 @@ export default function Home() {
             </div>}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4">
-            <p className="text-xs text-slate-400"><span className="mr-2 text-emerald-400">●</span>{isSupabaseStorageConfigured ? 'Original artwork is securely saved to your Hue cloud library.' : 'Connect storage to make original artwork available in future sessions.'}</p>
+            <p className="text-xs text-slate-400"><span className="mr-2 text-emerald-400">●</span>{customerSession?.access_token
+              ? (isSupabaseStorageConfigured ? 'Original artwork is securely saved to your private Hue cloud library.' : 'Cloud storage is not configured; artwork remains in this browser session.')
+              : 'Guest artwork stays in this browser session. Sign in to use a private Hue cloud library.'}</p>
             <div className="flex gap-2">
               <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-sm font-bold text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Cancel</button>
               <button type="button" disabled={!selectedImageZoneId} onClick={async () => {
