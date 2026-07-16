@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 420" role="img" aria-labelledby="title desc">
+  <title id="title">Adhesive vinyl decal</title>
+  <desc id="desc">A layered blue and white die-cut vinyl decal with a peeled corner.</desc>
+  <defs>
+    <linearGradient id="backing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="0.58" stop-color="#d9e5ee"/>
+      <stop offset="1" stop-color="#8294a5"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.52" stop-color="#0789cf"/>
+      <stop offset="1" stop-color="#075985"/>
+    </linearGradient>
+    <linearGradient id="peel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#a8bbc9"/>
+    </linearGradient>
+    <filter id="shadow" x="-35%" y="-35%" width="180%" height="190%">
+      <feDropShadow dx="-16" dy="24" stdDeviation="18" flood-color="#000814" flood-opacity=".58"/>
+    </filter>
+    <filter id="glow" x="-35%" y="-35%" width="170%" height="170%">
+      <feGaussianBlur stdDeviation="11"/>
+    </filter>
+  </defs>
+  <ellipse cx="277" cy="350" rx="184" ry="34" fill="#0ea5e9" opacity=".18" filter="url(#glow)"/>
+  <g filter="url(#shadow)" transform="rotate(-7 270 205)">
+    <path d="M92 91c0-20 16-36 36-36h282c20 0 36 16 36 36v198c0 20-16 36-36 36H128c-20 0-36-16-36-36z" fill="url(#backing)" stroke="#dce8ef" stroke-width="6"/>
+    <path d="M118 105c0-14 11-25 25-25h243c14 0 25 11 25 25v156l-54 42H143c-14 0-25-11-25-25z" fill="#fff" stroke="#55c8fb" stroke-width="6"/>
+    <path d="M149 138h201c14 0 26 12 26 26v64c0 14-12 26-26 26H149z" fill="url(#blue)"/>
+    <path d="M169 153h43l21 27 21-27h43l-43 52v34h-42v-34z" fill="#fff"/>
+    <path d="M286 153h37v86h-37zM338 153h28c18 0 31 3 39 10 7 6 11 15 11 26 0 15-7 25-20 31l24 19h-45l-30-28v28h-37v-86zm37 25v15h8c7 0 11-2 11-7 0-5-4-8-11-8z" fill="#fff"/>
+    <path d="M357 303l54-42v42z" fill="url(#peel)" stroke="#b6c7d3" stroke-width="3"/>
+    <path d="M357 303c14-21 31-35 54-42" fill="none" stroke="#fff" stroke-width="5" opacity=".9"/>
+    <circle cx="141" cy="104" r="5" fill="#0ea5e9" opacity=".65"/>
+    <circle cx="387" cy="104" r="5" fill="#0ea5e9" opacity=".65"/>
+  </g>
+</svg>

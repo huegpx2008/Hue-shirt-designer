@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 310" role="img" aria-labelledby="title desc">
+  <title id="title">Custom cut magnets</title>
+  <desc id="desc">A layered collection of colorful custom-shaped magnets.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06111e"/>
+      <stop offset="0.5" stop-color="#08243a"/>
+      <stop offset="1" stop-color="#050d17"/>
+    </linearGradient>
+    <linearGradient id="back" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e5edf3"/>
+      <stop offset="0.58" stop-color="#85939f"/>
+      <stop offset="1" stop-color="#27333e"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#25c2fb"/>
+      <stop offset="0.52" stop-color="#087ec1"/>
+      <stop offset="1" stop-color="#053f67"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="200%">
+      <feDropShadow dx="-8" dy="14" stdDeviation="10" flood-color="#000" flood-opacity=".65"/>
+    </filter>
+  </defs>
+  <rect width="420" height="310" rx="28" fill="url(#bg)"/>
+  <path d="M0 258 C110 220 291 224 420 254 V310 H0Z" fill="#02070c" opacity=".86"/>
+  <g filter="url(#shadow)">
+    <g transform="translate(67 77) rotate(-12 105 80)">
+      <path d="M30 17 Q22 17 16 26 L7 91 Q6 102 16 109 L74 151 Q83 158 94 152 L177 108 Q188 102 188 90 L182 29 Q181 17 169 16Z" fill="url(#back)" stroke="#d9e5ed" stroke-width="3"/>
+      <path d="M37 29 H161 Q170 29 171 39 L176 85 Q177 94 168 99 L89 140 L20 91 L27 38 Q29 29 37 29Z" fill="#15212b"/>
+      <text x="52" y="79" fill="#b8c4cc" font-family="Arial, sans-serif" font-size="15" font-weight="800" letter-spacing="2">MAGNETIC</text>
+      <text x="67" y="101" fill="#7f909c" font-family="Arial, sans-serif" font-size="11" font-weight="700">FLEXIBLE BACK</text>
+    </g>
+    <g transform="translate(155 45) rotate(9 105 105)">
+      <path d="M104 4 L128 40 L173 31 L169 78 L207 104 L173 134 L181 180 L134 174 L105 211 L75 175 L28 181 L36 135 L2 105 L40 78 L36 31 L82 40Z" fill="#fff" stroke="#73ddff" stroke-width="4"/>
+      <path d="M104 18 L124 50 L161 43 L158 83 L190 105 L160 130 L167 168 L128 162 L105 194 L80 162 L43 168 L49 130 L20 105 L52 83 L48 43 L86 50Z" fill="url(#blue)"/>
+      <circle cx="105" cy="105" r="53" fill="#061726" stroke="#6edcff" stroke-width="2"/>
+      <text x="105" y="96" text-anchor="middle" fill="#66d9ff" font-family="Arial, sans-serif" font-size="12" font-weight="800" letter-spacing="4">HUE</text>
+      <text x="105" y="124" text-anchor="middle" fill="#fff" font-family="Arial, sans-serif" font-size="25" font-weight="900">CUSTOM</text>
+      <path d="M152 158 Q170 157 179 142 L174 180 L134 174 Q144 171 152 158Z" fill="#e8f4f9"/>
+      <path d="M152 158 Q165 157 174 149" fill="none" stroke="#71818c" stroke-width="2"/>
+    </g>
+  </g>
+  <g transform="translate(27 255)">
+    <rect width="132" height="31" rx="15.5" fill="#062840" stroke="#1aa9e4"/>
+    <path d="M18 10 q10 5 0 12 q13-2 17-11 q-8 4-17-1Z" fill="#65d9ff"/>
+    <text x="43" y="20" fill="#d9f5ff" font-family="Arial, sans-serif" font-size="11" font-weight="700">ANY SHAPE</text>
+  </g>
+</svg>

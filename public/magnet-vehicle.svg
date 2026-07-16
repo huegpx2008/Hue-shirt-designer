@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 310" role="img" aria-labelledby="title desc">
+  <title id="title">Vehicle door magnet</title>
+  <desc id="desc">A blue vehicle door with a removable Hue Graphics magnet applied to it.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06111e"/>
+      <stop offset="0.55" stop-color="#08233a"/>
+      <stop offset="1" stop-color="#06101b"/>
+    </linearGradient>
+    <linearGradient id="paint" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#26b8f2"/>
+      <stop offset="0.48" stop-color="#087cc1"/>
+      <stop offset="1" stop-color="#03466f"/>
+    </linearGradient>
+    <linearGradient id="magnet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a2034"/>
+      <stop offset="0.58" stop-color="#06121f"/>
+      <stop offset="1" stop-color="#0c3451"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="200%">
+      <feDropShadow dx="-8" dy="13" stdDeviation="10" flood-color="#000" flood-opacity=".62"/>
+    </filter>
+  </defs>
+  <rect width="420" height="310" rx="28" fill="url(#bg)"/>
+  <path d="M0 260 C105 224 286 226 420 255 V310 H0Z" fill="#02070c" opacity=".85"/>
+  <g transform="translate(22 44) skewY(-2)">
+    <path d="M25 25 Q28 10 46 9 H326 Q353 10 361 35 L380 171 Q382 196 357 202 H49 Q23 199 20 176Z" fill="url(#paint)" stroke="#67d8ff" stroke-opacity=".6" stroke-width="3"/>
+    <path d="M30 58 H363" stroke="#9de8ff" stroke-opacity=".44" stroke-width="2"/>
+    <path d="M292 27 h42 q10 0 11 10 q0 10-11 11h-42q-9-1-9-10q0-10 9-11Z" fill="#03111d" stroke="#99dff8" stroke-opacity=".55"/>
+    <path d="M52 177 H354" stroke="#001c2e" stroke-width="5" opacity=".75"/>
+    <circle cx="49" cy="192" r="10" fill="#02111d" stroke="#56c7ed" stroke-opacity=".5"/>
+    <circle cx="350" cy="193" r="10" fill="#02111d" stroke="#56c7ed" stroke-opacity=".5"/>
+    <g transform="translate(82 73)" filter="url(#shadow)">
+      <rect width="206" height="94" rx="8" fill="url(#magnet)" stroke="#69d7ff" stroke-width="3"/>
+      <path d="M8 9 H198" stroke="#fff" stroke-opacity=".14"/>
+      <text x="18" y="27" fill="#69d7ff" font-family="Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="3">HUE GRAPHICS</text>
+      <text x="18" y="58" fill="#fff" font-family="Arial, sans-serif" font-size="28" font-weight="900">YOUR BRAND</text>
+      <rect x="18" y="69" width="125" height="7" rx="3.5" fill="#159bd7"/>
+      <path d="M187 74 l11 11 V61 q-1 10-11 13Z" fill="#d7f4ff" opacity=".92"/>
+    </g>
+  </g>
+  <g transform="translate(280 252)">
+    <rect width="112" height="31" rx="15.5" fill="#062840" stroke="#1aa9e4"/>
+    <path d="M17 15.5 h13 M23.5 9 v13" stroke="#65d9ff" stroke-width="2"/>
+    <text x="39" y="20" fill="#d9f5ff" font-family="Arial, sans-serif" font-size="11" font-weight="700">REMOVABLE</text>
+  </g>
+</svg>
