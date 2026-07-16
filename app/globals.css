@@ -374,8 +374,172 @@ body {
 }
 
 @media (max-width: 767px) {
+  html,
   body {
+    width: 100%;
+    max-width: 100%;
     overflow-x: hidden;
+  }
+
+  .hue-site-header {
+    position: sticky;
+    top: 0;
+    z-index: 45;
+    padding: 9px 10px 7px !important;
+  }
+
+  .hue-site-header-inner {
+    width: 100%;
+    min-width: 0;
+    gap: 7px !important;
+  }
+
+  .hue-mobile-brand {
+    width: 100%;
+    flex-basis: 100%;
+    gap: 9px;
+  }
+
+  .hue-mobile-logo {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .hue-mobile-brand-copy {
+    display: block !important;
+  }
+
+  .hue-mobile-brand-copy > p:first-child {
+    display: none;
+  }
+
+  .hue-mobile-brand-copy h1 {
+    font-size: 19px !important;
+    line-height: 1 !important;
+  }
+
+  .hue-mobile-brand-copy > p:last-child {
+    margin-top: 4px !important;
+    font-size: 8px !important;
+    letter-spacing: 0.16em !important;
+  }
+
+  .hue-mobile-header-actions {
+    order: 2 !important;
+    width: 100% !important;
+    gap: 7px !important;
+    padding: 1px 0 3px !important;
+    scroll-snap-type: x proximity;
+  }
+
+  .hue-mobile-header-actions > * {
+    min-height: 40px;
+    padding: 8px 12px !important;
+    font-size: 11px;
+    scroll-snap-align: start;
+  }
+
+  .hue-mobile-header-actions > *:last-child {
+    display: none;
+  }
+
+  .hue-site-header nav.hue-mobile-category-strip {
+    order: 3 !important;
+    width: calc(100% + 20px) !important;
+    margin: 0 -10px;
+    justify-content: flex-start !important;
+    gap: 4px !important;
+    padding: 4px 10px 0 !important;
+    scroll-snap-type: x proximity;
+  }
+
+  .hue-site-header nav.hue-mobile-category-strip > button {
+    min-width: 58px;
+    min-height: 54px;
+    padding-bottom: 5px;
+    scroll-snap-align: start;
+  }
+
+  .hue-site-header nav.hue-mobile-category-strip > button > span:last-child {
+    font-size: 9px;
+  }
+
+  .hue-store-shell,
+  .hue-store-layout,
+  .hue-mobile-product-nav,
+  .hue-store-content,
+  .hue-store-hero,
+  .hue-store-hero > div,
+  .hue-store-content > div {
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .hue-store-shell {
+    padding: 12px 10px 28px !important;
+  }
+
+  .hue-store-layout {
+    display: flex !important;
+    flex-direction: column;
+    gap: 12px !important;
+  }
+
+  .hue-mobile-product-nav {
+    padding: 14px !important;
+  }
+
+  .hue-mobile-product-nav h2 {
+    font-size: 20px !important;
+  }
+
+  .hue-mobile-product-nav > p:nth-of-type(2) {
+    display: none;
+  }
+
+  .hue-mobile-product-nav .hue-mobile-category-strip {
+    margin-top: 12px !important;
+    scroll-snap-type: x mandatory;
+  }
+
+  .hue-mobile-product-nav .hue-mobile-category-strip > button {
+    width: 138px !important;
+    min-height: 66px;
+    padding: 10px !important;
+    scroll-snap-align: start;
+  }
+
+  .hue-mobile-canva-promo {
+    display: none;
+  }
+
+  .hue-store-hero {
+    min-height: 0 !important;
+  }
+
+  .hue-store-hero > div:last-child {
+    min-height: 0 !important;
+    padding: 26px 18px !important;
+  }
+
+  .hue-store-hero-title {
+    font-size: clamp(2.65rem, 14vw, 4rem) !important;
+    line-height: 0.88;
+  }
+
+  .hue-store-hero-title + p {
+    font-size: 9px !important;
+    letter-spacing: 0.2em !important;
+  }
+
+  .hue-store-content > div:not(.hue-store-hero) {
+    padding: 16px !important;
+  }
+
+  .hue-store-product-card {
+    min-height: 176px !important;
   }
 
   .hue-store-hero-title {
@@ -389,7 +553,7 @@ body {
   }
 
   .hue-mobile-builder-stage {
-    min-height: 920px;
+    min-height: 790px;
     height: auto !important;
   }
 
@@ -409,23 +573,34 @@ body {
   }
 
   .hue-builder-summary > * {
-    width: min(82vw, 320px);
-    min-width: min(82vw, 320px);
+    width: min(78vw, 292px);
+    min-width: min(78vw, 292px);
   }
 
   .hue-builder-canvas {
-    top: 250px !important;
-    bottom: 88px !important;
+    top: 205px !important;
+    bottom: 76px !important;
   }
 
   .hue-mobile-artwork-panel {
-    left: 8px !important;
-    right: 8px !important;
-    top: 150px !important;
-    bottom: auto !important;
+    position: fixed !important;
+    z-index: 80 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: 78px !important;
+    bottom: 0 !important;
     width: auto !important;
-    max-height: 650px;
-    border-radius: 18px;
+    max-height: none !important;
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -20px 70px rgba(0, 0, 0, 0.68), 0 0 0 999px rgba(1, 6, 12, 0.58);
+  }
+
+  .hue-mobile-artwork-panel > button:last-child {
+    position: sticky;
+    z-index: 10;
+    bottom: 0;
+    min-height: 48px;
+    box-shadow: 0 -12px 24px rgba(255, 255, 255, 0.92);
   }
 
   .hue-builder-option-bar {
@@ -450,6 +625,152 @@ body {
 
   .hue-builder-option-bar > * {
     flex-shrink: 0;
+  }
+
+  .hue-builder-zoom {
+    display: none !important;
+  }
+
+  .hue-mobile-editor-header {
+    max-height: none !important;
+    gap: 8px !important;
+    padding: 10px 12px !important;
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+
+  .hue-mobile-editor-header::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hue-mobile-editor-header > div:first-of-type {
+    min-width: 190px;
+  }
+
+  .hue-mobile-editor-header > * {
+    flex-shrink: 0;
+  }
+
+  .hue-mobile-editor-body {
+    display: flex !important;
+    flex-direction: column;
+    overflow-y: auto !important;
+  }
+
+  .hue-mobile-editor-canvas {
+    order: 1;
+    min-height: 46vh !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .hue-mobile-editor-tools {
+    order: 2;
+    max-height: 48vh !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .hue-mobile-editor-properties {
+    order: 3;
+    max-height: 44vh !important;
+    border-left: 0 !important;
+  }
+
+  .hue-mobile-editor-footer {
+    position: sticky;
+    z-index: 25;
+    bottom: 0;
+    display: grid !important;
+    grid-template-columns: 1fr 2fr;
+    padding: 9px 10px !important;
+  }
+
+  .hue-mobile-editor-footer > p {
+    display: none;
+  }
+
+  .hue-mobile-editor-footer > button {
+    min-height: 44px;
+    padding: 8px 10px !important;
+    font-size: 11px !important;
+  }
+
+  .hue-image-library-header {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex: 0 0 auto;
+    gap: 7px !important;
+    max-height: 42vh;
+    overflow-y: auto;
+    padding: 10px !important;
+  }
+
+  .hue-image-library-brand,
+  .hue-image-library-header > div.order-last {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .hue-image-library-header > div.order-last {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px !important;
+  }
+
+  .hue-image-library-header > div.order-last > span {
+    display: none;
+  }
+
+  .hue-image-library-header > div.order-last > input {
+    min-width: 0 !important;
+  }
+
+  .hue-image-library-header > div.order-last > button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .hue-image-library-brand > span {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .hue-image-library-brand h2 {
+    font-size: 17px !important;
+  }
+
+  .hue-image-library-brand p:last-child {
+    display: none;
+  }
+
+  .hue-image-library-header > select,
+  .hue-image-library-header > button,
+  .hue-image-library-header > label {
+    width: 100%;
+    min-width: 0 !important;
+    justify-content: center;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    font-size: 9px !important;
+  }
+
+  .hue-image-library-grid {
+    padding: 10px !important;
+  }
+
+  .hue-image-library > div:last-child {
+    padding: 9px 10px !important;
+  }
+
+  .hue-image-library > div:last-child > p {
+    display: none;
+  }
+
+  .hue-image-library > div:last-child > div,
+  .hue-image-library > div:last-child button {
+    width: 100%;
   }
 
   .hue-image-library header,

@@ -6031,13 +6031,13 @@ export default function Home() {
   return (
     <main className={`${isProductionBuilder ? `flex min-h-screen flex-col bg-[#050b12] text-slate-100 ${storeView === 'builder' ? 'overflow-y-auto pb-0 md:h-screen md:overflow-hidden' : 'overflow-y-auto pb-12'}` : 'min-h-screen bg-[#f4f8fc] pb-24 text-slate-950'}`}>
       <input id="artwork-upload-input" ref={artworkUploadInputRef} onChange={onUploadImage} className="fixed -left-96 top-0 h-px w-px opacity-0" type="file" accept="image/*,application/pdf,.pdf" />
-      <header className={`${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
-        <div className={`mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className={`${isProductionBuilder ? 'h-12 w-12 rounded-md border border-white/35 shadow-[0_0_28px_rgba(22,120,184,0.20)]' : 'h-14 w-14 rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
+      <header className={`hue-site-header ${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
+        <div className={`hue-site-header-inner mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
+          <div className="hue-mobile-brand flex min-w-0 flex-1 items-center gap-3">
+            <div className={`hue-mobile-logo ${isProductionBuilder ? 'h-12 w-12 rounded-md border border-white/35 shadow-[0_0_28px_rgba(22,120,184,0.20)]' : 'h-14 w-14 rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
               <img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" />
             </div>
-            <div className={`min-w-0 ${isProductionBuilder ? 'hidden xl:block' : ''}`}>
+            <div className={`hue-mobile-brand-copy min-w-0 ${isProductionBuilder ? 'hidden xl:block' : ''}`}>
               <p className={`text-xs font-black uppercase tracking-[0.24em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
               <h1 className={`truncate font-black tracking-tight ${isProductionBuilder ? 'text-[2rem] leading-none text-white drop-shadow-[0_0_18px_rgba(56,189,248,0.26)]' : 'text-2xl text-[#05090b] md:text-3xl'}`}>
                 <span className={isProductionBuilder ? 'bg-gradient-to-r from-white via-[#dff7ff] to-[#57c8ff] bg-clip-text text-transparent' : ''}>Hue Studio</span>
@@ -6045,7 +6045,7 @@ export default function Home() {
               <p className={`mt-1 text-[10px] font-bold uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>Design · Upload · Order</p>
             </div>
           </div>
-          {isProductionBuilder ? <nav className="order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
+          {isProductionBuilder ? <nav className="hue-mobile-category-strip order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
             {STORE_CATEGORIES.map((category) => {
               const active = storeCategory === category.id;
               const icon = category.id === 'banners' ? 'BN' : category.id === 'rigid' ? 'RG' : category.id === 'decals' ? 'AD' : category.id === 'magnets' ? 'MG' : category.id === 'apparel' ? 'AP' : category.id === 'misc' ? 'MS' : 'CO';
@@ -6069,8 +6069,8 @@ export default function Home() {
       </header>
 
       {storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart ? (
-        <section className="mx-auto max-w-[1800px] px-4 py-5 md:px-6">
-          <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <section className="hue-store-shell mx-auto w-full min-w-0 max-w-[1800px] px-4 py-5 md:px-6">
+          <div className="hue-store-layout grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className={`hue-mobile-product-nav rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
               <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Products</p>
               <h2 className={`mt-2 text-2xl font-black tracking-tight ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>Choose a print product</h2>
@@ -6078,7 +6078,7 @@ export default function Home() {
               <div className="hue-mobile-category-strip mt-5 flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
                 {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => setStoreCategory(category.id)} className={`w-44 shrink-0 rounded-md border p-3 text-left transition lg:w-full ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block truncate text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
               </div>
-              <div className="mt-5 overflow-hidden rounded-lg border border-[#38bdf8]/35 bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.28),transparent_40%),linear-gradient(135deg,rgba(14,165,233,0.22),rgba(7,17,31,0.94))] p-4 shadow-[0_0_32px_rgba(14,165,233,0.16)]">
+              <div className="hue-mobile-canva-promo mt-5 overflow-hidden rounded-lg border border-[#38bdf8]/35 bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.28),transparent_40%),linear-gradient(135deg,rgba(14,165,233,0.22),rgba(7,17,31,0.94))] p-4 shadow-[0_0_32px_rgba(14,165,233,0.16)]">
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8be3ff]">New Canva import</p>
                 <h3 className="mt-2 text-lg font-black leading-tight text-white">Order straight from your Canva designs.</h3>
                 <p className="mt-2 text-xs leading-5 text-slate-300">Choose a saved Canva project and bring it into Hue Studio for print-ready ordering.</p>
@@ -6086,7 +6086,7 @@ export default function Home() {
               </div>
             </aside>
 
-            <section className={`overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/15 bg-[#050b12] shadow-[0_24px_60px_rgba(0,0,0,0.45)]' : 'border border-white/80 bg-white/88'}`}>
+            <section className={`hue-store-content min-w-0 overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/15 bg-[#050b12] shadow-[0_24px_60px_rgba(0,0,0,0.45)]' : 'border border-white/80 bg-white/88'}`}>
               <div className="hue-store-hero relative min-h-[350px] overflow-hidden">
                 <div aria-hidden="true" className="hue-store-hero-pattern absolute inset-0" />
                 <div aria-hidden="true" className="hue-store-hero-glow absolute inset-0" />
@@ -6790,7 +6790,7 @@ export default function Home() {
                   })}
                 </div> : null}
               </div> : null}
-              {isProductionBuilder ? <div className="absolute bottom-6 left-8 z-20 flex items-center gap-3 text-xs text-slate-200">
+              {isProductionBuilder ? <div className="hue-builder-zoom absolute bottom-6 left-8 z-20 flex items-center gap-3 text-xs text-slate-200">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/45 font-black shadow-[0_0_22px_rgba(14,165,233,0.18)]">N</div>
                 <div className="flex h-8 items-center overflow-hidden rounded border border-white/15 bg-black/38 backdrop-blur">
                   <button type="button" onClick={() => { const next = Math.max(0.5, zoom - 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="h-full px-3 text-slate-300 hover:bg-white/10">-</button>
@@ -7486,7 +7486,7 @@ export default function Home() {
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => { setShowArtworkEditor(false); setArtworkEditorOrderReturn(null); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
           </header>
           <div className={`hue-mobile-editor-body grid min-h-0 flex-1 overflow-y-auto transition-[grid-template-columns] duration-300 lg:overflow-hidden ${artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
-            <aside className={`relative max-h-[42vh] min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 lg:max-h-none ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+            <aside className={`hue-mobile-editor-tools relative max-h-[42vh] min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 lg:max-h-none ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
               <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
               <button type="button" onClick={() => setArtworkEditorLeftPanelOpen((open) => !open)} className={`sticky top-0 z-20 mb-3 flex h-9 items-center justify-center rounded-xl border border-[#38bdf8]/25 bg-[#081827]/95 text-xs font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_12px_24px_rgba(0,0,0,0.22)] hover:border-[#67d8ff] hover:bg-[#0c2a40] ${artworkEditorLeftPanelOpen ? 'ml-auto w-28' : 'w-full'}`} aria-label={artworkEditorLeftPanelOpen ? 'Collapse artwork tools' : 'Expand artwork tools'}>{artworkEditorLeftPanelOpen ? 'Hide tools' : 'Tools'}</button>
               {!artworkEditorLeftPanelOpen ? <div className="flex flex-col items-center gap-3 pt-1">
@@ -7549,7 +7549,7 @@ export default function Home() {
               <div className="mt-6 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/55 p-3 text-xs leading-5 text-slate-300"><strong className="text-[#8be3ff]">Next phase:</strong> smart removal, background replacement, recoloring, and restoration through Cloudinary.</div>
               </div>}
             </aside>
-            <main className="relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-3 sm:p-5">
+            <main className="hue-mobile-editor-canvas relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-3 sm:p-5">
               <div className="relative max-h-full max-w-full overflow-visible pl-5 pt-5">
                 {artworkEditorShowGuides && artworkEditorSource ? <>
                   <div className="pointer-events-none absolute left-5 right-0 top-0 z-20 h-4 rounded-t border border-b-0 border-sky-400/35 bg-[repeating-linear-gradient(90deg,rgba(14,165,233,.65)_0_1px,transparent_1px_10px)] bg-slate-950/75" />
@@ -7560,7 +7560,7 @@ export default function Home() {
               </div>
               <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#02070d]/75 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{artworkEditorSide} side · Drag handles to resize · Double-click text to edit</span>
             </main>
-            <aside className="max-h-[55vh] min-h-0 overflow-y-auto border-l border-white/10 bg-[#07131f] p-4 lg:max-h-none">
+            <aside className="hue-mobile-editor-properties max-h-[55vh] min-h-0 overflow-y-auto border-l border-white/10 bg-[#07131f] p-4 lg:max-h-none">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Properties</p>
               {artworkEditorActiveObject ? <div className="mt-3 space-y-3">
                 <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Exact position & size (inches)</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] font-bold uppercase text-slate-500">Center X<input type="number" step="0.01" value={artworkEditorExactX} onChange={(event) => setArtworkEditorExactX(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('x', artworkEditorExactX)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Center Y<input type="number" step="0.01" value={artworkEditorExactY} onChange={(event) => setArtworkEditorExactY(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('y', artworkEditorExactY)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Width<input type="number" min="0.01" step="0.01" value={artworkEditorExactWidth} onChange={(event) => setArtworkEditorExactWidth(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('width', artworkEditorExactWidth)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Height<input type="number" min="0.01" step="0.01" value={artworkEditorExactHeight} onChange={(event) => setArtworkEditorExactHeight(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('height', artworkEditorExactHeight)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="col-span-2 text-[8px] font-bold uppercase text-slate-500">Rotation<input type="number" step="1" value={artworkEditorExactRotation} onChange={(event) => setArtworkEditorExactRotation(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('rotation', artworkEditorExactRotation)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label></div></div>
@@ -7589,7 +7589,7 @@ export default function Home() {
               <div className="mt-2 space-y-1">{artworkEditorLayers.length === 0 ? <p className="rounded-xl border border-dashed border-white/10 p-3 text-xs text-slate-500">Add an image, text, shape, or border to create layers.</p> : artworkEditorLayers.map((layer) => <div key={layer.id} className={`flex min-w-0 items-center rounded-lg border ${layer.isActive ? 'border-[#38bdf8]/60 bg-[#0c2a40]' : layer.isLocked ? 'border-amber-300/20 bg-amber-300/[0.04]' : 'border-white/10 bg-white/[0.035] hover:border-white/20'}`}><button type="button" onClick={() => { if (layer.isLocked) { setArtworkEditorStatus(`${layer.name} is locked. Use the lock button to make it editable.`); return; } const canvas = artworkEditorCanvasRef.current; const object = canvas?.getObjects().find((entry) => (entry as FabricObject & { data?: { layerId?: string } }).data?.layerId === layer.id); if (!canvas || !object) return; canvas.setActiveObject(object); canvas.requestRenderAll(); syncArtworkEditorControls(object); refreshArtworkEditorLayers(canvas); }} className={`flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left text-xs ${layer.isActive ? 'text-white' : 'text-slate-300'}`}><span className="truncate font-bold">{layer.name}</span><span className="ml-2 shrink-0 text-[9px] uppercase text-slate-500">{layer.type}</span></button><button type="button" onClick={() => moveArtworkEditorLayerById(layer.id, 'up')} title="Move layer up" aria-label={`Move ${layer.name} up`} className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md text-xs text-slate-400 hover:bg-white/10 hover:text-white">↑</button><button type="button" onClick={() => moveArtworkEditorLayerById(layer.id, 'down')} title="Move layer down" aria-label={`Move ${layer.name} down`} className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md text-xs text-slate-400 hover:bg-white/10 hover:text-white">↓</button><button type="button" onClick={() => toggleArtworkEditorLayerLock(layer.id)} title={layer.isLocked ? 'Unlock layer' : 'Lock layer'} aria-label={layer.isLocked ? `Unlock ${layer.name}` : `Lock ${layer.name}`} className={`mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs ${layer.isLocked ? 'bg-amber-300/15 text-amber-200 hover:bg-amber-300/25' : 'text-slate-500 hover:bg-white/10 hover:text-white'}`}>{layer.isLocked ? '🔒' : '🔓'}</button></div>)}</div>
             </aside>
           </div>
-          <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-5 py-3">
+          <footer className="hue-mobile-editor-footer flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-5 py-3">
             <p className={`min-w-0 flex-1 text-xs leading-5 ${artworkEditorStatus.toLowerCase().includes('could not') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{artworkEditorStatus}</p>
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => { setShowArtworkEditor(false); setArtworkEditorOrderReturn(null); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Saving design...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
@@ -7666,8 +7666,8 @@ export default function Home() {
 
       {showImageZone ? <div className={`fixed inset-0 ${showArtworkEditor ? 'z-[95]' : 'z-50'} flex items-center justify-center bg-[#02070d]/80 p-0 backdrop-blur-md sm:p-4`}>
         <section className="hue-image-library flex h-full w-full flex-col overflow-hidden border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)] sm:h-[min(800px,90vh)] sm:w-[min(1380px,96vw)] sm:rounded-[22px]">
-          <div className="relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
-            <div className="mr-auto flex min-w-[280px] items-center gap-3">
+          <div className="hue-image-library-header relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
+            <div className="hue-image-library-brand mr-auto flex min-w-[280px] items-center gap-3">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
               <div><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Studio</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Zone</h2><p className="mt-0.5 text-xs text-slate-400">Your saved artwork library</p></div>
             </div>
