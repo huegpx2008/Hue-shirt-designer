@@ -5975,6 +5975,7 @@ export default function Home() {
       return;
     }
     if (categoryId === 'apparel') {
+      setProductMode('signage');
       setStoreView('store');
       return;
     }
@@ -5985,7 +5986,7 @@ export default function Home() {
     if (product.disabled) return;
     if (product.id === 'apparel-dtg') {
       setStoreCategory('apparel');
-      setProductMode('apparel');
+      setProductMode('signage');
       setStoreView('dtg');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -6218,7 +6219,7 @@ export default function Home() {
                 <h2 className="mt-2 text-3xl font-black tracking-tight text-white md:text-4xl">Direct to Garment Printing</h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Choose the shirt, add full-color artwork, select sizes and quantities, then review the production setup. This is the first working layout; garment availability and live DTG pricing will be connected next.</p>
               </div>
-              <button type="button" onClick={() => { setStoreView('store'); setStoreCategory('apparel'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-3 text-xs font-black uppercase text-slate-200 hover:border-[#38bdf8]/60 hover:bg-[#0c2a40]">Back to Apparel</button>
+              <button type="button" onClick={() => { setProductMode('signage'); setStoreView('store'); setStoreCategory('apparel'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-3 text-xs font-black uppercase text-slate-200 hover:border-[#38bdf8]/60 hover:bg-[#0c2a40]">Back to Apparel</button>
             </div>
 
             <div className="mt-4 grid gap-4 xl:grid-cols-[330px_minmax(440px,1fr)_350px]">
@@ -6500,6 +6501,7 @@ export default function Home() {
                     <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-[#1678b8]'}`}>Order Builder</p>
                     <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name}</p>
                     <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {selectedSignProduct.id === 'vehicle-magnet' ? '' : isBannerBuilder ? selectedBannerMaterial?.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
+                    {isCoroBuilder ? <p className="mt-3 max-w-sm rounded border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 text-[10px] font-bold leading-4 text-amber-100">One 48&quot; × 96&quot; sheet is the minimum. Add more pieces to fill the available sheet space and lower the price per piece.</p> : null}
                   </div>
                 </div>
                 <div className={`text-xs ${isProductionBuilder ? 'rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-6 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur lg:col-start-2 lg:row-start-1' : ''}`}>
@@ -6547,7 +6549,6 @@ export default function Home() {
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">Hue API pricing</span>
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">{hueOrderPathLabel}</span>
                   </div> : null}
-                  {isCoroBuilder ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 text-[10px] font-bold leading-4 text-amber-100">Sheet-priced material: one 48&quot; × 96&quot; sheet is the minimum. Add more pieces to use the available sheet space and lower the price per piece.</p> : null}
                 </div>
                 <div className={`text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
@@ -6581,7 +6582,7 @@ export default function Home() {
                 <button type="button" onClick={() => setPrintLocation('sleeve')} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">Sleeve<br />Design</button>
                 <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">+<br />Zoom</button>
               </div> : null}
-              <div id="design-canvas" className={`hue-builder-canvas ${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-32 top-56' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
+              <div id="design-canvas" className={`hue-builder-canvas ${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-20 top-64' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
                   {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
                   {isCoroBuilder ? <div className={`coro-sheet-stage relative flex w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[360px]' : ''}`}>
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.max(0, current - 1))} disabled={activeCoroSheetIndex === 0} className={`${activeCoroOptionPanel === 'images' ? 'left-[370px]' : 'left-8'} absolute z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35`}>‹</button> : null}
