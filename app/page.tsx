@@ -5057,7 +5057,7 @@ export default function Home() {
       setSignEstimate(null);
       setImageLibraryStatus(`${imageItem.name} placed on the back. Double-sided pricing is now active.`);
       setShowImageZone(false);
-      setActiveCoroOptionPanel('images');
+      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
       return;
     }
     if (isCoroBuilder) placeCoroArtworkOnSheet(imageItem);
@@ -5080,7 +5080,7 @@ export default function Home() {
       setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height, printWidth: printSize.width, printHeight: printSize.height });
       setImageLibraryStatus(`${imageItem.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       setShowImageZone(false);
-      setActiveCoroOptionPanel('images');
+      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
       return;
     }
     if (!fabricCanvasRef.current) {
@@ -5090,7 +5090,7 @@ export default function Home() {
       setStoreCategory(targetProductId === 'banner' ? 'banners' : 'coro');
       setStoreView('builder');
       setShowImageZone(false);
-      setActiveCoroOptionPanel('images');
+      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
       return;
     }
     try {
@@ -5836,6 +5836,8 @@ export default function Home() {
     return option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query.replace(/\s/g, ''));
   });
 
+  const useCompactBuilderLayout = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+
   const openStoreCategory = (categoryId: StoreCategoryId) => {
     const categoryChanged = categoryId !== storeCategory;
     if (categoryChanged) resetPlacedArtworkForProduct();
@@ -5848,7 +5850,7 @@ export default function Home() {
       setProductMode('signage');
       setSignProductId('yard-sign');
       setStoreView('builder');
-      setActiveCoroOptionPanel('images');
+      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
       return;
     }
     if (categoryId === 'apparel') {
@@ -5870,7 +5872,7 @@ export default function Home() {
       setSignEstimate(null);
     }
     setStoreView('builder');
-    if (product.signProductId) setActiveCoroOptionPanel('images');
+    if (product.signProductId) setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
   };
 
   const chooseProductForImageZoneItem = (product: StoreProductCard) => {
@@ -5878,6 +5880,7 @@ export default function Home() {
     if (!item || product.disabled) return;
     setImageZoneProductChoice(null);
     setShowImageZone(false);
+    if (useCompactBuilderLayout()) setActiveCoroOptionPanel(null);
     setStoreCategory(product.category);
     setQueuedImageZonePlacementAttempt(0);
     setQueuedImageZonePlacement({ item, product });
@@ -5911,7 +5914,7 @@ export default function Home() {
     setSignProductId(nextProductId);
     if (nextProduct) setSignValues(getDefaultSignValues(nextProduct));
     setSignEstimate(null);
-    setActiveCoroOptionPanel(nextProductId === 'yard-sign' || nextProduct?.preview === 'banner' ? 'images' : null);
+    setActiveCoroOptionPanel(nextProductId === 'yard-sign' || nextProduct?.preview === 'banner' ? (useCompactBuilderLayout() ? null : 'images') : null);
   };
 
   const updateSignOption = (name: string, value: string | boolean) => {
@@ -6439,6 +6442,7 @@ export default function Home() {
                   <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">Clear</button>
                 </div>
               </div> : null}
+              {isProductionBuilder && activeCoroOptionPanel === null ? <button type="button" onClick={() => setActiveCoroOptionPanel('images')} className="hue-mobile-show-artwork absolute bottom-[76px] left-3 z-30 rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40]/95 px-4 py-3 text-xs font-black uppercase tracking-wide text-[#a9ecff] shadow-[0_12px_30px_rgba(0,0,0,0.35)]">+ Show artwork options</button> : null}
               {isProductionBuilder && !isCoroBuilder && !isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3">
@@ -6469,7 +6473,7 @@ export default function Home() {
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close Artwork Setup</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
               {isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -6544,7 +6548,7 @@ export default function Home() {
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">PDF</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close Artwork Setup</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
               {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -6694,7 +6698,7 @@ export default function Home() {
                     })}
                   </div>
                 </div>
-                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">Close Artwork Setup</button>
+                <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
               {isProductionBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-20 left-1/2 z-20 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
                 <div className="flex items-start justify-between gap-3">

@@ -373,6 +373,10 @@ body {
   min-height: 42px;
 }
 
+.hue-mobile-show-artwork {
+  display: none;
+}
+
 @media (max-width: 767px) {
   html,
   body {
@@ -583,16 +587,18 @@ body {
   }
 
   .hue-mobile-artwork-panel {
-    position: fixed !important;
-    z-index: 80 !important;
-    left: 0 !important;
-    right: 0 !important;
-    top: 78px !important;
-    bottom: 0 !important;
+    position: absolute !important;
+    z-index: 35 !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: 10px !important;
+    bottom: 70px !important;
+    height: auto !important;
     width: auto !important;
     max-height: none !important;
-    border-radius: 22px 22px 0 0;
-    box-shadow: 0 -20px 70px rgba(0, 0, 0, 0.68), 0 0 0 999px rgba(1, 6, 12, 0.58);
+    border-radius: 18px;
+    padding-top: 12px !important;
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.58);
   }
 
   .hue-mobile-artwork-panel > button:last-child {
@@ -600,7 +606,14 @@ body {
     z-index: 10;
     bottom: 0;
     min-height: 48px;
-    box-shadow: 0 -12px 24px rgba(255, 255, 255, 0.92);
+    border-color: rgba(56, 189, 248, 0.45) !important;
+    background: #0c2a40 !important;
+    color: #a9ecff !important;
+    box-shadow: 0 -12px 24px rgba(7, 17, 31, 0.88);
+  }
+
+  .hue-mobile-show-artwork {
+    display: block;
   }
 
   .hue-builder-option-bar {
