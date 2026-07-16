@@ -1577,6 +1577,7 @@ export default function Home() {
   const [aiEditPreview, setAiEditPreview] = useState<{ dataUrl: string; width: number; height: number; source: ImageZoneItem } | null>(null);
   const [showArtworkEditor, setShowArtworkEditor] = useState(false);
   const [artworkEditorOrderReturn, setArtworkEditorOrderReturn] = useState<ArtworkEditorOrderReturn | null>(null);
+  const [artworkEditorLaunchContext, setArtworkEditorLaunchContext] = useState<'home-create' | 'image-zone-create' | 'image-zone-edit' | 'order'>('home-create');
   const [showNewArtworkDialog, setShowNewArtworkDialog] = useState(false);
   const [newArtworkPresetGroupId, setNewArtworkPresetGroupId] = useState('yard-signs');
   const [newArtworkPresetKey, setNewArtworkPresetKey] = useState('24x18');
@@ -1607,6 +1608,7 @@ export default function Home() {
   const [artworkEditorBorderColor, setArtworkEditorBorderColor] = useState('#0b1f44');
   const [artworkEditorZoom, setArtworkEditorZoom] = useState(1);
   const [artworkEditorLeftPanelOpen, setArtworkEditorLeftPanelOpen] = useState(true);
+  const [artworkEditorMobileView, setArtworkEditorMobileView] = useState<'canvas' | 'tools' | 'properties'>('canvas');
   const [artworkEditorSnapToCenter, setArtworkEditorSnapToCenter] = useState(true);
   const [artworkEditorShowGuides, setArtworkEditorShowGuides] = useState(true);
   const [artworkEditorVerticalGuides, setArtworkEditorVerticalGuides] = useState<number[]>([]);
@@ -3150,7 +3152,42 @@ export default function Home() {
 
   const openArtworkLibrary = () => {
     if (requestAcrylicArtworkNotice('library')) return;
+    setShowNewArtworkDialog(false);
+    setShowArtworkEditor(false);
+    setArtworkEditorOrderReturn(null);
+    setShowCustomerLogin(false);
     setShowImageZone(true);
+  };
+
+  const openStandaloneImageZone = () => {
+    setShowNewArtworkDialog(false);
+    setShowArtworkEditor(false);
+    setArtworkEditorOrderReturn(null);
+    setShowCustomerLogin(false);
+    setShowImageZone(true);
+  };
+
+  const openNewArtworkCreator = (context: 'home-create' | 'image-zone-create') => {
+    setArtworkEditorLaunchContext(context);
+    setNewArtworkError('');
+    setShowCustomerLogin(false);
+    setShowArtworkEditor(false);
+    setArtworkEditorOrderReturn(null);
+    setShowImageZone(false);
+    setShowNewArtworkDialog(true);
+  };
+
+  const closeNewArtworkCreator = () => {
+    setShowNewArtworkDialog(false);
+    if (artworkEditorLaunchContext === 'image-zone-create') setShowImageZone(true);
+  };
+
+  const openCustomerAccount = () => {
+    setShowImageZone(false);
+    setShowNewArtworkDialog(false);
+    setShowArtworkEditor(false);
+    setArtworkEditorOrderReturn(null);
+    setShowCustomerLogin(true);
   };
 
   const acknowledgeAcrylicTransparencyNotice = () => {
@@ -3601,6 +3638,8 @@ export default function Home() {
     setArtworkEditorBorderThickness(recommendedBorder.thickness);
     setArtworkEditorBorderColor('#0b1f44');
     setArtworkEditorZoom(1);
+    setArtworkEditorLeftPanelOpen(true);
+    setArtworkEditorMobileView('canvas');
     setArtworkEditorSnapToCenter(true);
     artworkEditorSnapToCenterRef.current = true;
     setArtworkEditorShowGuides(true);
@@ -3610,11 +3649,22 @@ export default function Home() {
     setArtworkEditorVersions([]);
     setArtworkEditorReloadKey(0);
     setArtworkEditorStatus(status);
+    setShowImageZone(false);
+    setShowNewArtworkDialog(false);
     setShowArtworkEditor(true);
+  };
+
+  const closeArtworkEditor = () => {
+    const returnToImageZone = artworkEditorLaunchContext === 'image-zone-edit' || artworkEditorLaunchContext === 'image-zone-create';
+    setShowArtworkEditor(false);
+    setArtworkEditorOrderReturn(null);
+    setShowNewArtworkDialog(false);
+    if (returnToImageZone) setShowImageZone(true);
   };
 
   const openArtworkEditor = async () => {
     setArtworkEditorOrderReturn(null);
+    setArtworkEditorLaunchContext('image-zone-edit');
     const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
     if (!source || !canPlaceImageZoneItem(source)) {
       setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening Hue Designer.');
@@ -3664,6 +3714,7 @@ export default function Home() {
     };
     setNewArtworkError('');
     setShowNewArtworkDialog(false);
+    setShowImageZone(false);
     startArtworkEditor(source, `Blank ${width}\" × ${height}\" artboard ready. Add text and shapes, then save it into Image Zone.`);
   };
 
@@ -4472,6 +4523,7 @@ export default function Home() {
         setActiveCoroOptionPanel('images');
         setArtworkEditorOrderReturn(null);
       }
+      if (!artworkEditorOrderReturn) setShowImageZone(true);
       setShowArtworkEditor(false);
     } catch (error) {
       setArtworkEditorStatus(`The edited copy could not be saved: ${error instanceof Error ? error.message : 'unknown error'}.`);
@@ -4485,7 +4537,10 @@ export default function Home() {
     const source = artworkEditorSource;
     const sourceWidth = Math.max(1, source.width);
     const sourceHeight = Math.max(1, source.height);
-    const workspaceScale = Math.min(940 / sourceWidth, 620 / sourceHeight);
+    const isCompactEditor = window.matchMedia('(max-width: 767px)').matches;
+    const workspaceMaxWidth = isCompactEditor ? Math.max(240, window.innerWidth - 64) : 940;
+    const workspaceMaxHeight = isCompactEditor ? Math.max(280, window.innerHeight - 250) : 620;
+    const workspaceScale = Math.min(workspaceMaxWidth / sourceWidth, workspaceMaxHeight / sourceHeight);
     const workspaceWidth = Math.max(1, Math.round(sourceWidth * workspaceScale));
     const workspaceHeight = Math.max(1, Math.round(sourceHeight * workspaceScale));
     const canvas = new Canvas(artworkEditorCanvasElRef.current, {
@@ -4813,6 +4868,7 @@ export default function Home() {
       return;
     }
     try {
+      setArtworkEditorLaunchContext('order');
       const librarySource = imageZoneItems.find((item) => item.dataUrl === artworkUrl || item.storageUrl === artworkUrl || (editingBack && item.backDataUrl === artworkUrl));
       const naturalSize = librarySource?.width && librarySource?.height
         ? { width: editingBack ? librarySource.backWidth || librarySource.width : librarySource.width, height: editingBack ? librarySource.backHeight || librarySource.height : librarySource.height }
@@ -6062,16 +6118,16 @@ export default function Home() {
             <button onClick={() => setStoreView('store')} className={`${isProductionBuilder ? 'rounded border border-white/15 bg-[#0b1018] px-4 py-2 font-semibold text-slate-400 hover:border-slate-500 hover:text-slate-100' : 'rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50'}`}>Products</button>
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
-            {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') setShowImageZone(true); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
+            {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
             {isProductionBuilder ? <button type="button" onClick={openCanvaImport} className="rounded border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-2 font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.34),0_0_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva</button> : null}
-            <button type="button" onClick={() => setShowCustomerLogin(true)} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
+            <button type="button" onClick={openCustomerAccount} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
             <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart &amp; Checkout{cartItems.length ? ` (${cartItems.length})` : ''}</button>
             {isProductionBuilder ? <button type="button" className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
         </div>
       </header>
 
-      {storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart ? (
+      {storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart && !showNewArtworkDialog && !showArtworkEditor ? (
         <section className="hue-store-shell mx-auto w-full min-w-0 max-w-[1800px] px-4 py-5 md:px-6">
           <div className="hue-store-layout grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className={`hue-mobile-product-nav rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
@@ -6106,8 +6162,8 @@ export default function Home() {
                     </div>
                     <p className="mt-6 max-w-3xl text-xs leading-5 text-slate-300">Start wherever your artwork is. Upload a finished file, make quick changes or create a simple layout in Hue Designer, or import a saved Canva project. Then choose your product, confirm the size, get pricing, and order.</p>
                     <div className="mt-7 grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center">
-                      <button type="button" onClick={() => setShowImageZone(true)} className="inline-flex items-center gap-2 rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(14,165,233,0.28)] hover:bg-[#0f75b5]">I Have Artwork <span aria-hidden="true">→</span></button>
-                      <button type="button" onClick={() => setShowImageZone(true)} className="inline-flex items-center gap-2 rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Use Hue Designer <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={openStandaloneImageZone} className="inline-flex items-center gap-2 rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(14,165,233,0.28)] hover:bg-[#0f75b5]">I Have Artwork <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={() => openNewArtworkCreator('home-create')} className="inline-flex items-center gap-2 rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Use Hue Designer <span aria-hidden="true">→</span></button>
                       <button type="button" onClick={openCanvaImport} className="inline-flex items-center gap-2 rounded-xl border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
@@ -6130,7 +6186,7 @@ export default function Home() {
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Designer</p>
                       <h3 className="mt-2 text-lg font-black leading-tight text-white">Have an idea? Give it some Hue.</h3>
                       <p className="mt-2 text-[11px] leading-5 text-slate-300">Build a simple sign or banner, create a quick layout, or make basic artwork changes—all right in your browser.</p>
-                      <button type="button" onClick={() => { setShowImageZone(true); setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Create in Hue Designer <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={() => openNewArtworkCreator('home-create')} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Create in Hue Designer <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
                 </div>
@@ -7442,7 +7498,7 @@ export default function Home() {
             <header className="flex items-center gap-4 border-b border-white/10 bg-[linear-gradient(135deg,#071522,#08243a_55%,#071522)] px-6 py-5">
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-2xl font-black text-[#67d8ff]">+</span>
               <div className="mr-auto"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="mt-1 text-2xl font-black">Create New Artwork</h2><p className="mt-1 text-sm text-slate-400">Choose a common production size or enter your own dimensions.</p></div>
-              <button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
+              <button type="button" onClick={closeNewArtworkCreator} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
             </header>
             <div className="grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)]">
               <aside className="min-h-0 overflow-y-auto border-r border-white/10 bg-[#06101b] p-4">
@@ -7470,7 +7526,7 @@ export default function Home() {
                 </div>}
               </main>
             </div>
-            <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4"><p className={`min-w-0 flex-1 text-xs ${newArtworkError ? 'font-bold text-amber-300' : 'text-slate-500'}`}>{newArtworkError || 'A blank print-ready artboard will open in Hue Designer. Nothing is saved until you choose Save to Image Zone.'}</p><button type="button" onClick={() => setShowNewArtworkDialog(false)} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1]">Cancel</button><button type="button" onClick={buildNewArtwork} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Open Hue Designer</button></footer>
+            <footer className="flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4"><p className={`min-w-0 flex-1 text-xs ${newArtworkError ? 'font-bold text-amber-300' : 'text-slate-500'}`}>{newArtworkError || 'A blank print-ready artboard will open in Hue Designer. Nothing is saved until you choose Save to Image Zone.'}</p><button type="button" onClick={closeNewArtworkCreator} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1]">Cancel</button><button type="button" onClick={buildNewArtwork} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8]">Open Hue Designer</button></footer>
           </section>
         </div>;
       })() : null}
@@ -7487,9 +7543,14 @@ export default function Home() {
               <button type="button" disabled={!artworkEditorCanUndo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(-1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">↶ Undo</button>
               <button type="button" disabled={!artworkEditorCanRedo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">Redo ↷</button>
             </div>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { setShowArtworkEditor(false); setArtworkEditorOrderReturn(null); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Close</button>
           </header>
-          <div className={`hue-mobile-editor-body grid min-h-0 flex-1 overflow-y-auto transition-[grid-template-columns] duration-300 lg:overflow-hidden ${artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
+          <nav className="hue-mobile-editor-tabs" aria-label="Hue Designer mobile workspace">
+            <button type="button" onClick={() => setArtworkEditorMobileView('canvas')} className={artworkEditorMobileView === 'canvas' ? 'is-active' : ''}>Canvas</button>
+            <button type="button" onClick={() => setArtworkEditorMobileView('tools')} className={artworkEditorMobileView === 'tools' ? 'is-active' : ''}>Add &amp; Edit</button>
+            <button type="button" onClick={() => setArtworkEditorMobileView('properties')} className={artworkEditorMobileView === 'properties' ? 'is-active' : ''}>Properties &amp; Layers</button>
+          </nav>
+          <div data-mobile-view={artworkEditorMobileView} className={`hue-mobile-editor-body grid min-h-0 flex-1 overflow-y-auto transition-[grid-template-columns] duration-300 lg:overflow-hidden ${artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
             <aside className={`hue-mobile-editor-tools relative max-h-[42vh] min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 lg:max-h-none ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
               <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
               <button type="button" onClick={() => setArtworkEditorLeftPanelOpen((open) => !open)} className={`sticky top-0 z-20 mb-3 flex h-9 items-center justify-center rounded-xl border border-[#38bdf8]/25 bg-[#081827]/95 text-xs font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_12px_24px_rgba(0,0,0,0.22)] hover:border-[#67d8ff] hover:bg-[#0c2a40] ${artworkEditorLeftPanelOpen ? 'ml-auto w-28' : 'w-full'}`} aria-label={artworkEditorLeftPanelOpen ? 'Collapse artwork tools' : 'Expand artwork tools'}>{artworkEditorLeftPanelOpen ? 'Hide tools' : 'Tools'}</button>
@@ -7595,7 +7656,7 @@ export default function Home() {
           </div>
           <footer className="hue-mobile-editor-footer flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-5 py-3">
             <p className={`min-w-0 flex-1 text-xs leading-5 ${artworkEditorStatus.toLowerCase().includes('could not') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{artworkEditorStatus}</p>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { setShowArtworkEditor(false); setArtworkEditorOrderReturn(null); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Saving design...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
           </footer>
         </section>
@@ -7682,7 +7743,7 @@ export default function Home() {
             </select>
             <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</label>
             <button type="button" onClick={openCanvaImport} className="h-10 rounded-xl border border-[#22d3ee]/35 bg-[#083044] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#0c3b55]">Import Canva</button>
-            <button type="button" onClick={() => { setNewArtworkError(''); setShowNewArtworkDialog(true); }} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
+            <button type="button" onClick={() => openNewArtworkCreator('image-zone-create')} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={openAiEditor} className="h-10 rounded-xl border border-violet-300/30 bg-violet-500/10 px-4 text-xs font-black uppercase text-violet-100 hover:border-violet-300/60 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-35">AI Tools</button>
             <button type="button" className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Image setup</button>
