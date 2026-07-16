@@ -6257,7 +6257,7 @@ export default function Home() {
                   <div className="absolute inset-y-0 left-1/2 w-[80%] -translate-x-1/2 overflow-hidden">
                     <img src={dtgColor === '#ffffff' ? '/dtg-bc3001-white.png' : '/dtg-bc3001-black.png'} alt={`Bella+Canvas BC3001 ${dtgColor === '#ffffff' ? 'white' : 'black'} ${dtgSide} shirt`} className={`pointer-events-none absolute top-0 h-full w-auto max-w-none select-none ${dtgColor === '#ffffff' ? 'mix-blend-multiply contrast-110' : ''}`} style={{ left: '50%', transform: `translateX(${dtgSide === 'front' ? '-25%' : '-75%'})` }} />
                   </div>
-                  <div className="absolute left-1/2 top-[25.5%] z-10 aspect-[12.5/15.7] w-[28%] -translate-x-1/2 border border-dashed border-[#168dce]/65 bg-white/[0.035]">
+                  <div className="absolute top-[31%] z-10 aspect-[12.5/15.7] w-[27%] -translate-x-1/2 border border-dashed border-[#168dce]/65 bg-white/[0.025]" style={{ left: dtgColor === '#ffffff' ? '47.5%' : '55.5%' }}>
                     <span className="absolute -top-6 left-1/2 whitespace-nowrap rounded bg-[#07131e]/90 px-2 py-1 text-[8px] font-black uppercase tracking-wide text-[#67d8ff] shadow-sm">Max print area 12.5&quot; × 15.7&quot;</span>
                     <span className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#168dce]/25" />
                     <span className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#168dce]/25" />
