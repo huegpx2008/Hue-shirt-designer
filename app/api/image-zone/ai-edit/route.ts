@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
+import { validateArtworkBuffer } from '@/lib/server/artwork-file-validation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -50,8 +51,10 @@ export async function POST(request: Request) {
     const action = String(incoming.get('action') || 'restore');
     const targetColor = String(incoming.get('targetColor') || '#0ea5e9');
 
-    if (!(image instanceof File) || !image.type.startsWith('image/')) return NextResponse.json({ error: 'Choose a valid image before running Cloudinary AI.' }, { status: 400 });
+    if (!(image instanceof File)) return NextResponse.json({ error: 'Choose a valid image before running Cloudinary AI.' }, { status: 400 });
     if (image.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: 'The selected image is larger than the 10 MB Cloudinary limit on your current plan.' }, { status: 413 });
+    const imageBuffer = Buffer.from(await image.arrayBuffer());
+    const validatedImage = validateArtworkBuffer(imageBuffer, { maxBytes: MAX_IMAGE_BYTES });
     if (!VALID_ACTIONS.has(action)) return NextResponse.json({ error: 'Choose a supported Cloudinary edit action.' }, { status: 400 });
     if (!['restore', 'remove-background'].includes(action) && (prompt.length < 2 || prompt.length > 500)) return NextResponse.json({ error: 'Describe the target in 2 to 500 characters.' }, { status: 400 });
     if (action === 'replace' && !prompt.includes('=>')) return NextResponse.json({ error: 'For replacement, use “what to replace => what should replace it”.' }, { status: 400 });
@@ -61,7 +64,7 @@ export async function POST(request: Request) {
     const uploadId = `hue-ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const uploadParameters = { folder: 'hue-ai-temporary', public_id: uploadId, timestamp };
     const uploadForm = new FormData();
-    uploadForm.append('file', image, image.name || 'artwork.png');
+    uploadForm.append('file', new Blob([imageBuffer], { type: validatedImage.mimeType }), image.name || `artwork.${validatedImage.extension}`);
     Object.entries(uploadParameters).forEach(([key, value]) => uploadForm.append(key, value));
     uploadForm.append('api_key', apiKey);
     uploadForm.append('signature', signCloudinary(uploadParameters, apiSecret));

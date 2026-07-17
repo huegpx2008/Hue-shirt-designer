@@ -5,6 +5,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.hue_orders (
   id uuid primary key default gen_random_uuid(),
   order_number text not null unique,
+  submission_key text null,
   status text not null default 'received',
   customer_user_id uuid null,
   customer_email text not null,
@@ -19,6 +20,9 @@ create table if not exists public.hue_orders (
   printavo_status text not null default 'not_added' check (printavo_status in ('not_added', 'added')),
   printavo_order_number text null,
   printavo_added_at timestamptz null,
+  admin_email_sent_at timestamptz null,
+  customer_email_sent_at timestamptz null,
+  last_email_error text null,
   order_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -27,11 +31,17 @@ create table if not exists public.hue_orders (
 create index if not exists hue_orders_customer_email_idx on public.hue_orders (lower(customer_email));
 create index if not exists hue_orders_created_at_idx on public.hue_orders (created_at desc);
 create index if not exists hue_orders_printavo_status_idx on public.hue_orders (printavo_status, created_at desc);
+create unique index if not exists hue_orders_submission_key_uidx on public.hue_orders (submission_key) where submission_key is not null;
+create index if not exists hue_orders_status_updated_idx on public.hue_orders (status, updated_at desc);
 
 -- Keep existing installations current when this setup file is run again.
 alter table public.hue_orders add column if not exists printavo_status text not null default 'not_added';
 alter table public.hue_orders add column if not exists printavo_order_number text null;
 alter table public.hue_orders add column if not exists printavo_added_at timestamptz null;
+alter table public.hue_orders add column if not exists submission_key text null;
+alter table public.hue_orders add column if not exists admin_email_sent_at timestamptz null;
+alter table public.hue_orders add column if not exists customer_email_sent_at timestamptz null;
+alter table public.hue_orders add column if not exists last_email_error text null;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'hue_orders_printavo_status_check') then
     alter table public.hue_orders add constraint hue_orders_printavo_status_check check (printavo_status in ('not_added', 'added'));

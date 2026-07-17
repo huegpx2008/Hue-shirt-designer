@@ -72,6 +72,7 @@ type CartItem = {
   sizeLabel: string;
   optionSummary: string[];
   price: { total: number | null; each: number | null; currency: string; sheetCount?: number; pricePerSheet?: number | null };
+  pricingRequest: { apiSlug: string; payload: Record<string, string | number | boolean> };
   artworkFiles: CartArtworkFile[];
   productionBreakdown: CartProductionArtwork[];
   productionSummary: string[];
@@ -137,6 +138,7 @@ const CUSTOMER_SESSION_STORAGE_KEY = 'hue-customer-session';
 const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
 const ORDER_CONFIRMATION_STORAGE_KEY = 'hue-order-confirmation';
+const CHECKOUT_SUBMISSION_STORAGE_KEY = 'hue-checkout-submission';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
 
@@ -228,7 +230,16 @@ const getCustomerLegacyLibraryPrefixes = (session: CustomerSession | null) => {
   ];
 };
 
-const isPreviewableImageFile = (file: File) => file.type.startsWith('image/');
+const CLIENT_ARTWORK_MAX_BYTES = 50 * 1024 * 1024;
+const SUPPORTED_CLIENT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const isPreviewableImageFile = (file: File) => SUPPORTED_CLIENT_IMAGE_TYPES.has(file.type.toLowerCase()) || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+const validateClientArtworkFile = (file: File, options: { allowPdf?: boolean } = {}) => {
+  if (!file.size) throw new Error('The selected file is empty.');
+  if (file.size > CLIENT_ARTWORK_MAX_BYTES) throw new Error('Artwork files cannot exceed 50 MB.');
+  const isImage = isPreviewableImageFile(file);
+  const isPdf = options.allowPdf && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
+  if (!isImage && !isPdf) throw new Error('Upload a PNG, JPG, WebP, GIF, or PDF. SVG and other file types are not accepted.');
+};
 
 const getImageNaturalSize = (dataUrl: string): Promise<{ width: number; height: number }> => new Promise((resolve, reject) => {
   const image = new Image();
@@ -375,28 +386,57 @@ const refreshSupabaseSession = async (session: CustomerSession | null) => {
 
 const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession | null) => {
   if (!isSupabaseStorageConfigured) throw new Error('Supabase is not configured.');
-  const storagePath = `${getCustomerLibraryPrefix(session)}/${Date.now()}-${getSafeStorageFileName(file.name)}`;
-  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(storagePath)}`, {
+  const isProject = /json/i.test(file.type) || /-project\.json$/i.test(file.name);
+  if (!isProject) validateClientArtworkFile(file, { allowPdf: true });
+  const guestSessionId = session?.user?.id ? '' : getGuestUploadSessionId();
+  const requestHeaders = {
+    'Content-Type': 'application/json',
+    ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+  };
+  const ticketResponse = await fetch('/api/artwork/upload', {
     method: 'POST',
-    headers: {
-      ...getSupabaseStorageHeaders(session?.access_token),
-      'Content-Type': file.type || 'application/octet-stream',
-      'x-upsert': 'false'
-    },
-    body: file
+    headers: requestHeaders,
+    body: JSON.stringify({
+      action: 'ticket',
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      guestSessionId,
+    }),
   });
-  if (!response.ok) {
-    const message = await getErrorMessage(response);
+  if (!ticketResponse.ok) {
+    const message = await getErrorMessage(ticketResponse);
     if (/maximum allowed size|exceeded.*size|object.*too large/i.test(message)) {
       throw new Error(`The file is over the storage limit (${(file.size / 1024 / 1024).toFixed(1)} MB). Hue Studio generated files are capped at 300 DPI, but this artboard may still need to save smaller.`);
     }
     throw new Error(message);
   }
-  const previewUrl = await getSupabaseSignedUrl(storagePath, session).catch(() => getSupabasePublicUrl(storagePath));
-  return {
-    storagePath,
-    storageUrl: previewUrl
-  };
+  const ticket = await ticketResponse.json() as { storagePath?: string; token?: string; mimeType?: string };
+  if (!ticket.storagePath || !ticket.token) throw new Error('Secure storage did not return an upload ticket.');
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error: uploadError } = await supabase.storage
+    .from(SUPABASE_STORAGE_BUCKET)
+    .uploadToSignedUrl(ticket.storagePath, ticket.token, file, { contentType: ticket.mimeType || file.type });
+  if (uploadError) throw new Error(uploadError.message || 'The artwork could not be uploaded to secure storage.');
+
+  const verifyResponse = await fetch('/api/artwork/upload', {
+    method: 'POST',
+    headers: requestHeaders,
+    body: JSON.stringify({
+      action: 'verify',
+      storagePath: ticket.storagePath,
+      guestSessionId,
+      isProject,
+    }),
+  });
+  if (!verifyResponse.ok) throw new Error(await getErrorMessage(verifyResponse));
+  const result = await verifyResponse.json() as { storagePath?: string; storageUrl?: string };
+  if (!result.storagePath || !result.storageUrl) throw new Error('Secure storage did not return the saved artwork location.');
+  return { storagePath: result.storagePath, storageUrl: result.storageUrl };
 };
 
 
@@ -1798,6 +1838,7 @@ export default function Home() {
   const artworkEditorSideRef = useRef<CoroArtworkSide>('front');
   const artworkEditorSideSnapshotsRef = useRef<Record<CoroArtworkSide, string | null>>({ front: null, back: null });
   const artworkEditorClipboardRef = useRef<FabricObject | null>(null);
+  const pendingCheckoutSubmissionRef = useRef<{ id: string; fingerprint: string } | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
 
@@ -2381,26 +2422,29 @@ export default function Home() {
   const sendTestOrderEmail = async (order: TestOrder) => {
     let submittedOrder = order;
     try {
-      setCheckoutStatus(`Test order ${order.orderNumber} submitted. Sending order email to Hue...`);
+      setCheckoutStatus('Securely submitting your order and sending confirmations...');
       const orderForEmail = getPersistableTestOrders([order])[0];
       const response = await fetch('/api/orders/test-submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: orderForEmail })
+        headers: {
+          'Content-Type': 'application/json',
+          ...(customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : {}),
+        },
+        body: JSON.stringify({ order: orderForEmail, guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() })
       });
       const payload = await response.json().catch(() => ({})) as { error?: string; order?: TestOrder };
       if (payload.order) {
         submittedOrder = payload.order;
-        setTestOrders((current) => current.map((entry) => entry.orderNumber === submittedOrder.orderNumber ? submittedOrder : entry));
+        setTestOrders((current) => current.map((entry) => entry.id === submittedOrder.id ? submittedOrder : entry));
         setLastTestOrder(submittedOrder);
       }
       if (!response.ok) throw new Error(payload.error || 'The order email could not be sent.');
-      setCheckoutStatus(`Test order ${order.orderNumber} submitted and emailed to Hue. No payment was collected.`);
+      setCheckoutStatus(`Order ${submittedOrder.orderNumber} was securely submitted and confirmation emails were sent.`);
       return submittedOrder;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'The order email could not be sent.';
-      setCheckoutStatus(`Test order ${order.orderNumber} was saved, but email needs attention: ${message}`);
-      return submittedOrder;
+      setCheckoutStatus(`Checkout stopped: ${message}`);
+      throw error instanceof Error ? error : new Error(message);
     }
   };
 
@@ -2423,8 +2467,24 @@ export default function Home() {
     if (isSubmittingTestOrder) return;
     setIsSubmittingTestOrder(true);
     const timestamp = Date.now();
+    const submissionFingerprint = JSON.stringify({
+      email: contactEmail.toLowerCase(),
+      items: cartItems.map((item) => ({ id: item.id, quantity: item.quantity })),
+    });
+    let checkoutSubmissionId = `checkout-${timestamp}-${Math.random().toString(36).slice(2, 12)}`;
+    if (pendingCheckoutSubmissionRef.current?.fingerprint === submissionFingerprint) {
+      checkoutSubmissionId = pendingCheckoutSubmissionRef.current.id;
+    }
+    try {
+      const storedSubmission = JSON.parse(window.sessionStorage.getItem(CHECKOUT_SUBMISSION_STORAGE_KEY) || 'null') as { id?: string; fingerprint?: string } | null;
+      if (storedSubmission?.id && storedSubmission.fingerprint === submissionFingerprint) checkoutSubmissionId = storedSubmission.id;
+      else window.sessionStorage.setItem(CHECKOUT_SUBMISSION_STORAGE_KEY, JSON.stringify({ id: checkoutSubmissionId, fingerprint: submissionFingerprint }));
+    } catch {
+      // The in-memory submission key still prevents duplicate clicks for this page lifetime.
+    }
+    pendingCheckoutSubmissionRef.current = { id: checkoutSubmissionId, fingerprint: submissionFingerprint };
     const order: TestOrder = {
-      id: `test-order-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+      id: checkoutSubmissionId,
       orderNumber: createTestOrderNumber(timestamp),
       createdAt: new Date(timestamp).toISOString(),
       status: 'test_submitted',
@@ -2457,16 +2517,24 @@ export default function Home() {
       total: checkoutOrderTotal,
       currency: 'USD'
     };
-    setTestOrders((current) => [order, ...current]);
-    setLastTestOrder(order);
+    setCheckoutStatus('Finalizing pricing and organizing production artwork...');
+    let organizedOrder: TestOrder;
+    try {
+      organizedOrder = await sendTestOrderEmail(order);
+    } catch {
+      setIsSubmittingTestOrder(false);
+      return;
+    }
+    setTestOrders((current) => [organizedOrder, ...current.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)]);
+    setLastTestOrder(organizedOrder);
     setCartItems([]);
     setShowCart(false);
-    setCheckoutStatus(`Finalizing ${order.orderNumber} and organizing production artwork...`);
-    const organizedOrder = await sendTestOrderEmail(order);
     try {
       const updatedHistory = [organizedOrder, ...testOrders.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)];
       window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(getPersistableTestOrders(updatedHistory)));
       window.sessionStorage.setItem(ORDER_CONFIRMATION_STORAGE_KEY, JSON.stringify(getPersistableTestOrders([organizedOrder])[0]));
+      window.sessionStorage.removeItem(CHECKOUT_SUBMISSION_STORAGE_KEY);
+      pendingCheckoutSubmissionRef.current = null;
     } catch {
       // The confirmation route can still use the order number if browser storage is unavailable.
     }
@@ -3982,8 +4050,10 @@ export default function Home() {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!canvas || !file) return;
-    if (!file.type.startsWith('image/')) {
-      setArtworkEditorStatus('Choose a PNG, JPG, WEBP, or other browser-supported image file.');
+    try {
+      validateClientArtworkFile(file);
+    } catch (error) {
+      setArtworkEditorStatus(error instanceof Error ? error.message : 'Choose a supported artwork image.');
       return;
     }
     setArtworkEditorStatus(`Adding ${file.name} to the artboard...`);
@@ -5536,6 +5606,13 @@ export default function Home() {
   const onUploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    try {
+      validateClientArtworkFile(file, { allowPdf: true });
+    } catch (error) {
+      setImageLibraryStatus(error instanceof Error ? error.message : 'Choose a supported artwork file.');
+      event.target.value = '';
+      return;
+    }
     const canvas = fabricCanvasRef.current;
     const isImageFile = isPreviewableImageFile(file);
     const isPdfFile = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
@@ -6075,6 +6152,16 @@ export default function Home() {
           }]
         : [];
     const pricePerSheet = isCoroBuilder ? signPricePerSheet : null;
+    const cartPricingApiSlug = selectedSignProduct.id === 'yard-sign' ? 'custom-cut-coroplast' : selectedSignProduct.apiSlug;
+    const cartPricingPayload = toSignPricingPayload(selectedSignProduct, signValues);
+    cartPricingPayload.quantity = isCoroBuilder ? effectiveCoroQuantity : designerQuantity;
+    if (isCoroBuilder) {
+      cartPricingPayload.width = primaryCustomCoroItem ? Number(primaryCustomCoroItem.signWidth || signWidth) : signWidth;
+      cartPricingPayload.height = primaryCustomCoroItem ? Number(primaryCustomCoroItem.signHeight || signHeight) : signHeight;
+      cartPricingPayload.material = signValues.material || (selectedSignProduct.id === 'yard-sign' ? '4mm' : 'standard');
+      cartPricingPayload.thickness = signValues.material || (selectedSignProduct.id === 'yard-sign' ? '4mm' : 'standard');
+      cartPricingPayload.sheetCount = coroSheetLayout.sheetCount;
+    }
     const cartItem: CartItem = {
       id: `cart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       addedAt: new Date().toISOString(),
@@ -6095,6 +6182,7 @@ export default function Home() {
         sheetCount: isCoroBuilder ? coroSheetLayout.sheetCount : undefined,
         pricePerSheet
       },
+      pricingRequest: { apiSlug: cartPricingApiSlug, payload: cartPricingPayload },
       artworkFiles,
       productionBreakdown,
       productionSummary: [
@@ -6319,7 +6407,13 @@ export default function Home() {
   };
 
   const uploadDtgArtwork = (side: ShirtView, file: File | null) => {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    try {
+      validateClientArtworkFile(file);
+    } catch (error) {
+      setCartStatus(error instanceof Error ? error.message : 'Choose a supported DTG artwork file.');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== 'string') return;
@@ -6499,7 +6593,7 @@ export default function Home() {
 
   return (
     <main className={`${isProductionBuilder ? `flex min-h-screen flex-col bg-[#050b12] text-slate-100 ${storeView === 'builder' ? 'overflow-y-auto pb-0 md:h-screen md:overflow-hidden' : 'overflow-y-auto pb-12'}` : 'min-h-screen bg-[#f4f8fc] pb-24 text-slate-950'}`}>
-      <input id="artwork-upload-input" ref={artworkUploadInputRef} onChange={onUploadImage} className="fixed -left-96 top-0 h-px w-px opacity-0" type="file" accept="image/*,application/pdf,.pdf" />
+      <input id="artwork-upload-input" ref={artworkUploadInputRef} onChange={onUploadImage} className="fixed -left-96 top-0 h-px w-px opacity-0" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf" />
       <header className={`hue-site-header ${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
         <div className={`hue-site-header-inner mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
           <div className="hue-mobile-brand flex min-w-0 flex-1 items-center gap-3">
@@ -6566,7 +6660,7 @@ export default function Home() {
                 <div>
                   <div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">3. Add artwork</p><span className="rounded-full bg-[#0ea5e9]/10 px-2 py-1 text-[10px] font-bold text-[#67d8ff]">{dtgArtworkCount} side{dtgArtworkCount === 1 ? '' : 's'}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    {(['front', 'back'] as ShirtView[]).map((side) => <label key={side} className={`cursor-pointer rounded-xl border p-3 text-center transition ${dtgArtwork[side] ? 'border-emerald-400/50 bg-emerald-400/10' : 'border-dashed border-[#38bdf8]/40 bg-[#08243a]/50 hover:border-[#67d8ff]'}`}><input type="file" accept="image/*" className="hidden" onChange={(event) => uploadDtgArtwork(side, event.target.files?.[0] || null)} /><span className="block text-[10px] font-black uppercase text-white">{dtgArtwork[side] ? `${side} loaded` : `Upload ${side}`}</span><span className="mt-1 block truncate text-[9px] text-slate-400">{dtgArtwork[side]?.name || 'PNG or JPG'}</span></label>)}
+                    {(['front', 'back'] as ShirtView[]).map((side) => <label key={side} className={`cursor-pointer rounded-xl border p-3 text-center transition ${dtgArtwork[side] ? 'border-emerald-400/50 bg-emerald-400/10' : 'border-dashed border-[#38bdf8]/40 bg-[#08243a]/50 hover:border-[#67d8ff]'}`}><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => uploadDtgArtwork(side, event.target.files?.[0] || null)} /><span className="block text-[10px] font-black uppercase text-white">{dtgArtwork[side] ? `${side} loaded` : `Upload ${side}`}</span><span className="mt-1 block truncate text-[9px] text-slate-400">{dtgArtwork[side]?.name || 'PNG or JPG'}</span></label>)}
                   </div>
                   {dtgArtwork[dtgSide] ? <button type="button" onClick={() => setDtgArtwork((current) => ({ ...current, [dtgSide]: null }))} className="mt-2 w-full rounded-lg border border-rose-400/25 py-2 text-[10px] font-bold uppercase text-rose-300 hover:bg-rose-400/10">Remove {dtgSide} artwork</button> : null}
                 </div>
@@ -6590,7 +6684,7 @@ export default function Home() {
                     <span className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#168dce]/25" />
                     <span className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#168dce]/25" />
                     <div className="absolute left-1/2 top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center" style={{ width: `${Math.min(100, (dtgPrintWidth / 12.5) * 100)}%`, height: `${Math.min(100, (dtgPrintHeight / 15.7) * 100)}%` }}>
-                      {dtgArtwork[dtgSide] ? <img src={dtgArtwork[dtgSide]!.dataUrl} alt={`${dtgSide} artwork`} className="max-h-full max-w-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.2)]" /> : <label className="flex h-full min-h-20 w-full min-w-20 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#38bdf8]/70 bg-[#071827]/75 px-2 text-center shadow-[0_8px_20px_rgba(0,0,0,0.22)] backdrop-blur-sm"><input type="file" accept="image/*" className="hidden" onChange={(event) => uploadDtgArtwork(dtgSide, event.target.files?.[0] || null)} /><span className="text-2xl font-light leading-none text-[#67d8ff]">+</span><span className="mt-1 text-[9px] font-black uppercase text-white">Add {dtgSide} artwork</span><span className="mt-1 text-[8px] text-slate-400">Click to upload</span></label>}
+                      {dtgArtwork[dtgSide] ? <img src={dtgArtwork[dtgSide]!.dataUrl} alt={`${dtgSide} artwork`} className="max-h-full max-w-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.2)]" /> : <label className="flex h-full min-h-20 w-full min-w-20 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#38bdf8]/70 bg-[#071827]/75 px-2 text-center shadow-[0_8px_20px_rgba(0,0,0,0.22)] backdrop-blur-sm"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => uploadDtgArtwork(dtgSide, event.target.files?.[0] || null)} /><span className="text-2xl font-light leading-none text-[#67d8ff]">+</span><span className="mt-1 text-[9px] font-black uppercase text-white">Add {dtgSide} artwork</span><span className="mt-1 text-[8px] text-slate-400">Click to upload</span></label>}
                     </div>
                   </div>
                 </div>
@@ -8092,7 +8186,7 @@ export default function Home() {
           </nav>
           <div data-mobile-view={artworkEditorMobileView} className={`hue-mobile-editor-body grid min-h-0 flex-1 overflow-y-auto transition-[grid-template-columns] duration-300 lg:overflow-hidden ${artworkEditorPrintView ? 'lg:grid-cols-[minmax(0,1fr)]' : artworkEditorLeftPanelOpen ? 'lg:grid-cols-[310px_minmax(0,1fr)_310px]' : 'lg:grid-cols-[68px_minmax(0,1fr)_310px]'}`}>
             <aside className={`hue-mobile-editor-tools relative max-h-[42vh] min-h-0 overflow-x-hidden overflow-y-auto border-r border-white/10 bg-[#07131f] transition-all duration-300 lg:max-h-none ${artworkEditorPrintView ? 'hidden' : ''} ${artworkEditorLeftPanelOpen ? 'p-4' : 'p-2'}`}>
-              <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
+              <input ref={artworkEditorImageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { void addArtworkEditorImage(event); }} className="hidden" />
               <button type="button" onClick={() => setArtworkEditorLeftPanelOpen((open) => !open)} className={`sticky top-0 z-20 mb-3 flex h-9 items-center justify-center rounded-xl border border-[#38bdf8]/25 bg-[#081827]/95 text-xs font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_12px_24px_rgba(0,0,0,0.22)] hover:border-[#67d8ff] hover:bg-[#0c2a40] ${artworkEditorLeftPanelOpen ? 'ml-auto w-28' : 'w-full'}`} aria-label={artworkEditorLeftPanelOpen ? 'Collapse artwork tools' : 'Expand artwork tools'}>{artworkEditorLeftPanelOpen ? 'Hide tools' : 'Tools'}</button>
               {!artworkEditorLeftPanelOpen ? <div className="flex flex-col items-center gap-3 pt-1">
                 <button type="button" onClick={() => artworkEditorImageInputRef.current?.click()} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38bdf8]/35 bg-[#1686c9] text-lg font-black text-white hover:bg-[#0f75b5]" title="Upload image or logo">+</button>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { MAX_ARTWORK_BYTES, validateArtworkBuffer } from '@/lib/server/artwork-file-validation';
 
 const CANVA_EXPORTS_URL = "https://api.canva.com/rest/v1/exports";
 
@@ -59,12 +60,14 @@ const finishExport = async (exportPayload: JsonRecord, title: string) => {
   if (!fileResponse.ok) {
     return NextResponse.json({ error: "Canva exported the design, but Hue Studio could not download the file." }, { status: fileResponse.status });
   }
-  const mimeType = fileResponse.headers.get("content-type") || "image/png";
+  const declaredLength = Number(fileResponse.headers.get('content-length') || 0);
+  if (declaredLength > MAX_ARTWORK_BYTES) return NextResponse.json({ error: 'The Canva export exceeds Hue Studio\'s 50 MB artwork limit.' }, { status: 413 });
   const buffer = Buffer.from(await fileResponse.arrayBuffer());
+  const validated = validateArtworkBuffer(buffer, { maxBytes: MAX_ARTWORK_BYTES });
   return NextResponse.json({
-    name: `${Date.now()}-${sanitizeFileName(title || "canva-design")}.png`,
-    mimeType,
-    dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`
+    name: `${Date.now()}-${sanitizeFileName(title || "canva-design")}.${validated.extension}`,
+    mimeType: validated.mimeType,
+    dataUrl: `data:${validated.mimeType};base64,${buffer.toString("base64")}`
   });
 };
 

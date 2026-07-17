@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
-import { calculatePromoDiscount, getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch } from "@/lib/server/supabase-admin";
+import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
+import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
 
 type OrderArtworkFile = {
   role?: string;
@@ -33,12 +35,15 @@ type OrderItem = {
   optionSummary?: string[];
   productionSummary?: string[];
   price?: { total?: number | null; each?: number | null; currency?: string };
+  pricingRequest?: { apiSlug?: string; payload?: Record<string, string | number | boolean> };
   artworkFiles?: OrderArtworkFile[];
   productionBreakdown?: OrderProductionArtwork[];
 };
 
 type TestOrderEmailPayload = {
+  guestSessionId?: string;
   order?: {
+    id?: string;
     orderNumber?: string;
     createdAt?: string;
     currency?: string;
@@ -101,6 +106,19 @@ const renderArtworkFiles = (files: OrderArtworkFile[] | undefined) => {
   `).join("")}</div>`;
 };
 
+type StoredOrderRecord = {
+  id: string;
+  order_number: string;
+  submission_key?: string | null;
+  status?: string;
+  customer_user_id?: string | null;
+  customer_email?: string;
+  order_data?: NonNullable<TestOrderEmailPayload['order']>;
+  admin_email_sent_at?: string | null;
+  customer_email_sent_at?: string | null;
+  updated_at?: string;
+};
+
 const renderArtworkPreview = (url: string | undefined, side: string) => url
   ? `<div style="display:inline-block;width:104px;margin:0 10px 8px 0;vertical-align:top;text-align:center;">
       <img src="${escapeHtml(url)}" alt="${escapeHtml(side)} artwork" width="96" height="76" style="display:block;width:96px!important;max-width:96px!important;height:76px!important;max-height:76px!important;object-fit:contain;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;" />
@@ -144,6 +162,17 @@ const getSafeOrderToken = (value: unknown, fallback: string, maxLength = 36) => 
 const getStorageExtension = (path: string | undefined) => {
   const match = String(path || '').match(/\.([a-zA-Z0-9]{2,5})$/);
   return match ? match[1].toLowerCase() : 'png';
+};
+
+const createServerOrderNumber = () => {
+  const timestamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+  return `HUE-${timestamp}-${randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
+};
+
+const getSubmissionKey = (value: unknown) => {
+  const key = String(value || '').trim();
+  if (!/^[A-Za-z0-9_-]{20,120}$/.test(key)) return null;
+  return key;
 };
 
 const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPayload['order']>) => {
@@ -206,6 +235,34 @@ const attachDurableArtworkLinks = (order: NonNullable<TestOrderEmailPayload['ord
   }
 };
 
+const getBearerToken = (request: Request) => {
+  const authorization = request.headers.get('authorization') || '';
+  return authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7).trim() : '';
+};
+
+const validateOrderArtworkOwnership = (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  owner: { userId?: string; guestSessionId?: string; existingOrderNumber?: string },
+) => {
+  const paths = order.items?.flatMap((item) => [
+    ...(item.artworkFiles || []).map((file) => file.storagePath),
+    ...(item.productionBreakdown || []).flatMap((artwork) => [artwork.frontStoragePath, artwork.backStoragePath]),
+  ]).filter((path): path is string => Boolean(path)) || [];
+
+  for (const path of paths) {
+    if (path.includes('..') || path.includes('\\')) throw new Error('An artwork storage path is invalid.');
+    const ownedByUser = owner.userId && (
+      path.startsWith(`customers/${owner.userId}/`)
+      || (path.startsWith('customers/') && path.split('/')[2] === owner.userId)
+    );
+    const ownedByGuest = owner.guestSessionId && path.startsWith(`guest-orders/${owner.guestSessionId}/`);
+    const ownedByExistingOrder = owner.existingOrderNumber && path.startsWith(`orders/${getSafeOrderToken(owner.existingOrderNumber, 'ORDER')}/`);
+    if (!ownedByUser && !ownedByGuest && !ownedByExistingOrder) {
+      throw new Error('An artwork file does not belong to this customer checkout session.');
+    }
+  }
+};
+
 export async function POST(request: Request) {
   const resendApiKey = process.env.RESEND_API_KEY;
   const orderToEmail = process.env.QUOTE_TO_EMAIL || "jason@huegraphics.cc";
@@ -218,43 +275,72 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid order payload." }, { status: 400 });
   }
 
-  const order = payload.order;
-  if (!order?.orderNumber || !order.customer?.email || !order.items?.length) {
-    return NextResponse.json({ error: "Order number, customer email, and at least one item are required." }, { status: 400 });
+  let order = payload.order;
+  if (!order?.customer?.email || !order.items?.length) {
+    return NextResponse.json({ error: "Customer email and at least one item are required." }, { status: 400 });
+  }
+  if (!hasSupabaseAdminConfig()) {
+    return NextResponse.json({ error: 'Checkout is temporarily unavailable because secure order storage is not configured.' }, { status: 503 });
   }
 
+  const accessToken = getBearerToken(request);
+  const verifiedUser = accessToken ? await verifySupabaseAccessToken(accessToken) : null;
+  if (accessToken && !verifiedUser) return NextResponse.json({ error: 'Your sign-in expired. Sign in again before submitting this order.' }, { status: 401 });
+  const guestSessionId = String(payload.guestSessionId || '');
+  if (!verifiedUser && !/^[a-zA-Z0-9-]{20,80}$/.test(guestSessionId)) {
+    return NextResponse.json({ error: 'The guest checkout session is invalid. Reopen checkout and try again.' }, { status: 400 });
+  }
+  order.customer.userId = verifiedUser?.id;
+
+  const submissionKey = getSubmissionKey(order.id);
+  if (!submissionKey) return NextResponse.json({ error: 'This checkout session is invalid. Please reopen checkout and try again.' }, { status: 400 });
+
+  let storedRecord: StoredOrderRecord | null = null;
   let validatedPromo: Awaited<ReturnType<typeof getPromoCode>> = null;
-  if (order.promotion?.code) {
-    try {
-      const promo = await getPromoCode(order.promotion.code);
-      if (!promo) return NextResponse.json({ error: "The promo code is no longer valid." }, { status: 400 });
-      validatedPromo = promo;
-      const subtotal = Number(order.subtotal || 0);
-      const discountAmount = calculatePromoDiscount(promo, subtotal);
-      order.promotion = { code: promo.code, description: promo.description || '', discountAmount };
-      const shipping = Number(order.shipping?.amount || 0);
-      const taxRate = Number(order.tax?.rate || 0);
-      const taxableAmount = Math.max(0, subtotal - discountAmount) + shipping;
-      if (order.tax) order.tax.amount = Number((taxableAmount * taxRate).toFixed(2));
-      order.total = Number((taxableAmount + Number(order.tax?.amount || 0)).toFixed(2));
-    } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : "The promo code could not be validated." }, { status: 400 });
-    }
-  }
-
-  let persistenceWarning = '';
-  if (hasSupabaseAdminConfig()) {
-    try {
+  let isNewOrder = false;
+  try {
+    const existingRows = await supabaseAdminFetch(`/rest/v1/hue_orders?submission_key=eq.${encodeURIComponent(submissionKey)}&select=*&limit=1`) as StoredOrderRecord[];
+    const existing = existingRows[0];
+    if (existing) {
+      if ((existing.customer_user_id || null) !== (verifiedUser?.id || null)) {
+        return NextResponse.json({ error: 'This saved order belongs to a different customer account.' }, { status: 403 });
+      }
+      if (String(existing.customer_email || '').toLowerCase() !== order.customer.email.toLowerCase()) {
+        return NextResponse.json({ error: 'This checkout submission does not match the original customer.' }, { status: 409 });
+      }
+      if (existing.status === 'received' && existing.admin_email_sent_at && existing.customer_email_sent_at && existing.order_data) {
+        return NextResponse.json({ ok: true, duplicate: true, order: existing.order_data });
+      }
+      const updatedAt = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
+      if (existing.status === 'processing' && Date.now() - updatedAt < 120000) {
+        return NextResponse.json({ error: 'This order is already being processed. Please wait a moment before trying again.' }, { status: 409 });
+      }
+      if (!existing.order_data?.customer || !existing.order_data.items?.length) throw new Error('The stored order data is incomplete.');
+      storedRecord = existing;
+      order = existing.order_data;
+      validateOrderArtworkOwnership(order, { existingOrderNumber: existing.order_number });
+      await supabaseAdminFetch(`/rest/v1/hue_orders?id=eq.${encodeURIComponent(existing.id)}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'processing', last_email_error: null, updated_at: new Date().toISOString() }),
+      });
+    } else {
+      validateOrderArtworkOwnership(order, { userId: verifiedUser?.id, guestSessionId: verifiedUser ? undefined : guestSessionId });
+      order = await applyAuthoritativeOrderPricing(order);
+      if (!order.customer || !order.items?.length) throw new Error('Customer details and at least one item are required.');
+      order.orderNumber = createServerOrderNumber();
+      order.createdAt = new Date().toISOString();
       const organizationWarnings = await organizeOrderProductionFiles(order);
-      if (organizationWarnings.length) persistenceWarning = organizationWarnings.join(' ');
+      if (organizationWarnings.length) throw new Error(organizationWarnings.join(' '));
       const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
       attachDurableArtworkLinks(order, configuredOrigin || new URL(request.url).origin);
-      await supabaseAdminFetch('/rest/v1/hue_orders?on_conflict=order_number', {
+      const insertedRows = await supabaseAdminFetch('/rest/v1/hue_orders', {
         method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
           order_number: order.orderNumber,
-          status: 'test_submitted',
+          submission_key: submissionKey,
+          status: 'processing',
           customer_user_id: order.customer.userId || null,
           customer_email: order.customer.email,
           customer_name: order.customer.name || null,
@@ -268,7 +354,11 @@ export async function POST(request: Request) {
           order_data: order,
           created_at: order.createdAt || new Date().toISOString()
         })
-      });
+      }) as StoredOrderRecord[];
+      storedRecord = insertedRows[0] || null;
+      if (!storedRecord?.id) throw new Error('Supabase did not confirm the new order record.');
+      isNewOrder = true;
+      validatedPromo = order.promotion?.code ? await getPromoCode(order.promotion.code) : null;
       if (validatedPromo?.id) {
         await supabaseAdminFetch(`/rest/v1/hue_promo_codes?id=eq.${encodeURIComponent(validatedPromo.id)}`, {
           method: 'PATCH',
@@ -276,17 +366,28 @@ export async function POST(request: Request) {
           body: JSON.stringify({ uses_count: Number(validatedPromo.uses_count || 0) + 1, updated_at: new Date().toISOString() })
         });
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'The order could not be added to the admin dashboard.';
-      persistenceWarning = [persistenceWarning, message].filter(Boolean).join(' ');
     }
-  } else {
-    persistenceWarning = 'SUPABASE_SERVICE_ROLE_KEY is not configured, so this order is not visible in the admin dashboard yet.';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'The order could not be securely saved.';
+    return NextResponse.json({ error: `Checkout stopped before submission: ${message}` }, { status: 503 });
   }
 
+  if (!storedRecord?.id || !order.customer || !order.items?.length) {
+    return NextResponse.json({ error: 'Checkout stopped because the secure order record is incomplete.' }, { status: 503 });
+  }
+
+  const updateOrderState = async (fields: Record<string, unknown>) => {
+    await supabaseAdminFetch(`/rest/v1/hue_orders?id=eq.${encodeURIComponent(storedRecord.id)}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ ...fields, updated_at: new Date().toISOString() }),
+    });
+  };
+
   if (!resendApiKey) {
+    await updateOrderState({ status: 'email_failed', last_email_error: 'RESEND_API_KEY is not configured.' });
     return NextResponse.json(
-      { error: `Order saved, but email is not configured. Add RESEND_API_KEY.${persistenceWarning ? ` ${persistenceWarning}` : ''}`, order },
+      { error: 'The order was securely saved, but confirmation email is unavailable. Hue Graphics can recover it from the admin portal.', order },
       { status: 500 },
     );
   }
@@ -378,53 +479,70 @@ export async function POST(request: Request) {
     ]),
   ].filter(Boolean).join("\n");
 
-  const resendResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: orderFromEmail,
-      html,
-      reply_to: order.customer.email,
-      subject: `Hue Studio Test Order ${order.orderNumber}`,
-      text,
-      to: orderToEmail,
-    }),
-  });
+  if (!storedRecord.admin_email_sent_at) {
+    const resendResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `hue-order-${storedRecord.id}-admin`,
+      },
+      body: JSON.stringify({
+        from: orderFromEmail,
+        html,
+        reply_to: order.customer.email,
+        subject: `Hue Studio Order ${order.orderNumber}`,
+        text,
+        to: orderToEmail,
+      }),
+    });
 
-  if (!resendResponse.ok) {
-    return NextResponse.json(
-      { error: "The order was saved, but the email could not be sent. Check the Resend sender and API key.", order },
-      { status: 502 },
-    );
+    if (!resendResponse.ok) {
+      const errorText = (await resendResponse.text()).slice(0, 500) || "Resend rejected the admin notification.";
+      await updateOrderState({ status: 'email_failed', last_email_error: errorText });
+      return NextResponse.json(
+        { error: "The order was securely saved, but Hue's notification email could not be sent. It can be recovered from the admin portal.", order },
+        { status: 502 },
+      );
+    }
+    const sentAt = new Date().toISOString();
+    await updateOrderState({ admin_email_sent_at: sentAt, last_email_error: null });
+    storedRecord.admin_email_sent_at = sentAt;
   }
 
-  const customerResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: orderFromEmail,
-      html: html
-        .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
-        .replace("Test checkout submitted", "Order submitted"),
-      reply_to: orderToEmail,
-      subject: `Your Hue Studio Order Confirmation ${order.orderNumber}`,
-      text: `Thank you for your order.\n\n${text}`,
-      to: order.customer.email,
-    }),
-  });
+  if (!storedRecord.customer_email_sent_at) {
+    const customerResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `hue-order-${storedRecord.id}-customer`,
+      },
+      body: JSON.stringify({
+        from: orderFromEmail,
+        html: html
+          .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
+          .replace("Test checkout submitted", "Order submitted"),
+        reply_to: orderToEmail,
+        subject: `Your Hue Studio Order Confirmation ${order.orderNumber}`,
+        text: `Thank you for your order.\n\n${text}`,
+        to: order.customer.email,
+      }),
+    });
 
-  if (!customerResponse.ok) {
-    return NextResponse.json(
-      { error: "The order was saved and Hue was notified, but the customer confirmation email could not be sent. Check the Resend sender and customer address.", order },
-      { status: 502 },
-    );
+    if (!customerResponse.ok) {
+      const errorText = (await customerResponse.text()).slice(0, 500) || "Resend rejected the customer confirmation.";
+      await updateOrderState({ status: 'email_failed', last_email_error: errorText });
+      return NextResponse.json(
+        { error: "The order was securely saved and Hue was notified, but the customer confirmation could not be sent. The order can be recovered from the admin portal.", order },
+        { status: 502 },
+      );
+    }
+    const sentAt = new Date().toISOString();
+    await updateOrderState({ customer_email_sent_at: sentAt, last_email_error: null });
+    storedRecord.customer_email_sent_at = sentAt;
   }
 
-  return NextResponse.json({ ok: true, persistenceWarning: persistenceWarning || undefined, order });
+  await updateOrderState({ status: 'received', last_email_error: null, order_data: order });
+  return NextResponse.json({ ok: true, duplicate: !isNewOrder, order });
 }

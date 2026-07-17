@@ -1,3 +1,5 @@
+import { createClient } from '@supabase/supabase-js';
+
 export type PromoCodeRecord = {
   id?: string;
   code: string;
@@ -19,6 +21,29 @@ const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const storageBucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || 'artwork-files';
 
 export const hasSupabaseAdminConfig = () => Boolean(supabaseUrl && serviceRoleKey);
+
+export const getSupabaseAdminClient = () => {
+  if (!hasSupabaseAdminConfig()) throw new Error('Supabase admin access is not configured. Add SUPABASE_SERVICE_ROLE_KEY.');
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+};
+
+export type VerifiedSupabaseUser = { id: string; email?: string };
+
+export const verifySupabaseAccessToken = async (accessToken: string): Promise<VerifiedSupabaseUser | null> => {
+  if (!hasSupabaseAdminConfig() || !accessToken) return null;
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    cache: 'no-store',
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!response.ok) return null;
+  const user = await response.json() as { id?: string; email?: string };
+  return user.id ? { id: user.id, email: user.email } : null;
+};
 
 export const supabaseAdminFetch = async (path: string, init: RequestInit = {}) => {
   if (!hasSupabaseAdminConfig()) throw new Error('Supabase admin access is not configured. Add SUPABASE_SERVICE_ROLE_KEY.');
