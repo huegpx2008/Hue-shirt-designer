@@ -462,6 +462,23 @@ export async function POST(request: Request) {
     </div>
   `;
 
+  // Temporary launch-testing notice for customer confirmations only.
+  // Keep the internal Hue order notification unchanged.
+  const customerHtml = html
+    .replace(
+      '<div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">',
+      `<div style="max-width:820px;margin:0 auto;">
+        <div style="margin:0 0 16px;background:#b91c1c;border:4px solid #7f1d1d;border-radius:16px;padding:22px;text-align:center;color:#ffffff;box-shadow:0 8px 24px rgba(127,29,29,.25);">
+          <p style="margin:0;font-size:28px;line-height:1.1;font-weight:900;text-transform:uppercase;letter-spacing:.05em;">Test Only — Not an Actual Order</p>
+          <p style="margin:10px 0 0;font-size:15px;line-height:1.5;font-weight:700;">Hue Studio is currently being tested. This confirmation is for testing purposes only and is not a real production order.</p>
+        </div>
+        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">`,
+    )
+    .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
+    .replace("Test checkout submitted", "Test order submitted")
+    .replaceAll("Supabase", "Hue secure storage")
+    .replace(/\s*<\/div>\s*$/, '</div></div>');
+
   const text = [
     `Hue Studio Order ${order.orderNumber}`,
     `Customer: ${order.customer.name || "Not provided"}`,
@@ -528,12 +545,10 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         from: orderFromEmail,
-        html: html
-          .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
-          .replace("Test checkout submitted", "Order submitted"),
+        html: customerHtml,
         reply_to: orderToEmail,
-        subject: `Your Hue Studio Order Confirmation ${order.orderNumber}`,
-        text: `Thank you for your order.\n\n${text}`,
+        subject: `TEST ONLY — Hue Studio Confirmation ${order.orderNumber}`,
+        text: `TEST ONLY — NOT AN ACTUAL ORDER\nHue Studio is currently being tested. This is not a real production order.\n\n${text.replaceAll("Supabase", "Hue secure storage")}`,
         to: order.customer.email,
       }),
     });

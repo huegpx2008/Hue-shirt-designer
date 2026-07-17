@@ -617,25 +617,25 @@ const STORE_CATEGORIES: { id: StoreCategoryId; label: string; description: strin
   { id: 'misc', label: 'More', description: 'Additional print-ready products' }
 ];
 const STORE_PRODUCTS: StoreProductCard[] = [
-  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Indoor / outdoor banner', description: 'Upload finished banner art, check fit, and price online.', mode: 'signage', signProductId: 'banner', badge: 'Online order', image: '/banners.png', initialSignValues: { material: '13-single', sides: 'single' } },
-  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: 'Air-flow perforated banner', description: 'Use the banner layout tool for finished mesh banner artwork.', mode: 'signage', signProductId: 'mesh-banner', badge: 'Mesh', image: '/mesh.png', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
+  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Premium vinyl scrim', description: 'Stunningly vibrant indoor/outdoor banners available in 13 oz, 15 oz, and 18 oz vinyl weights.', mode: 'signage', signProductId: 'banner', badge: 'Online order', image: '/banners.png', initialSignValues: { material: '13-single', sides: 'single' } },
+  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: '8 oz coated polyester mesh', description: 'Durable mesh banner material with 37% airflow perforation for fences and windy outdoor locations.', mode: 'signage', signProductId: 'mesh-banner', badge: 'Mesh', image: '/mesh.png', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
   { id: 'coro-sheet', category: 'coro', title: 'CORO', subtitle: '48 x 96 sheet-based signs', description: 'Choose a cut size, upload finished art, and see sheet usage before ordering.', mode: 'signage', signProductId: 'yard-sign', badge: 'Sheet price', image: '/coro.png' },
-  { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: 'Printed rigid panels', description: 'Upload finished acrylic art, set size, and pull Hue API pricing.', mode: 'signage', signProductId: 'acrylic', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 0, row: 0 } },
-  { id: 'rigid-acm', category: 'rigid', title: 'ACM / Aluminum Composite', subtitle: 'Outdoor panel signs', description: 'Finished art upload flow for ACM sign panels.', mode: 'signage', signProductId: 'acm', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 1, row: 0 } },
-  { id: 'rigid-pvc', category: 'rigid', title: 'PVC Signs', subtitle: 'Smooth rigid plastic', description: 'Sheet-priced PVC panels. Fill the 48 x 96 production sheet to lower the per-piece price.', mode: 'signage', signProductId: 'pvc', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 2, row: 0 } },
-  { id: 'rigid-foamcore', category: 'rigid', title: 'Foamcore', subtitle: 'Indoor display boards', description: 'Sheet-priced foam board. Add artwork sets and see how they fill the production sheet.', mode: 'signage', signProductId: 'foamcore', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 0, row: 1 } },
-  { id: 'rigid-polystyrene', category: 'rigid', title: 'Polystyrene', subtitle: 'Lightweight rigid signs', description: 'Sheet-priced polystyrene panels with visual sheet usage and per-piece pricing.', mode: 'signage', signProductId: 'polystyrene', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 1, row: 1 } },
-  { id: 'rigid-aluminum', category: 'rigid', title: 'Aluminum', subtitle: 'Durable metal signage', description: 'Upload finished art and price aluminum signs.', mode: 'signage', signProductId: 'aluminum', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 2, row: 1 } },
-  { id: 'decals-vinyl', category: 'decals', title: 'Adhesive Vinyl', subtitle: 'Decals and window graphics', description: 'Upload-ready decal ordering with fit checks.', mode: 'signage', signProductId: 'vinyl', badge: 'Online order', image: '/decals.svg' },
-  { id: 'magnets-vehicle', category: 'magnets', title: 'Vehicle Magnet', subtitle: 'Mobile advertising, premium weight', description: 'Standard vehicle magnet ordering with size and artwork checks.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Premium', image: '/magnet-vehicle.svg' },
-  { id: 'magnets-custom', category: 'magnets', title: 'Custom Magnet', subtitle: 'Custom sizes and contour cuts', description: 'Upload custom magnet art, set size, and price through Hue API.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Custom', image: '/magnet-custom.svg', initialSignValues: { customCut: true, contourCut: true, size: 'custom', width: '0', height: '0' } },
-  { id: 'misc-poster', category: 'misc', title: 'Poster', subtitle: 'Printed posters', description: 'Upload finished poster art, set size, and price online.', mode: 'signage', signProductId: 'poster', badge: 'Online order' },
+  { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: '3/16\" rigid plastic', description: 'Printed directly on the back with a white underbase for a polished, dimensional appearance.', mode: 'signage', signProductId: 'acrylic', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 0, row: 0 } },
+  { id: 'rigid-acm', category: 'rigid', title: 'ACM / Aluminum Composite', subtitle: '3mm or 6mm composite panels', description: 'Smooth aluminum faces bonded to a durable polyethylene core for professional indoor or outdoor signs.', mode: 'signage', signProductId: 'acm', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 1, row: 0 } },
+  { id: 'rigid-pvc', category: 'rigid', title: 'PVC Signs', subtitle: '3mm or 6mm smooth PVC', description: 'Smooth-finish PVC panels with sheet pricing. Add more pieces to fill the 48 x 96 production sheet and lower the price per piece.', mode: 'signage', signProductId: 'pvc', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 2, row: 0 } },
+  { id: 'rigid-foamcore', category: 'rigid', title: 'Foamcore', subtitle: '3/16\" smooth foam board', description: 'Sturdy, durable foam board with a smooth finish for indoor displays, presentations, and temporary signage.', mode: 'signage', signProductId: 'foamcore', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 0, row: 1 } },
+  { id: 'rigid-polystyrene', category: 'rigid', title: 'Polystyrene', subtitle: '0.03\" lightweight plastic', description: 'Lightweight, flexible plastic with a smooth finish and visual sheet usage for efficient per-piece pricing.', mode: 'signage', signProductId: 'polystyrene', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 1, row: 1 } },
+  { id: 'rigid-aluminum', category: 'rigid', title: 'Aluminum', subtitle: '.040 or .080 metal signage', description: 'Durable metal sign panels with a glossy finish for long-lasting professional signage.', mode: 'signage', signProductId: 'aluminum', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 2, row: 1 } },
+  { id: 'decals-vinyl', category: 'decals', title: 'Adhesive Vinyl', subtitle: 'Decals and window graphics', description: 'Upload-ready decal ordering with fit checks.', mode: 'signage', signProductId: 'vinyl', badge: 'Online order', image: '/vinyl-roll.webp' },
+  { id: 'magnets-vehicle', category: 'magnets', title: 'Vehicle Magnet', subtitle: 'Mobile advertising, premium weight', description: 'Standard vehicle magnet ordering with size and artwork checks.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Premium', image: '/magnet-vehicle.webp' },
+  { id: 'magnets-custom', category: 'magnets', title: 'Custom Magnet', subtitle: 'Custom sizes and contour cuts', description: 'Upload custom magnet art, set size, and price through Hue API.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Custom', image: '/magnet-custom.webp', initialSignValues: { customCut: true, contourCut: true, size: 'custom', width: '0', height: '0' } },
+  { id: 'misc-poster', category: 'misc', title: 'Poster', subtitle: '8 mil bright white paper', description: 'Smooth satin-finish poster paper with a bright white surface for crisp, vivid full-color printing.', mode: 'signage', signProductId: 'poster', badge: 'Online order' },
   { id: 'misc-business-card', category: 'misc', title: 'Business Cards', subtitle: 'Print-ready cards', description: 'Upload finished card art and price through Hue API.', mode: 'signage', signProductId: 'business-card', badge: 'Online order', initialSignValues: { quantity: '250' } },
-  { id: 'misc-handheld-paper', category: 'misc', title: 'Handheld Paper', subtitle: 'Flyers and handouts', description: 'Upload finished paper artwork and price online.', mode: 'signage', signProductId: 'handheld-paper', badge: 'Online order' },
-  { id: 'misc-carbonless', category: 'misc', title: 'Carbonless Forms', subtitle: 'NCR form printing', description: 'Print-ready carbonless form pricing.', mode: 'signage', signProductId: 'carbonless', badge: 'Online order' },
-  { id: 'misc-door-hanger', category: 'misc', title: 'Door Hangers', subtitle: 'Print-ready door hangers', description: 'Upload finished door hanger art and price online.', mode: 'signage', signProductId: 'door-hanger', badge: 'Online order' },
+  { id: 'misc-handheld-paper', category: 'misc', title: 'Handheld Paper', subtitle: 'Great for promotions', description: 'Professional-grade paper for business cards, postcards, mailers, flyers, and handouts with vivid full-color printing and gloss or matte finishes.', mode: 'signage', signProductId: 'handheld-paper', badge: 'Online order' },
+  { id: 'misc-carbonless', category: 'misc', title: 'Carbonless Forms', subtitle: 'NCR form printing', description: 'Carbonless form options and online ordering are still being prepared.', mode: 'signage', signProductId: 'carbonless', badge: 'Coming soon', disabled: true },
+  { id: 'misc-door-hanger', category: 'misc', title: 'Door Hangers', subtitle: 'Custom printed door hangers', description: 'Door hanger sizes, finishing options, and online ordering are coming soon.', mode: 'signage', signProductId: 'door-hanger', badge: 'Coming soon', disabled: true },
   { id: 'apparel-screenprint', category: 'apparel', title: 'Full Screen Print Designer', subtitle: 'Complete screen print design studio', description: 'A full garment catalog, artwork designer, print locations, and production pricing are in development.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-screenprint.svg', disabled: true },
-  { id: 'apparel-dtg', category: 'apparel', title: 'DTG — Direct to Garment', subtitle: 'Full-color printing directly on the shirt', description: 'Choose a garment, color, sizes, print location, and upload front or back artwork.', mode: 'apparel', badge: 'Start order', image: '/apparel-dtg.svg' },
+  { id: 'apparel-dtg', category: 'apparel', title: 'DTG — Direct to Garment', subtitle: 'Full-color printing directly on the shirt', description: 'Choose a garment, color, sizes, print location, and upload front or back artwork.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-dtg.svg', disabled: true },
   { id: 'apparel-dtf', category: 'apparel', title: 'DTF — Direct to Film', subtitle: 'Versatile full-color heat transfers', description: 'Online ordering for ready-to-press transfers and decorated apparel is coming soon.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-dtf.svg', disabled: true }
 ];
 const CORO_SHEET = { width: 48, height: 96 };
@@ -887,31 +887,43 @@ const normalizeGeneratedArtworkForStorage = async (dataUrl: string, fileName: st
 };
 const RIGID_SIGN_PRODUCT_IDS: SignProductId[] = ['acrylic', 'acm', 'pvc', 'foamcore', 'polystyrene', 'aluminum'];
 const SHEET_PRICED_PRODUCT_IDS: SignProductId[] = ['yard-sign', 'pvc', 'foamcore', 'polystyrene'];
-const SEPARATE_BACK_ARTWORK_PRODUCT_IDS: SignProductId[] = ['banner', 'acm', 'pvc', 'foamcore', 'polystyrene', 'aluminum'];
-const DOUBLE_SIDED_PRODUCT_IDS: SignProductId[] = ['banner', 'yard-sign', 'business-card', ...SEPARATE_BACK_ARTWORK_PRODUCT_IDS.filter((id) => id !== 'banner')];
+const SEPARATE_BACK_ARTWORK_PRODUCT_IDS: SignProductId[] = ['banner', 'business-card', 'handheld-paper', 'acm', 'pvc', 'foamcore', 'polystyrene', 'aluminum'];
+const DOUBLE_SIDED_PRODUCT_IDS: SignProductId[] = ['banner', 'yard-sign', ...SEPARATE_BACK_ARTWORK_PRODUCT_IDS.filter((id) => id !== 'banner')];
 const BANNER_MATERIAL_OPTIONS = [
-  { value: '13-single', label: '13oz Vinyl', note: 'Single-sided everyday banner' },
-  { value: '15-single', label: '15oz Vinyl', note: 'Heavier indoor/outdoor vinyl' },
-  { value: '18-single', label: '18oz Vinyl', note: 'Required for double-sided banners' }
+  { value: '13-single', label: '13oz Vinyl', note: 'Vibrant premium vinyl scrim for everyday indoor/outdoor banners' },
+  { value: '15-single', label: '15oz Vinyl', note: 'Heavier vibrant premium vinyl scrim' },
+  { value: '18-single', label: '18oz Vinyl', note: 'Heavy premium vinyl scrim required for double-sided banners' }
 ];
-const MESH_BANNER_MATERIAL = { value: 'mesh-single', label: 'Mesh Banner', note: 'Air-flow perforated banner' };
+const MESH_BANNER_MATERIAL = { value: 'mesh-single', label: '8oz Mesh Banner', note: 'Durable coated polyester with 37% airflow perforation' };
 const BASIC_SIGN_MATERIAL_OPTIONS = [
   { value: 'standard', label: 'Standard', note: 'Default material from Hue pricing API' }
+];
+const POSTER_PAPER_MATERIAL_OPTIONS = [
+  { value: 'standard', label: 'Poster Paper', note: '8 mil bright white paper with a smooth satin finish' }
 ];
 const RIGID_PANEL_MATERIAL_OPTIONS = [
   { value: 'standard', label: 'Standard', note: 'Default rigid panel option' }
 ];
+const ACRYLIC_MATERIAL_OPTIONS = [
+  { value: 'standard', label: '3/16\" Acrylic', note: 'Rigid plastic printed directly on the back with a white underbase' }
+];
+const FOAMCORE_MATERIAL_OPTIONS = [
+  { value: 'standard', label: '3/16\" Foamcore', note: 'Sturdy foam board with a smooth finish' }
+];
+const POLYSTYRENE_MATERIAL_OPTIONS = [
+  { value: 'standard', label: '0.03\" Polystyrene', note: 'Lightweight, flexible plastic with a smooth finish' }
+];
 const PVC_MATERIAL_OPTIONS = [
-  { value: '3mm', label: '3mm PVC', note: 'Standard rigid PVC panel' },
-  { value: '6mm', label: '6mm PVC', note: 'Thicker rigid PVC panel' }
+  { value: '3mm', label: '3mm PVC', note: 'Smooth-finish PVC material' },
+  { value: '6mm', label: '6mm PVC', note: 'Thicker smooth-finish PVC material' }
 ];
 const ACM_MATERIAL_OPTIONS = [
-  { value: '3mm', label: '3mm ACM', note: 'Standard aluminum composite panel' },
-  { value: '6mm', label: '6mm ACM', note: 'Thicker aluminum composite panel' }
+  { value: '3mm', label: '3mm ACM', note: 'Smooth aluminum faces with a polyethylene core' },
+  { value: '6mm', label: '6mm ACM', note: 'Thicker panel with smooth aluminum faces and a polyethylene core' }
 ];
 const ALUMINUM_MATERIAL_OPTIONS = [
-  { value: '040', label: '.040 Aluminum', note: 'Standard aluminum sign panel' },
-  { value: '080', label: '.080 Aluminum', note: 'Heavy-duty aluminum sign panel' }
+  { value: '040', label: '.040 Aluminum', note: 'Durable metal signage with a glossy finish' },
+  { value: '080', label: '.080 Aluminum', note: 'Heavy-duty metal signage with a glossy finish' }
 ];
 const CORO_SIZE_OPTIONS = [
   { label: '6" x 6" (128 per sheet)', value: '6x6' },
@@ -960,7 +972,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
     id: 'banner',
     name: 'Vinyl Banner',
     apiSlug: 'banner',
-    description: 'Indoor and outdoor vinyl banners with finishing options.',
+    description: 'Stunningly vibrant premium vinyl scrim available in 13 oz, 15 oz, and 18 oz weights.',
     preview: 'banner',
     fields: [
       { name: 'width', label: 'Width (inches)', type: 'number', defaultValue: '0', step: '0.25' },
@@ -988,15 +1000,14 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
       { name: 'welding', label: 'Welding', type: 'checkbox', defaultValue: true },
       { name: 'rope', label: 'Rope', type: 'checkbox', defaultValue: false },
       { name: 'webbing', label: 'Webbing', type: 'checkbox', defaultValue: false },
-      { name: 'windSlits', label: 'Wind Slits', type: 'checkbox', defaultValue: false },
-      { name: 'rush', label: 'Rush', type: 'checkbox', defaultValue: false }
+      { name: 'windSlits', label: 'Wind Slits', type: 'checkbox', defaultValue: false }
     ]
   },
   {
     id: 'mesh-banner',
     name: 'Mesh Banner',
     apiSlug: 'mesh-banner',
-    description: 'Air-flow mesh banners with finished artwork upload.',
+    description: 'Durable 8 oz coated polyester mesh with 37% airflow perforation.',
     preview: 'banner',
     fields: [
       { name: 'width', label: 'Width (inches)', type: 'number', defaultValue: '0', step: '0.25' },
@@ -1008,8 +1019,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
       { name: 'welding', label: 'Welding', type: 'checkbox', defaultValue: true },
       { name: 'webbing', label: 'Webbing', type: 'checkbox', defaultValue: false },
       { name: 'rope', label: 'Rope', type: 'checkbox', defaultValue: false },
-      { name: 'polePocket', label: 'Pole Pocket', type: 'checkbox', defaultValue: false },
-      { name: 'rush', label: 'Rush', type: 'checkbox', defaultValue: false }
+      { name: 'polePocket', label: 'Pole Pocket', type: 'checkbox', defaultValue: false }
     ]
   },
   {
@@ -1064,18 +1074,18 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
     ]
   },
   ...([
-    ['acrylic', 'Acrylic Signs', 'Printed rigid acrylic panels.', RIGID_PANEL_MATERIAL_OPTIONS],
-    ['acm', 'ACM / Aluminum Composite', 'Outdoor aluminum composite panel signs.', ACM_MATERIAL_OPTIONS],
-    ['pvc', 'PVC Signs', 'Durable smooth PVC material.', PVC_MATERIAL_OPTIONS],
-    ['foamcore', 'Foamcore', 'Indoor foam board display signs.', RIGID_PANEL_MATERIAL_OPTIONS],
-    ['polystyrene', 'Polystyrene', 'Lightweight rigid polystyrene signs.', RIGID_PANEL_MATERIAL_OPTIONS],
-    ['aluminum', 'Aluminum', 'Durable printed aluminum signage.', ALUMINUM_MATERIAL_OPTIONS],
+    ['acrylic', 'Acrylic Signs', '3/16\" rigid plastic printed directly on the back with a white underbase.', ACRYLIC_MATERIAL_OPTIONS],
+    ['acm', 'ACM / Aluminum Composite', '3mm and 6mm panels with smooth aluminum faces bonded to a polyethylene core.', ACM_MATERIAL_OPTIONS],
+    ['pvc', 'PVC Signs', '3mm and 6mm smooth-finish PVC material.', PVC_MATERIAL_OPTIONS],
+    ['foamcore', 'Foamcore', '3/16\" sturdy, durable foam board with a smooth finish.', FOAMCORE_MATERIAL_OPTIONS],
+    ['polystyrene', 'Polystyrene', '0.03\" lightweight, flexible plastic with a smooth finish.', POLYSTYRENE_MATERIAL_OPTIONS],
+    ['aluminum', 'Aluminum', '.040 and .080 durable metal signage with a glossy finish.', ALUMINUM_MATERIAL_OPTIONS],
     ['vinyl', 'Adhesive Vinyl', 'Adhesive vinyl decals and window graphics.', BASIC_SIGN_MATERIAL_OPTIONS],
     ['custom-cut-coroplast', 'Custom Cut Coroplast', 'Custom-cut coroplast sign shapes.', BASIC_SIGN_MATERIAL_OPTIONS],
     ['vehicle-magnet', 'Vehicle Magnet', 'Vehicle and display magnets.', BASIC_SIGN_MATERIAL_OPTIONS],
-    ['poster', 'Poster', 'Printed poster products.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['poster', 'Poster', '8 mil bright white poster paper with a smooth satin finish for crisp, vivid full-color printing.', POSTER_PAPER_MATERIAL_OPTIONS],
     ['business-card', 'Business Cards', 'Print-ready business cards.', BASIC_SIGN_MATERIAL_OPTIONS],
-    ['handheld-paper', 'Handheld Paper', 'Flyers and handout printing.', BASIC_SIGN_MATERIAL_OPTIONS],
+    ['handheld-paper', 'Handheld Paper', 'Professional-grade promotional paper for business cards, postcards, mailers, flyers, and handouts with vivid full-color printing and gloss or matte finishes.', BASIC_SIGN_MATERIAL_OPTIONS],
     ['carbonless', 'Carbonless Forms', 'Carbonless NCR form printing.', BASIC_SIGN_MATERIAL_OPTIONS],
     ['door-hanger', 'Door Hanger', 'Print-ready door hanger products.', BASIC_SIGN_MATERIAL_OPTIONS]
   ] as [SignProductId, string, string, SignFieldOption[]][]).map(([id, name, description, materialOptions]) => ({
@@ -1119,8 +1129,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
               { label: 'Single-Sided', value: 'single' },
               { label: 'Double-Sided', value: 'double' }
             ]
-          },
-          { name: 'rush', label: 'Rush', type: 'checkbox' as const, defaultValue: false }
+          }
         ]
       : id === 'vehicle-magnet'
       ? [
@@ -1142,8 +1151,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
             { name: 'standOffs', label: 'Standoffs', type: 'checkbox' as const, defaultValue: false },
             { name: 'standOffQty', label: 'Standoff Quantity', type: 'number' as const, defaultValue: '4', step: '1' },
             { name: 'standOffColor', label: 'Standoff Color', type: 'select' as const, defaultValue: 'silver', options: [{ label: 'Silver', value: 'silver' }] },
-            { name: 'roundedCorners', label: 'Rounded Corners', type: 'checkbox' as const, defaultValue: false },
-            { name: 'rush', label: 'Rush', type: 'checkbox' as const, defaultValue: false }
+            { name: 'roundedCorners', label: 'Rounded Corners', type: 'checkbox' as const, defaultValue: false }
           ]
       : [
           { name: 'width', label: 'Width (inches)', type: 'number' as const, defaultValue: '0', step: '0.25' },
@@ -1163,8 +1171,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
               : [{ label: 'Single-Sided', value: 'single' }]
           },
           ...(['acm', 'aluminum'].includes(id) ? [{ name: 'roundedCorners', label: 'Rounded Corners', type: 'select' as const, defaultValue: 'none', options: ROUNDED_CORNER_OPTIONS }] : []),
-          { name: 'grommets', label: 'Grommets', type: 'checkbox' as const, defaultValue: false },
-          { name: 'rush', label: 'Rush', type: 'checkbox' as const, defaultValue: false }
+          ...(id === 'poster' ? [] : [{ name: 'grommets', label: 'Grommets', type: 'checkbox' as const, defaultValue: false }])
         ]
   }))
 ];
@@ -1318,8 +1325,7 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
       standOffQty: product.id === 'acrylic' && Boolean(values.standOffs) ? Math.max(1, Number(values.standOffQty || 4)) : 0,
       standOffColor: product.id === 'acrylic' && Boolean(values.standOffs) ? String(values.standOffColor || 'silver') : '',
       customCut: Boolean(values.customCut),
-      contourCut: Boolean(values.contourCut),
-      rush: Boolean(values.rush)
+      contourCut: Boolean(values.contourCut)
     };
   }
 
@@ -2278,11 +2284,12 @@ export default function Home() {
   const isCoroBuilder = productMode === 'signage' && isSheetPricedProduct;
   const isBannerBuilder = productMode === 'signage' && selectedSignProduct.preview === 'banner';
   const isBusinessCardBuilder = productMode === 'signage' && selectedSignProduct.id === 'business-card';
+  const isPosterBuilder = productMode === 'signage' && selectedSignProduct.id === 'poster';
   const isTrueBannerBuilder = isBannerBuilder && (selectedSignProduct.id === 'banner' || selectedSignProduct.id === 'mesh-banner');
   const supportsDoubleSidedProduct = productMode === 'signage' && DOUBLE_SIDED_PRODUCT_IDS.includes(selectedSignProduct.id);
   const isRigidSignBuilder = productMode === 'signage' && RIGID_SIGN_PRODUCT_IDS.includes(selectedSignProduct.id);
   const isAutoSidedRigidBuilder = productMode === 'signage' && SEPARATE_BACK_ARTWORK_PRODUCT_IDS.includes(selectedSignProduct.id);
-  const showSeparateBackArtworkControl = isAutoSidedRigidBuilder && (selectedSignProduct.id !== 'banner' || String(signValues.sides || 'single') === 'double');
+  const showSeparateBackArtworkControl = isAutoSidedRigidBuilder && (!['banner', 'business-card'].includes(selectedSignProduct.id) || String(signValues.sides || 'single') === 'double');
   const isProductionBuilder = productMode === 'signage';
   const signSurfacePreviewUrl = isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? rigidBackArtwork?.dataUrl || null : signArtworkDisplayUrl || signArtworkPreviewUrl;
   const hasPlacedSignArtwork = Boolean(signArtworkPreviewUrl) || Boolean(signSurfacePreviewUrl) || layers.length > 0;
@@ -2298,6 +2305,13 @@ export default function Home() {
       : BANNER_MATERIAL_OPTIONS
     : productMaterialOptions;
   const selectedBannerMaterial = bannerMaterialOptions.find((option) => option.value === String(signValues.material || productMaterialOptions[0]?.value || 'standard')) || bannerMaterialOptions[0] || productMaterialOptions[0];
+  const rawSummaryMaterialLabel = selectedBannerMaterial?.label || String(signValues.material || selectedSignProduct.name);
+  const summaryMaterialLabel = /^(standard|default)$/i.test(rawSummaryMaterialLabel.trim())
+    ? isPosterBuilder
+      ? 'Poster Paper'
+      : selectedSignProduct.name
+    : rawSummaryMaterialLabel;
+  const summarySidesLabel = String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double-Sided' : 'Single-Sided';
   const selectedRoundedCornerOption = ROUNDED_CORNER_OPTIONS.find((option) => option.value === String(signValues.roundedCorners || 'none')) || ROUNDED_CORNER_OPTIONS[0];
   const supportsSizedRoundedCorners = selectedSignProduct.id === 'acm' || selectedSignProduct.id === 'aluminum' || selectedSignProduct.id === 'vehicle-magnet';
   const selectedRoundedCornerRadius = supportsSizedRoundedCorners && selectedRoundedCornerOption.value !== 'none' ? Number(selectedRoundedCornerOption.value) : 0;
@@ -5574,7 +5588,14 @@ export default function Home() {
         setRigidPreviewSide('front');
         const pairedBack = imageItem.backDataUrl ? { ...imageItem, id: `${imageItem.id}-back`, name: imageItem.backName || `${imageItem.name} back`, dataUrl: imageItem.backDataUrl, width: imageItem.backWidth || imageItem.width, height: imageItem.backHeight || imageItem.height, backDataUrl: undefined } : null;
         if (pairedBack) setRigidBackArtwork(pairedBack);
-        setSignValues((prev) => ({ ...prev, sides: pairedBack || rigidBackArtwork ? 'double' : 'single' }));
+        setSignValues((prev) => ({
+          ...prev,
+          sides: pairedBack || rigidBackArtwork
+            ? 'double'
+            : selectedSignProduct.id === 'business-card'
+              ? String(prev.sides || 'single')
+              : 'single'
+        }));
       }
       setSignArtworkPreviewUrl(imageItem.dataUrl);
       setBannerArtworkName(imageItem.name);
@@ -5694,7 +5715,14 @@ export default function Home() {
         if (isAutoSidedRigidBuilder) {
           setRigidArtworkTarget('front');
           setRigidPreviewSide('front');
-          setSignValues((prev) => ({ ...prev, sides: rigidBackArtwork ? 'double' : 'single' }));
+          setSignValues((prev) => ({
+            ...prev,
+            sides: rigidBackArtwork
+              ? 'double'
+              : selectedSignProduct.id === 'business-card'
+                ? String(prev.sides || 'single')
+                : 'single'
+          }));
         }
         setSignArtworkPreviewUrl(placementDataUrl);
         setBannerArtworkName(file.name);
@@ -6193,7 +6221,7 @@ export default function Home() {
       productionBreakdown,
       productionSummary: [
         signArtworkStatusOk ? 'Artwork fit approved' : 'Artwork needs review',
-        'Approved Fit/Stretch placement flattened into FINAL PRODUCTION artwork and saved to Supabase',
+        'Approved Fit/Stretch placement flattened into FINAL PRODUCTION artwork and securely saved to your Hue order',
         isCoroBuilder ? `Sheet layout: ${coroSheetLayout.columns} across x ${coroSheetLayout.rows} down` : '',
         hasCoroDoubleSided ? `Double-sided ${selectedSignProduct.name}` : '',
         String(signValues.sides || 'single') === 'double' && isBannerBuilder && !isCoroBuilder ? 'Double-sided banner' : ''
@@ -6501,7 +6529,6 @@ export default function Home() {
 
   const updatePrintSides = (value: string) => {
     if (!supportsDoubleSidedProduct) return;
-    if (isAutoSidedRigidBuilder && !isCoroBuilder && selectedSignProduct.id !== 'banner') return;
     if (selectedSignProduct.id === 'banner') {
       setBannerArtworkFitState('unresolved');
       if (value === 'single') {
@@ -6519,8 +6546,19 @@ export default function Home() {
       if (value === 'double') setShowBannerDoubleSidedWarning(true);
       return;
     }
-    updateSignOption('sides', value);
+    if (value === 'single' && isAutoSidedRigidBuilder) {
+      setRigidBackArtwork(null);
+      setRigidArtworkTarget('front');
+      setRigidPreviewSide('front');
+    }
+    setSignValues((prev) => ({ ...prev, sides: value }));
+    setSignEstimate(null);
     setActiveCoroOptionPanel('images');
+    if (value === 'double' && isAutoSidedRigidBuilder) {
+      setImageLibraryStatus(`Double-sided selected. Add back artwork for this ${selectedSignProduct.name} before adding it to the cart.`);
+    } else if (value === 'single' && isAutoSidedRigidBuilder) {
+      setImageLibraryStatus('Single-sided selected. Any back artwork was removed.');
+    }
   };
 
   const openCoroOptionPanel = (panel: CoroOptionPanel) => {
@@ -6755,7 +6793,12 @@ export default function Home() {
                   <div className="rounded-xl border border-white/15 bg-[#0a1119]/90 p-5 shadow-[0_24px_70px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur">
                     <p className="text-sm font-black text-white">Choose your starting point</p>
                     <div className="mt-4 grid gap-3 text-xs text-slate-300">
-                      {['Upload finished, print-ready artwork', 'Make quick changes in Hue Designer', 'Create a simple design from a blank canvas', 'Import saved projects from Canva', 'Choose a product, size, and options', 'Get pricing and complete checkout online'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
+                      {['Upload finished, print-ready artwork', 'Make quick changes in Hue Designer', 'Create a simple design from a blank canvas', 'Import saved projects from Canva', 'Choose a product, size, and options', 'Get pricing and complete checkout online', 'Most orders are ready in 3–4 business days'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
+                    </div>
+                    <div className="mt-5 rounded-xl border border-amber-300/25 bg-amber-300/[0.08] p-4 text-[11px] leading-5 text-amber-100/80">
+                      <strong className="block text-sm text-amber-200">What you submit is what we print.</strong>
+                      <p className="mt-2">Hue Studio is a self-service ordering tool. We perform a basic production check and may contact you if we notice a major issue, but we make minimal—if any—changes to submitted artwork.</p>
+                      <p className="mt-2">Please confirm the size, spelling, resolution, bleed, colors, and layout before checkout. The customer is responsible for the accuracy and print readiness of the approved artwork.</p>
                     </div>
                     <div className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-amber-400">
                       <strong className="block">Need full custom design help?</strong>
@@ -6950,13 +6993,13 @@ export default function Home() {
                     </> : isRigidSignBuilder ? <>
                       <span />
                       <span className="font-bold text-slate-100">Order Price</span>
-                      <span className="font-bold text-slate-100">Single Panel</span>
-                      <span>{selectedBannerMaterial?.label || String(signValues.material || 'standard')}</span>
+                      <span className="font-bold text-slate-100">Price Per Each</span>
+                      <span>{summaryMaterialLabel} · {summarySidesLabel}</span>
                       <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signWidth || 0}&quot; × {signHeight || 0}&quot;</span>
-                      <span>Rigid panel</span>
-                      <span>Smooth print surface</span>
+                      <span>{summaryMaterialLabel}</span>
+                      <span>{summarySidesLabel} print</span>
                     </> : isBusinessCardBuilder ? <>
                       <span />
                       <span className="font-bold text-slate-100">Order Price</span>
@@ -6967,16 +7010,26 @@ export default function Home() {
                       <span>{String(signValues.coating || 'No Coating')}</span>
                       <span>{designerQuantity} cards</span>
                       <span>{String(signValues.sides || 'single') === 'double' ? 'Front and back' : 'Front only'}</span>
+                    </> : isPosterBuilder ? <>
+                      <span />
+                      <span className="font-bold text-slate-100">Order Price</span>
+                      <span className="font-bold text-slate-100">Per Poster</span>
+                      <span>{selectedBannerMaterial?.label || 'Poster Paper'}</span>
+                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signWidth || 0}&quot; &times; {signHeight || 0}&quot;</span>
+                      <span>Poster paper</span>
+                      <span>Single-sided print</span>
                     </> : isBannerBuilder ? <>
                       <span />
-                      <span className="font-bold text-slate-100">Banner Price</span>
-                      <span className="font-bold text-slate-100">Single Banner</span>
-                      <span>{selectedBannerMaterial?.label || String(signValues.material || 'standard')}</span>
+                      <span className="font-bold text-slate-100">Order Price</span>
+                      <span className="font-bold text-slate-100">Price Per Each</span>
+                      <span>{summaryMaterialLabel} · {summarySidesLabel}</span>
                       <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{bannerSquareFeet.toFixed(1)} sqft</span>
-                      <span>Grommets included</span>
-                      <span>{signValues.windSlits ? '+ $10 wind slits' : 'Standard finishing'}</span>
+                      <span>{summaryMaterialLabel}</span>
+                      <span>{summarySidesLabel} print</span>
                     </> : <>
                       <span>Single-Sided</span><span>Double-Sided</span>
                       <span>{isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
@@ -6990,7 +7043,7 @@ export default function Home() {
                 <div className={`text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
                   <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isCoroBuilder && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : '$0.00'}</p>
-                  <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : isBusinessCardBuilder ? `${designerQuantity} business cards` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${isRigidSignBuilder ? 'Rigid panel estimate' : 'Production estimate'}`}</p>
+                  <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : isBusinessCardBuilder ? `${designerQuantity} business cards` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${summaryMaterialLabel}`}</p>
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
                   {isBannerBuilder && !isCoroBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
                   {isProductionBuilder && signEstimateStatus ? <p className={`mt-2 max-w-[240px] text-xs leading-4 ${signEstimate ? 'text-emerald-300' : isSignEstimateLoading ? 'text-[#8be3ff]' : 'text-amber-300'}`}>{signEstimateStatus}</p> : null}
@@ -7073,10 +7126,10 @@ export default function Home() {
                       {supportsSizedRoundedCorners && selectedRoundedCornerRadius > 0 ? <span className="pointer-events-none absolute bottom-2 left-2 z-30 rounded-full border border-white/45 bg-[#071827]/80 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-[#b7ecff] shadow backdrop-blur">{selectedRoundedCornerOption.label} corners</span> : null}
                       {isTrueBannerBuilder ? <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div> : null}
                     </div>
-                    {isAutoSidedRigidBuilder && rigidBackArtwork ? <button type="button" onClick={() => setRigidPreviewSide((side) => side === 'front' ? 'back' : 'front')} className="absolute -bottom-16 left-0 z-20 inline-flex items-center gap-2 rounded-full border border-[#38bdf8]/30 bg-[#06111d]/90 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-[#b7ecff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur transition hover:border-[#67d8ff]/70 hover:bg-[#0a2438] hover:text-white">
-                      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 fill-none stroke-current stroke-2"><path d="M7 7h8a4 4 0 0 1 0 8H6" /><path d="M9 4 6 7l3 3" /><path d="M17 20l3-3-3-3" /></svg>
-                      {rigidPreviewSide === 'front' ? 'Flip over' : 'Show front'}
-                    </button> : null}
+                    {isAutoSidedRigidBuilder && rigidBackArtwork ? <div className="absolute -bottom-16 left-0 z-20 inline-flex overflow-hidden rounded-full border border-[#38bdf8]/30 bg-[#06111d]/90 p-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#b7ecff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">
+                      <button type="button" onClick={() => setRigidPreviewSide('front')} className={`rounded-full px-4 py-1.5 transition ${rigidPreviewSide === 'front' ? 'bg-[#1686c9] text-white' : 'hover:bg-[#0a2438] hover:text-white'}`}>Front</button>
+                      <button type="button" onClick={() => setRigidPreviewSide('back')} className={`rounded-full px-4 py-1.5 transition ${rigidPreviewSide === 'back' ? 'bg-[#1686c9] text-white' : 'hover:bg-[#0a2438] hover:text-white'}`}>Back</button>
+                    </div> : null}
                     {!hasPlacedSignArtwork ? <button type="button" onClick={openArtworkLibrary} className="relative z-10 rounded bg-[#1678b8] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#0f5f94]">Upload artwork</button> : null}
                   </div>}
                 </div> : hasPreviewImage && resolvedImageUrl ? <img src={resolvedImageUrl} alt={`${selectedPreview?.productName || 'Selected product'} ${selectedPreview?.colorName || ''}`} className="h-full w-full rounded-md object-contain" /> : <TshirtShape color={shirtColor} bodyPath={selectedProduct.mockups[shirtView]} view={shirtView} />}
@@ -7168,19 +7221,22 @@ export default function Home() {
                     </div>
                     <button type="button" onClick={deleteCurrentBannerArtworkSet} disabled={!signArtworkPreviewUrl && layers.length === 0 && bannerOrderItems.length === 0} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">delete</button>
                   </div>
-                  <button type="button" onClick={() => { if (isAutoSidedRigidBuilder) setRigidArtworkTarget('front'); openArtworkLibrary(); }} className="hue-artwork-dropzone mt-3 flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-3 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
+                  <div className={`mt-3 ${showSeparateBackArtworkControl && String(signValues.sides || 'single') === 'double' ? 'grid grid-cols-2 items-stretch gap-2' : ''}`}>
+                  <button type="button" onClick={() => { if (isAutoSidedRigidBuilder) setRigidArtworkTarget('front'); openArtworkLibrary(); }} className="hue-artwork-dropzone flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-3 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
                     {signArtworkPreviewUrl ? <span className="w-full">
                       <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" />
                       <span className="mt-2 block font-bold text-slate-600">Front image</span>
                       <span className="mt-1 block text-slate-500">{bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width.toFixed(2)}" x ${bannerArtworkActualSize.height.toFixed(2)}"` : 'Artwork uploaded'}</span>
                     </span> : <span>Click here to upload or select image</span>}
                   </button>
-                  {showSeparateBackArtworkControl ? <div className="mt-2 rounded-xl border border-slate-200 bg-white p-2">
+                  {showSeparateBackArtworkControl ? <div className={`${String(signValues.sides || 'single') === 'double' ? '' : 'mt-2'} rounded-xl border border-slate-200 bg-white p-2`}>
+                    {missingSeparateBackArtwork ? <p className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase leading-4 text-amber-700">Double-sided selected — upload back artwork to continue.</p> : null}
                     <button type="button" onClick={() => { setRigidArtworkTarget('back'); setShowImageZone(true); setImageLibraryStatus(`Choose back artwork for this ${selectedSignProduct.name}.`); }} className={`hue-artwork-dropzone flex min-h-28 w-full items-center justify-center rounded-lg border border-dashed p-3 text-center text-[10px] uppercase ${rigidBackArtwork ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[#38bdf8]/45 bg-slate-50 text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]'}`}>
                       {rigidBackArtwork ? <span className="w-full"><img src={rigidBackArtwork.dataUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" /><span className="mt-2 block font-bold">Back image</span><span className="mt-1 block normal-case text-slate-500">Double-sided pricing active</span></span> : <span><span className="block text-sm font-black text-[#1678b8]">+ Add back artwork</span><span className="mt-1 block normal-case text-slate-500">Adding a back automatically switches pricing to double-sided.</span></span>}
                     </button>
                     {rigidBackArtwork ? <button type="button" onClick={removeRigidBackArtwork} className="mt-2 w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase text-red-600 hover:bg-red-100">Remove back artwork</button> : null}
                   </div> : null}
+                  </div>
                   {signArtworkPreviewUrl ? <button type="button" onClick={() => { void openCurrentOrderArtworkEditor(); }} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-[#38bdf8]/35 bg-[#08243a] px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.08em] text-[#9be8ff] shadow-[0_8px_20px_rgba(14,165,233,0.12)] transition hover:border-[#67d8ff]/70 hover:bg-[#0c304c] hover:text-white"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 fill-none stroke-current stroke-2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>Edit {isAutoSidedRigidBuilder && rigidPreviewSide === 'back' && rigidBackArtwork ? 'back' : 'front'} in Hue Designer</button> : null}
                   {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve the artwork or Stretch to fill {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -7408,7 +7464,14 @@ export default function Home() {
                 {activeCoroOptionPanel === 'sides' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: 'single', label: 'Single-Sided', note: 'Front side only' }, { value: 'double', label: 'Double-Sided', note: 'Front and back print' }].map((option) => {
                     const selected = String(signValues.sides || 'single') === option.value;
-                    return <button key={option.value} type="button" onClick={() => updatePrintSides(option.value)} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.value === 'double' && isBannerBuilder ? '18oz material with front and back setup' : option.note}</span></button>;
+                    const note = option.value === 'double'
+                      ? isTrueBannerBuilder
+                        ? '18oz material with front and back setup'
+                        : isAutoSidedRigidBuilder
+                          ? 'Back artwork is required before checkout'
+                          : option.note
+                      : option.note;
+                    return <button key={option.value} type="button" onClick={() => updatePrintSides(option.value)} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'stakes' ? <div className="mt-4">
@@ -7496,7 +7559,7 @@ export default function Home() {
                       ['Images', String(isCoroBuilder ? coroSheetArtworkItems.length || layers.length || 1 : isBannerBuilder ? bannerOrderItems.length + 1 : layers.length || 1), signArtworkStatusOk],
                       ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
                       ['Material', isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : String(signValues.material || '4mm'), true],
-                      ...(supportsDoubleSidedProduct && (isCoroBuilder || !isAutoSidedRigidBuilder || selectedSignProduct.id === 'banner') ? [['Print Sides', String(signValues.sides || 'single'), true]] as [string, string, boolean][] : []),
+                      ...(supportsDoubleSidedProduct ? [['Print Sides', String(signValues.sides || 'single'), true]] as [string, string, boolean][] : []),
                       ...(selectedSignProduct.id === 'yard-sign'
                         ? [
                             ['Grommets', signValues.grommets ? 'Yes' : 'No', Boolean(signValues.grommets)],
@@ -7517,8 +7580,7 @@ export default function Home() {
                                   ['Rope', signValues.rope ? 'Yes' : 'None', Boolean(signValues.rope)],
                                   ['Wind Slits', signValues.windSlits ? 'Yes' : 'No', Boolean(signValues.windSlits)]
                                 ] : [
-                                  ...(['acm', 'aluminum'].includes(selectedSignProduct.id) ? [['Rounded Corners', selectedRoundedCornerOption.label, selectedRoundedCornerRadius > 0]] : []),
-                                  ['Rush', signValues.rush ? 'Yes' : 'No', Boolean(signValues.rush)]
+                                  ...(['acm', 'aluminum'].includes(selectedSignProduct.id) ? [['Rounded Corners', selectedRoundedCornerOption.label, selectedRoundedCornerRadius > 0]] : [])
                                 ]) as [string, string, boolean][]
                           ] as [string, string, boolean][])
                     ] as [string, string, boolean][]).map(([label, value, active]) => {
