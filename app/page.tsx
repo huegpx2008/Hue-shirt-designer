@@ -8,6 +8,21 @@ import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CA
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
 import { recommendPrintMethodByCost } from '@/lib/pricing/recommend-print-method';
 import { calculateScreenPrintPricing } from '@/lib/pricing/screen-print-pricing';
+import {
+  SMART_TEMPLATE_CATEGORIES,
+  SMART_TEMPLATE_CATEGORY_FILTERS,
+  SMART_TEMPLATE_FAMILY_BY_ID,
+  SMART_TEMPLATE_FAMILY_FILTERS,
+  SMART_TEMPLATE_STYLE_FILTERS,
+  SMART_TEMPLATE_STYLES,
+  SMART_TEMPLATES,
+  getSmartTemplateFamily,
+  getSmartTemplateThumbnailUrl,
+  type SmartTemplate,
+  type SmartTemplateCategory,
+  type SmartTemplateFamilyId,
+  type SmartTemplateStyle
+} from '@/lib/templates/template-catalog';
 import generatedSanMarCatalog from '@/public/data/catalog/t-shirts.generated.json';
 import fallbackSanMarPreview from '@/public/data/catalog-preview-25.json';
 import catalogAuditData from '@/public/data/catalog/catalog-audit.generated.json';
@@ -17,24 +32,8 @@ type FontOption = { label: string; value: string };
 type LayerItem = { id: string; name: string; type: string; isActive: boolean; isLocked?: boolean };
 type NewArtworkPreset = { width: number; height: number; label?: string; popular?: boolean };
 type NewArtworkPresetGroup = { id: string; label: string; description: string; sizes: NewArtworkPreset[] };
-type SmartTemplateCategory = 'Real Estate' | 'Business' | 'Contractors' | 'Events' | 'Parking & Directional';
-type SmartTemplateStyle = 'Modern' | 'Bold' | 'Premium' | 'Minimal' | 'Classic';
-type SmartTemplate = {
-  id: string;
-  name: string;
-  category: SmartTemplateCategory;
-  style: SmartTemplateStyle;
-  description: string;
-  headline: string;
-  subheadline: string;
-  callout: string;
-  primary: string;
-  accent: string;
-  background: string;
-  layout: 'band' | 'split' | 'frame';
-  suggestedSizes: string[];
-};
 type SmartTemplateForm = { headline: string; subheadline: string; name: string; phone: string; website: string; detailLine: string; footerNote: string; qrValue: string; primary: string; accent: string; background: string; includeQr: boolean };
+type SmartTemplateBrowseMode = 'industry' | 'style' | 'family';
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
@@ -532,26 +531,6 @@ const ARTWORK_EDITOR_TEMPLATES = [
   { id: 'directional', label: 'Directional', headline: 'THIS WAY →', detail: 'WELCOME', color: '#0b1f44', accent: '#0ea5e9' },
   { id: 'vote', label: 'Campaign', headline: 'VOTE', detail: 'ELECTION DAY', color: '#1e3a8a', accent: '#dc2626' }
 ] as const;
-
-const SMART_TEMPLATE_CATEGORIES: Array<'All' | SmartTemplateCategory> = ['All', 'Real Estate', 'Business', 'Contractors', 'Events', 'Parking & Directional'];
-const SMART_TEMPLATE_STYLES: Array<'All' | SmartTemplateStyle> = ['All', 'Modern', 'Bold', 'Premium', 'Minimal', 'Classic'];
-const SMART_TEMPLATES: SmartTemplate[] = [
-  { id: 'realty-modern-sale', name: 'Modern For Sale', category: 'Real Estate', style: 'Modern', description: 'Clean agent-focused yard sign with strong contact details.', headline: 'FOR SALE', subheadline: 'Beautiful Home Available', callout: 'YOUR NAME', primary: '#0b1f44', accent: '#0ea5e9', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'realty-premium-open', name: 'Premium Open House', category: 'Real Estate', style: 'Premium', description: 'Upscale open-house layout with space for a QR code.', headline: 'OPEN HOUSE', subheadline: 'SUNDAY · 1–4 PM', callout: 'YOUR NAME', primary: '#111827', accent: '#d4a853', background: '#fffdf7', layout: 'frame', suggestedSizes: ['24 × 18', '18 × 24'] },
-  { id: 'realty-bold-sold', name: 'Bold Sold', category: 'Real Estate', style: 'Bold', description: 'High-impact sold or pending announcement.', headline: 'SOLD', subheadline: 'Another Home Successfully Closed', callout: 'YOUR NAME', primary: '#991b1b', accent: '#facc15', background: '#ffffff', layout: 'split', suggestedSizes: ['24 × 18'] },
-  { id: 'business-grand-opening', name: 'Grand Opening', category: 'Business', style: 'Bold', description: 'High-energy launch sign for a new location or business.', headline: 'GRAND OPENING', subheadline: 'JOIN US THIS WEEKEND', callout: 'YOUR BUSINESS', primary: '#0b1f44', accent: '#f97316', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24', '48 × 36'] },
-  { id: 'business-now-hiring', name: 'Modern Now Hiring', category: 'Business', style: 'Modern', description: 'Clear recruiting sign with a direct call to action.', headline: 'NOW HIRING', subheadline: 'APPLY TODAY', callout: 'YOUR BUSINESS', primary: '#082f49', accent: '#22c55e', background: '#f8fafc', layout: 'split', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'business-hours', name: 'Classic Business Hours', category: 'Business', style: 'Classic', description: 'Professional hours and contact-information sign.', headline: 'BUSINESS HOURS', subheadline: 'MON–FRI · 8 AM–5 PM', callout: 'YOUR BUSINESS', primary: '#1e3a5f', accent: '#c9a227', background: '#fffef8', layout: 'frame', suggestedSizes: ['18 × 24', '24 × 18'] },
-  { id: 'contractor-roofing', name: 'Roofing Lead Builder', category: 'Contractors', style: 'Bold', description: 'Readable roadside layout built around phone leads.', headline: 'ROOFING', subheadline: 'FREE ESTIMATES', callout: 'YOUR COMPANY', primary: '#172554', accent: '#ef4444', background: '#ffffff', layout: 'split', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'contractor-landscape', name: 'Landscape Services', category: 'Contractors', style: 'Modern', description: 'Fresh service sign with company and website fields.', headline: 'LANDSCAPING', subheadline: 'DESIGN · INSTALL · MAINTAIN', callout: 'YOUR COMPANY', primary: '#14532d', accent: '#84cc16', background: '#f7fee7', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'contractor-premium', name: 'Premium Home Services', category: 'Contractors', style: 'Premium', description: 'Refined layout for established home-service brands.', headline: 'HOME SERVICES', subheadline: 'LICENSED · INSURED · LOCAL', callout: 'YOUR COMPANY', primary: '#111827', accent: '#c59d5f', background: '#fafaf9', layout: 'frame', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'event-yard-sale', name: 'Big Yard Sale', category: 'Events', style: 'Bold', description: 'Bright, readable sale sign with date and direction.', headline: 'YARD SALE', subheadline: 'SATURDAY · 8 AM–2 PM', callout: '123 MAIN STREET', primary: '#dc2626', accent: '#facc15', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18'] },
-  { id: 'event-fundraiser', name: 'Community Fundraiser', category: 'Events', style: 'Modern', description: 'Friendly event layout with time and web details.', headline: 'FUNDRAISER', subheadline: 'SATURDAY · 6 PM', callout: 'COMMUNITY EVENT', primary: '#312e81', accent: '#ec4899', background: '#faf5ff', layout: 'split', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'event-wedding', name: 'Wedding Welcome', category: 'Events', style: 'Premium', description: 'Elegant welcome or directional wedding sign.', headline: 'WELCOME', subheadline: 'THE CELEBRATION STARTS HERE', callout: 'NAME & NAME', primary: '#3f3f46', accent: '#d4a373', background: '#fffbf5', layout: 'frame', suggestedSizes: ['18 × 24', '24 × 36'] },
-  { id: 'parking-no-parking', name: 'No Parking', category: 'Parking & Directional', style: 'Classic', description: 'Immediate regulatory message with optional details.', headline: 'NO PARKING', subheadline: 'AUTHORIZED VEHICLES ONLY', callout: 'TOW AWAY ZONE', primary: '#b91c1c', accent: '#111827', background: '#ffffff', layout: 'frame', suggestedSizes: ['12 × 18', '18 × 24'] },
-  { id: 'parking-directional', name: 'Directional Arrow', category: 'Parking & Directional', style: 'Bold', description: 'Large directional message for fast roadside reading.', headline: 'THIS WAY →', subheadline: 'ENTRANCE', callout: 'WELCOME', primary: '#0b1f44', accent: '#0ea5e9', background: '#ffffff', layout: 'band', suggestedSizes: ['24 × 18', '36 × 24'] },
-  { id: 'parking-reserved', name: 'Reserved Parking', category: 'Parking & Directional', style: 'Minimal', description: 'Clean reserved-space sign with customizable label.', headline: 'RESERVED', subheadline: 'PARKING', callout: 'CUSTOMER ONLY', primary: '#0f3d56', accent: '#38bdf8', background: '#f8fafc', layout: 'split', suggestedSizes: ['12 × 18', '18 × 24'] }
-];
 
 const ARTWORK_EDITOR_ICONS = [
   ['★', 'Star', 'favorite rating'], ['☆', 'Outline Star', 'favorite rating'], ['➜', 'Right Arrow', 'direction arrow'], ['←', 'Left Arrow', 'direction arrow'],
@@ -1674,6 +1653,8 @@ export default function Home() {
   const [showSmartTemplateLibrary, setShowSmartTemplateLibrary] = useState(false);
   const [smartTemplateCategory, setSmartTemplateCategory] = useState<'All' | SmartTemplateCategory>('All');
   const [smartTemplateStyle, setSmartTemplateStyle] = useState<'All' | SmartTemplateStyle>('All');
+  const [smartTemplateFamily, setSmartTemplateFamily] = useState<'All' | SmartTemplateFamilyId>('All');
+  const [smartTemplateBrowseMode, setSmartTemplateBrowseMode] = useState<SmartTemplateBrowseMode>('industry');
   const [smartTemplateSearch, setSmartTemplateSearch] = useState('');
   const [selectedSmartTemplateId, setSelectedSmartTemplateId] = useState<string | null>(null);
   const [smartTemplateForm, setSmartTemplateForm] = useState<SmartTemplateForm>({ headline: '', subheadline: '', name: '', phone: '', website: '', detailLine: '', footerNote: '', qrValue: '', primary: '#0b1f44', accent: '#0ea5e9', background: '#ffffff', includeQr: false });
@@ -4521,6 +4502,8 @@ export default function Home() {
     const canvas = artworkEditorCanvasRef.current;
     const template = SMART_TEMPLATES.find((entry) => entry.id === selectedSmartTemplateId);
     if (!canvas || !template) return;
+    const family = getSmartTemplateFamily(template);
+    const layout = family.layout;
     const existingEditableObjects = canvas.getObjects().filter((object) => (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole !== 'base');
     if (existingEditableObjects.length && !window.confirm('Replace the current editable design with this Hue Smart Template? Your original uploaded artwork will remain preserved.')) return;
     setIsGeneratingSmartTemplate(true);
@@ -4535,7 +4518,7 @@ export default function Home() {
         (object as FabricObject & { data?: { layerId?: string; layerName?: string; locked?: boolean; smartTemplateId?: string } }).data = { layerId: `smart-${template.id}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${stamp}`, layerName: name, locked, smartTemplateId: template.id };
       };
       const addText = (text: string, options: Record<string, unknown>, name: string, maxWidth = width * 0.82) => {
-        const object = new IText(text || ' ', { originX: 'center', originY: 'center', textAlign: 'center', fontFamily: 'Arial, sans-serif', ...FABRIC_CONTROL_STYLE, ...options });
+        const object = new IText(text || ' ', { originX: 'center', originY: 'center', textAlign: 'center', fontFamily: family.bodyFont, ...FABRIC_CONTROL_STYLE, ...options });
         if (object.width && object.width > maxWidth) object.scaleX = maxWidth / object.width;
         addLayerData(object, name);
         canvas.add(object);
@@ -4563,44 +4546,52 @@ export default function Home() {
       const logoAsset = await loadAsset(smartTemplateLogo, 'Logo');
       const hasPhoto = Boolean(photoAsset);
 
-      if (template.layout === 'band') {
+      if (family.id === 'industrial-grid') {
+        addShape({ left: width * 0.025, top: height * 0.04, originX: 'left', originY: 'top', width: width * 0.012, height: height * 0.92, fill: smartTemplateForm.accent }, 'Industrial Edge');
+      } else if (family.id === 'playful-pop') {
+        addShape({ left: width * 0.82, top: height * 0.08, originX: 'left', originY: 'top', width: width * 0.11, height: height * 0.055, rx: 999, ry: 999, fill: smartTemplateForm.accent }, 'Playful Accent');
+      } else if (family.id === 'luxury-signature') {
+        addShape({ left: width * 0.24, top: height * 0.205, originX: 'left', originY: 'top', width: width * 0.52, height: Math.max(2, height * 0.008), fill: smartTemplateForm.accent }, 'Signature Rule');
+      }
+
+      if (layout === 'band') {
         addShape({ left: 0, top: 0, originX: 'left', originY: 'top', width, height: height * 0.25, fill: smartTemplateForm.primary }, 'Primary Header');
         addShape({ left: 0, top: height * 0.25, originX: 'left', originY: 'top', width, height: height * 0.045, fill: smartTemplateForm.accent }, 'Accent Band');
         addShape({ left: 0, top: height * 0.81, originX: 'left', originY: 'top', width, height: height * 0.19, fill: smartTemplateForm.primary }, 'Contact Footer');
         if (photoAsset) { addShape({ left: width * 0.69, top: height * 0.34, originX: 'left', originY: 'top', width: width * 0.25, height: height * 0.39, fill: '#ffffff', stroke: smartTemplateForm.accent, strokeWidth: 5 }, 'Photo Frame'); placeAsset(photoAsset, width * 0.815, height * 0.535, width * 0.22, height * 0.34); }
-        addText(smartTemplateForm.headline, { left: width / 2, top: height * 0.125, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(44, width * 0.09), fontWeight: 'bold', fill: '#ffffff' }, 'Headline');
-        addText(smartTemplateForm.subheadline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.43, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(30, width * 0.055), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Subheadline', hasPhoto ? width * 0.58 : width * 0.82);
+        addText(smartTemplateForm.headline, { left: width / 2, top: height * 0.125, fontFamily: family.headlineFont, fontSize: Math.max(44, width * 0.09), fontWeight: 'bold', fill: '#ffffff' }, 'Headline');
+        addText(smartTemplateForm.subheadline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.43, fontFamily: family.headlineFont, fontSize: Math.max(30, width * 0.055), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Subheadline', hasPhoto ? width * 0.58 : width * 0.82);
         addText(smartTemplateForm.name, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.59, fontSize: Math.max(24, width * 0.038), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Name or Company', hasPhoto ? width * 0.56 : width * 0.82);
         if (smartTemplateForm.detailLine.trim()) addText(smartTemplateForm.detailLine, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.71, fontSize: Math.max(17, width * 0.024), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Industry Details', hasPhoto ? width * 0.55 : width * 0.72);
-      } else if (template.layout === 'split') {
+      } else if (layout === 'split') {
         addShape({ left: 0, top: 0, originX: 'left', originY: 'top', width: width * 0.38, height, fill: smartTemplateForm.primary }, 'Primary Panel');
         addShape({ left: width * 0.38, top: 0, originX: 'left', originY: 'top', width: width * 0.035, height, fill: smartTemplateForm.accent }, 'Accent Divider');
         if (photoAsset) placeAsset(photoAsset, width * 0.19, height * 0.7, width * 0.29, height * 0.3);
-        addText(smartTemplateForm.headline, { left: width * 0.19, top: hasPhoto ? height * 0.25 : height * 0.38, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(38, width * 0.072), fontWeight: 'bold', fill: '#ffffff' }, 'Headline', width * 0.31);
-        addText(smartTemplateForm.subheadline, { left: width * 0.7, top: height * 0.35, fontFamily: 'Arial Black, Impact, sans-serif', fontSize: Math.max(30, width * 0.05), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Subheadline', width * 0.5);
+        addText(smartTemplateForm.headline, { left: width * 0.19, top: hasPhoto ? height * 0.25 : height * 0.38, fontFamily: family.headlineFont, fontSize: Math.max(38, width * 0.072), fontWeight: 'bold', fill: '#ffffff' }, 'Headline', width * 0.31);
+        addText(smartTemplateForm.subheadline, { left: width * 0.7, top: height * 0.35, fontFamily: family.headlineFont, fontSize: Math.max(30, width * 0.05), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Subheadline', width * 0.5);
         addText(smartTemplateForm.name, { left: width * 0.7, top: height * 0.57, fontSize: Math.max(24, width * 0.034), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Name or Company', width * 0.48);
         if (smartTemplateForm.detailLine.trim()) addText(smartTemplateForm.detailLine, { left: width * 0.7, top: height * 0.68, fontSize: Math.max(17, width * 0.023), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Industry Details', width * 0.46);
       } else {
         addShape({ left: 20, top: 20, originX: 'left', originY: 'top', width: width - 40, height: height - 40, fill: 'transparent', stroke: smartTemplateForm.primary, strokeWidth: Math.max(8, width * 0.012) }, 'Outer Frame');
         addShape({ left: width * 0.1, top: height * 0.12, originX: 'left', originY: 'top', width: width * 0.8, height: height * 0.06, fill: smartTemplateForm.accent }, 'Accent Rule');
         if (photoAsset) { addShape({ left: width * 0.64, top: height * 0.25, originX: 'left', originY: 'top', width: width * 0.25, height: height * 0.42, fill: '#ffffff', stroke: smartTemplateForm.accent, strokeWidth: 4 }, 'Photo Frame'); placeAsset(photoAsset, width * 0.765, height * 0.46, width * 0.22, height * 0.37); }
-        addText(smartTemplateForm.headline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.34, fontFamily: 'Georgia, serif', fontSize: Math.max(42, width * 0.078), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Headline', hasPhoto ? width * 0.48 : width * 0.82);
-        addText(smartTemplateForm.subheadline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.51, fontFamily: 'Arial, sans-serif', fontSize: Math.max(26, width * 0.04), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Subheadline', hasPhoto ? width * 0.48 : width * 0.82);
-        addText(smartTemplateForm.name, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.64, fontFamily: 'Georgia, serif', fontSize: Math.max(22, width * 0.032), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Name or Company', hasPhoto ? width * 0.48 : width * 0.82);
+        addText(smartTemplateForm.headline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.34, fontFamily: family.headlineFont, fontSize: Math.max(42, width * 0.078), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Headline', hasPhoto ? width * 0.48 : width * 0.82);
+        addText(smartTemplateForm.subheadline, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.51, fontFamily: family.bodyFont, fontSize: Math.max(26, width * 0.04), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Subheadline', hasPhoto ? width * 0.48 : width * 0.82);
+        addText(smartTemplateForm.name, { left: hasPhoto ? width * 0.36 : width / 2, top: height * 0.64, fontFamily: family.headlineFont, fontSize: Math.max(22, width * 0.032), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Name or Company', hasPhoto ? width * 0.48 : width * 0.82);
         if (smartTemplateForm.detailLine.trim()) addText(smartTemplateForm.detailLine, { left: width / 2, top: height * 0.75, fontSize: Math.max(16, width * 0.022), fontWeight: 'bold', fill: smartTemplateForm.primary }, 'Industry Details', width * 0.7);
       }
 
       if (logoAsset) {
-        const logoX = template.layout === 'split' ? width * 0.19 : width * 0.13;
-        const logoY = template.layout === 'band' ? height * 0.125 : height * 0.16;
+        const logoX = layout === 'split' ? width * 0.19 : width * 0.13;
+        const logoY = layout === 'band' ? height * 0.125 : height * 0.16;
         placeAsset(logoAsset, logoX, logoY, width * 0.16, height * 0.14);
       }
 
-      const contactY = template.layout === 'band' ? height * 0.9 : height * 0.81;
-      const contactColor = template.layout === 'band' ? '#ffffff' : smartTemplateForm.primary;
+      const contactY = layout === 'band' ? height * 0.9 : height * 0.81;
+      const contactColor = layout === 'band' ? '#ffffff' : smartTemplateForm.primary;
       const contactText = [smartTemplateForm.phone.trim(), smartTemplateForm.website.trim()].filter(Boolean).join('  •  ');
       if (contactText) addText(contactText, { left: width / 2, top: contactY, fontSize: Math.max(18, width * 0.027), fontWeight: 'bold', fill: contactColor }, 'Contact Details', width * 0.78);
-      if (smartTemplateForm.footerNote.trim() && template.layout !== 'band') addText(smartTemplateForm.footerNote, { left: width / 2, top: height * 0.91, fontSize: Math.max(13, width * 0.017), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Footer Note', width * 0.72);
+      if (smartTemplateForm.footerNote.trim() && layout !== 'band') addText(smartTemplateForm.footerNote, { left: width / 2, top: height * 0.91, fontSize: Math.max(13, width * 0.017), fontWeight: 'bold', fill: smartTemplateForm.accent }, 'Footer Note', width * 0.72);
 
       if (smartTemplateForm.includeQr && smartTemplateForm.qrValue.trim().length > 3) {
         const qrDataUrl = await QRCode.toDataURL(smartTemplateForm.qrValue.trim(), { width: 1000, margin: 2, color: { dark: smartTemplateForm.primary, light: '#ffffff' } });
@@ -8081,41 +8072,81 @@ export default function Home() {
 
       {showSmartTemplateLibrary ? (() => {
         const query = smartTemplateSearch.trim().toLowerCase();
-        const filteredTemplates = SMART_TEMPLATES.filter((template) => (smartTemplateCategory === 'All' || template.category === smartTemplateCategory) && (smartTemplateStyle === 'All' || template.style === smartTemplateStyle) && (!query || `${template.name} ${template.category} ${template.style} ${template.headline} ${template.description}`.toLowerCase().includes(query)));
+        const filteredTemplates = SMART_TEMPLATES.filter((template) => {
+          const family = getSmartTemplateFamily(template);
+          return (smartTemplateCategory === 'All' || template.category === smartTemplateCategory)
+            && (smartTemplateStyle === 'All' || template.style === smartTemplateStyle)
+            && (smartTemplateFamily === 'All' || family.id === smartTemplateFamily)
+            && (!query || `${template.name} ${template.category} ${template.style} ${family.name} ${template.headline} ${template.description} ${template.tags.join(' ')}`.toLowerCase().includes(query));
+        });
         const selectedTemplate = SMART_TEMPLATES.find((template) => template.id === selectedSmartTemplateId) || null;
+        const selectedFamily = selectedTemplate ? getSmartTemplateFamily(selectedTemplate) : null;
+        const browseModes: Array<{ id: SmartTemplateBrowseMode; label: string; description: string }> = [
+          { id: 'industry', label: 'Industry', description: 'Find templates made for your type of business or event.' },
+          { id: 'style', label: 'Design Style', description: 'Start with the overall look and personality you want.' },
+          { id: 'family', label: 'Design Family', description: 'Browse reusable Hue layout systems and typography.' }
+        ];
+        const browseOptions = smartTemplateBrowseMode === 'industry'
+          ? SMART_TEMPLATE_CATEGORY_FILTERS.map((value) => ({ value, label: value === 'All' ? 'All Industries' : value, count: value === 'All' ? SMART_TEMPLATES.length : SMART_TEMPLATES.filter((template) => template.category === value).length }))
+          : smartTemplateBrowseMode === 'style'
+            ? SMART_TEMPLATE_STYLE_FILTERS.map((value) => ({ value, label: value === 'All' ? 'All Styles' : value, count: value === 'All' ? SMART_TEMPLATES.length : SMART_TEMPLATES.filter((template) => template.style === value).length }))
+            : SMART_TEMPLATE_FAMILY_FILTERS.map((value) => ({ value, label: value === 'All' ? 'All Families' : SMART_TEMPLATE_FAMILY_BY_ID[value].name, count: value === 'All' ? SMART_TEMPLATES.length : SMART_TEMPLATES.filter((template) => template.family === value).length }));
+        const activeBrowseValue = smartTemplateBrowseMode === 'industry' ? smartTemplateCategory : smartTemplateBrowseMode === 'style' ? smartTemplateStyle : smartTemplateFamily;
+        const selectBrowseOption = (value: string) => {
+          setSmartTemplateCategory(smartTemplateBrowseMode === 'industry' ? value as 'All' | SmartTemplateCategory : 'All');
+          setSmartTemplateStyle(smartTemplateBrowseMode === 'style' ? value as 'All' | SmartTemplateStyle : 'All');
+          setSmartTemplateFamily(smartTemplateBrowseMode === 'family' ? value as 'All' | SmartTemplateFamilyId : 'All');
+        };
+        const selectBrowseMode = (mode: SmartTemplateBrowseMode) => {
+          setSmartTemplateBrowseMode(mode);
+          setSmartTemplateCategory('All');
+          setSmartTemplateStyle('All');
+          setSmartTemplateFamily('All');
+        };
+        const clearSmartTemplateFilters = () => {
+          setSmartTemplateCategory('All');
+          setSmartTemplateStyle('All');
+          setSmartTemplateFamily('All');
+          setSmartTemplateSearch('');
+        };
+        const hasSmartTemplateFilters = Boolean(query || smartTemplateCategory !== 'All' || smartTemplateStyle !== 'All' || smartTemplateFamily !== 'All');
+        const groupedTemplates = filteredTemplates.reduce<Array<{ key: string; label: string; description: string; templates: SmartTemplate[] }>>((groups, template) => {
+          const family = getSmartTemplateFamily(template);
+          const key = smartTemplateBrowseMode === 'industry' ? template.category : smartTemplateBrowseMode === 'style' ? template.style : family.id;
+          const label = smartTemplateBrowseMode === 'family' ? family.name : key;
+          const description = smartTemplateBrowseMode === 'family' ? family.description : smartTemplateBrowseMode === 'industry' ? `Professional ${template.category.toLowerCase()} starting points.` : `${template.style} layouts across multiple industries.`;
+          const existingGroup = groups.find((group) => group.key === key);
+          if (existingGroup) existingGroup.templates.push(template);
+          else groups.push({ key, label, description, templates: [template] });
+          return groups;
+        }, []);
         return <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[#01050a]/92 p-0 backdrop-blur-xl sm:p-4">
           <section className="flex h-full w-full flex-col overflow-hidden border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_40px_140px_rgba(0,0,0,0.85),0_0_80px_rgba(14,165,233,0.2)] sm:h-[min(900px,94vh)] sm:w-[min(1500px,97vw)] sm:rounded-[26px]">
             <header className="flex flex-wrap items-center gap-3 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.2),transparent_38%),#071522] px-4 py-4 sm:px-6">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#67d8ff]/35 bg-gradient-to-br from-[#0c2a40] to-violet-700/40 text-xl text-[#9be8ff] shadow-[0_0_28px_rgba(14,165,233,0.18)]">✦</span>
               <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="text-xl font-black sm:text-2xl">Smart Template Library</h2><p className="mt-1 text-xs text-slate-400">Choose a professional layout, add your details, then fine-tune every layer.</p></div>
+              <div className="hidden items-center gap-2 xl:flex"><span className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-center"><strong className="block text-sm text-white">{SMART_TEMPLATES.length}</strong><span className="text-[8px] font-black uppercase tracking-wide text-slate-500">Templates</span></span><span className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-center"><strong className="block text-sm text-white">{SMART_TEMPLATE_CATEGORIES.length}</strong><span className="text-[8px] font-black uppercase tracking-wide text-slate-500">Industries</span></span><span className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-center"><strong className="block text-sm text-white">{SMART_TEMPLATE_STYLES.length}</strong><span className="text-[8px] font-black uppercase tracking-wide text-slate-500">Styles</span></span></div>
               <button type="button" onClick={() => setShowSmartTemplateLibrary(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
             </header>
             <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_370px] lg:overflow-hidden">
               <div className="min-h-0 p-4 lg:flex lg:flex-col lg:overflow-hidden lg:p-5">
-                <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_190px_150px]">
-                  <input value={smartTemplateSearch} onChange={(event) => setSmartTemplateSearch(event.target.value)} placeholder="Search templates, industries, or styles…" className="h-11 rounded-xl border border-white/15 bg-black/25 px-4 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" />
-                  <select value={smartTemplateCategory} onChange={(event) => setSmartTemplateCategory(event.target.value as 'All' | SmartTemplateCategory)} className="h-11 rounded-xl border border-white/15 bg-[#0a1928] px-3 text-xs font-bold text-white outline-none focus:border-[#38bdf8]">{SMART_TEMPLATE_CATEGORIES.map((category) => <option key={category} value={category}>{category === 'All' ? 'All industries' : category}</option>)}</select>
-                  <select value={smartTemplateStyle} onChange={(event) => setSmartTemplateStyle(event.target.value as 'All' | SmartTemplateStyle)} className="h-11 rounded-xl border border-white/15 bg-[#0a1928] px-3 text-xs font-bold text-white outline-none focus:border-[#38bdf8]">{SMART_TEMPLATE_STYLES.map((style) => <option key={style} value={style}>{style === 'All' ? 'All styles' : style}</option>)}</select>
+                <div className="rounded-2xl border border-white/10 bg-[#061524]/70 p-3 shadow-[0_12px_34px_rgba(0,0,0,0.18)]">
+                  <div className="grid gap-2 sm:grid-cols-3">{browseModes.map((mode) => <button key={mode.id} type="button" onClick={() => selectBrowseMode(mode.id)} className={`rounded-xl border px-3 py-3 text-left transition ${smartTemplateBrowseMode === mode.id ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_22px_rgba(14,165,233,0.13)]' : 'border-white/10 bg-white/[0.035] hover:border-[#38bdf8]/40 hover:bg-white/[0.06]'}`}><span className={`block text-[10px] font-black uppercase tracking-[0.14em] ${smartTemplateBrowseMode === mode.id ? 'text-[#9be8ff]' : 'text-slate-300'}`}>Browse by {mode.label}</span><span className="mt-1 hidden text-[9px] leading-4 text-slate-500 xl:block">{mode.description}</span></button>)}</div>
+                  <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{browseOptions.map((option) => <button key={option.value} type="button" onClick={() => selectBrowseOption(option.value)} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[10px] font-black transition ${activeBrowseValue === option.value ? 'border-[#67d8ff] bg-[#1686c9] text-white shadow-[0_8px_22px_rgba(14,165,233,0.2)]' : 'border-white/10 bg-white/[0.045] text-slate-300 hover:border-[#38bdf8]/45 hover:text-white'}`}><span>{option.label}</span><span className={`rounded-full px-1.5 py-0.5 text-[8px] ${activeBrowseValue === option.value ? 'bg-white/15 text-white' : 'bg-black/25 text-slate-500'}`}>{option.count}</span></button>)}</div>
                 </div>
-                <div className="mt-4 flex items-center justify-between gap-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{filteredTemplates.length} professional starting points</p><p className="text-[10px] text-slate-500">All text and colors remain editable</p></div>
-                <div className="mt-3 grid gap-3 pb-5 sm:grid-cols-2 xl:grid-cols-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
-                  {filteredTemplates.map((template) => {
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center"><input value={smartTemplateSearch} onChange={(event) => setSmartTemplateSearch(event.target.value)} placeholder="Search by template, industry, style, or keyword..." className="h-11 min-w-0 flex-1 rounded-xl border border-white/15 bg-black/25 px-4 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8]" />{hasSmartTemplateFilters ? <button type="button" onClick={clearSmartTemplateFilters} className="h-11 shrink-0 rounded-xl border border-white/15 bg-white/[0.05] px-4 text-[10px] font-black uppercase tracking-wide text-slate-300 hover:border-[#38bdf8]/45 hover:text-white">Clear filters</button> : null}</div>
+                <div className="mt-3 flex items-center justify-between gap-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Showing {filteredTemplates.length} of {SMART_TEMPLATES.length} templates</p><p className="text-[10px] text-slate-500">All text and colors remain editable</p></div>
+                <div className="mt-3 space-y-5 pb-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+                  {groupedTemplates.map((group) => <section key={group.key} className="rounded-2xl border border-white/[0.07] bg-black/10 p-3"><div className="mb-3 flex items-end justify-between gap-3"><div><p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">{smartTemplateBrowseMode === 'industry' ? 'Industry' : smartTemplateBrowseMode === 'style' ? 'Design Style' : 'Design Family'}</p><h3 className="mt-0.5 text-base font-black text-white">{group.label}</h3><p className="mt-1 text-[9px] text-slate-500">{group.description}</p></div><span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[9px] font-black text-slate-400">{group.templates.length}</span></div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{group.templates.map((template) => {
                     const selected = template.id === selectedSmartTemplateId;
-                    return <button key={template.id} type="button" onClick={() => chooseSmartTemplate(template)} className={`group overflow-hidden rounded-2xl border text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_28px_rgba(14,165,233,0.2)]' : 'border-white/10 bg-white/[0.035] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}>
-                      <div className="relative aspect-[4/2.45] overflow-hidden" style={{ backgroundColor: template.background }}>
-                        {template.layout === 'band' ? <><div className="absolute inset-x-0 top-0 h-[27%]" style={{ backgroundColor: template.primary }} /><div className="absolute inset-x-0 top-[27%] h-[5%]" style={{ backgroundColor: template.accent }} /><div className="absolute inset-x-0 bottom-0 h-[18%]" style={{ backgroundColor: template.primary }} /></> : template.layout === 'split' ? <><div className="absolute inset-y-0 left-0 w-[38%]" style={{ backgroundColor: template.primary }} /><div className="absolute inset-y-0 left-[38%] w-[4%]" style={{ backgroundColor: template.accent }} /></> : <><div className="absolute inset-3 border-[5px]" style={{ borderColor: template.primary }} /><div className="absolute left-[10%] right-[10%] top-[18%] h-1" style={{ backgroundColor: template.accent }} /></>}
-                        <div className={`absolute font-black leading-none ${template.layout === 'split' ? 'left-[5%] top-[35%] w-[28%] text-center text-[clamp(10px,1.2vw,18px)] text-white' : 'left-[8%] right-[8%] top-[39%] text-center text-[clamp(13px,1.5vw,23px)]'}`} style={template.layout === 'split' ? undefined : { color: template.primary }}>{template.headline}</div>
-                        <div className={`absolute text-center text-[clamp(6px,.65vw,10px)] font-bold ${template.layout === 'split' ? 'left-[45%] right-[5%] top-[52%]' : 'left-[10%] right-[10%] top-[65%]'}`} style={{ color: template.accent }}>{template.subheadline}</div>
-                        <span className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 px-2 py-1 text-[7px] font-black uppercase tracking-wide text-slate-700">Smart</span>
-                      </div>
-                      <div className="p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-black text-white">{template.name}</p><p className="mt-1 text-[9px] font-black uppercase tracking-wide text-[#67d8ff]">{template.category} · {template.style}</p></div>{selected ? <span className="rounded-full bg-[#22c55e]/15 px-2 py-1 text-[8px] font-black uppercase text-emerald-300">Selected</span> : null}</div><p className="mt-2 text-[10px] leading-4 text-slate-400">{template.description}</p><p className="mt-2 text-[9px] font-bold text-slate-500">Suggested: {template.suggestedSizes.join(' · ')}</p></div>
-                    </button>;
-                  })}
-                  {!filteredTemplates.length ? <div className="col-span-full rounded-2xl border border-dashed border-white/15 p-10 text-center text-sm text-slate-400">No templates match those filters. Try another industry or style.</div> : null}
+                    const family = getSmartTemplateFamily(template);
+                    return <button key={template.id} type="button" onClick={() => chooseSmartTemplate(template)} className={`group overflow-hidden rounded-2xl border text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_28px_rgba(14,165,233,0.2)]' : 'border-white/10 bg-white/[0.035] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}><div className="relative aspect-[4/2.45] overflow-hidden bg-[#071522]"><img src={getSmartTemplateThumbnailUrl(template)} alt={`${template.name} template preview`} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.015]" /><span className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 px-2 py-1 text-[7px] font-black uppercase tracking-wide text-slate-700">{family.name}</span></div><div className="p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-black text-white">{template.name}</p><p className="mt-1 text-[9px] font-black uppercase tracking-wide text-[#67d8ff]">{template.category} / {family.name}</p></div>{selected ? <span className="rounded-full bg-[#22c55e]/15 px-2 py-1 text-[8px] font-black uppercase text-emerald-300">Selected</span> : null}</div><p className="mt-2 text-[10px] leading-4 text-slate-400">{template.description}</p><p className="mt-2 text-[9px] font-bold text-slate-500">Suggested: {template.suggestedSizes.join(' / ')}</p></div></button>;
+                  })}</div></section>)}
+                  {!filteredTemplates.length ? <div className="rounded-2xl border border-dashed border-white/15 p-10 text-center"><p className="font-black text-white">No matching templates</p><p className="mt-2 text-sm text-slate-400">Try another search or clear the active filters.</p><button type="button" onClick={clearSmartTemplateFilters} className="mt-4 rounded-xl bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white">Show all templates</button></div> : null}
                 </div>
               </div>
               <aside className="border-t border-white/10 bg-[#06111d] p-5 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
-                {selectedTemplate ? <><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Customize your template</p><h3 className="mt-1 text-xl font-black">{selectedTemplate.name}</h3><p className="mt-1 text-xs leading-5 text-slate-400">Enter what you know now. You can move, resize, recolor, or replace every generated layer afterward.</p>
+                {selectedTemplate && selectedFamily ? <><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">{selectedFamily.name} family</p><h3 className="mt-1 text-xl font-black">{selectedTemplate.name}</h3><p className="mt-1 text-xs leading-5 text-slate-400">{selectedFamily.description} Enter what you know now, then move, resize, recolor, or replace every generated layer.</p>
                   <div className="mt-5 space-y-3">
                     <label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Main headline<input value={smartTemplateForm.headline} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, headline: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm font-bold text-white outline-none focus:border-[#38bdf8]" /></label>
                     <label className="block text-[9px] font-black uppercase tracking-wide text-slate-500">Supporting message<input value={smartTemplateForm.subheadline} onChange={(event) => setSmartTemplateForm((form) => ({ ...form, subheadline: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none focus:border-[#38bdf8]" /></label>

@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "source": "data/hue-template-catalog.json",
+  "thumbnails": [
+    {
+      "id": "realty-modern-sale",
+      "file": "/template-thumbnails/realty-modern-sale.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "realty-premium-open",
+      "file": "/template-thumbnails/realty-premium-open.svg",
+      "family": "premium-frame",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "realty-bold-sold",
+      "file": "/template-thumbnails/realty-bold-sold.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-grand-opening",
+      "file": "/template-thumbnails/business-grand-opening.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-now-hiring",
+      "file": "/template-thumbnails/business-now-hiring.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-hours",
+      "file": "/template-thumbnails/business-hours.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "contractor-roofing",
+      "file": "/template-thumbnails/contractor-roofing.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "contractor-landscape",
+      "file": "/template-thumbnails/contractor-landscape.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "contractor-premium",
+      "file": "/template-thumbnails/contractor-premium.svg",
+      "family": "premium-frame",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "event-yard-sale",
+      "file": "/template-thumbnails/event-yard-sale.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "event-fundraiser",
+      "file": "/template-thumbnails/event-fundraiser.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "event-wedding",
+      "file": "/template-thumbnails/event-wedding.svg",
+      "family": "premium-frame",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "parking-no-parking",
+      "file": "/template-thumbnails/parking-no-parking.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "parking-directional",
+      "file": "/template-thumbnails/parking-directional.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "parking-reserved",
+      "file": "/template-thumbnails/parking-reserved.svg",
+      "family": "minimal-clear",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "realty-luxury-listing",
+      "file": "/template-thumbnails/realty-luxury-listing.svg",
+      "family": "luxury-signature",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "realty-playful-open",
+      "file": "/template-thumbnails/realty-playful-open.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-minimal-sale",
+      "file": "/template-thumbnails/business-minimal-sale.svg",
+      "family": "minimal-clear",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-luxury-launch",
+      "file": "/template-thumbnails/business-luxury-launch.svg",
+      "family": "luxury-signature",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "contractor-industrial",
+      "file": "/template-thumbnails/contractor-industrial.svg",
+      "family": "industrial-grid",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "contractor-playful-wash",
+      "file": "/template-thumbnails/contractor-playful-wash.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "event-playful-party",
+      "file": "/template-thumbnails/event-playful-party.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "parking-industrial-loading",
+      "file": "/template-thumbnails/parking-industrial-loading.svg",
+      "family": "industrial-grid",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "parking-luxury-guest",
+      "file": "/template-thumbnails/parking-luxury-guest.svg",
+      "family": "luxury-signature",
+      "generatedFrom": "data/hue-template-catalog.json"
+    }
+  ]
+}
