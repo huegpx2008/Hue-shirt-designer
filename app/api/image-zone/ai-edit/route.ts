@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { validateArtworkBuffer } from '@/lib/server/artwork-file-validation';
+import { verifySupabaseAccessToken } from '@/lib/server/supabase-admin';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const VALID_ACTIONS = new Set(['restore', 'remove-background', 'remove', 'background', 'recolor', 'replace']);
 
 const signCloudinary = (parameters: Record<string, string>, secret: string) => {
@@ -36,6 +38,14 @@ const destroyTemporaryAsset = async (cloudName: string, apiKey: string, apiSecre
 };
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This AI request came from an untrusted site.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'ai-edit', 20, 60 * 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'The hourly AI edit limit has been reached. Please try again later.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, MAX_IMAGE_BYTES + 64 * 1024)) return NextResponse.json({ error: 'AI source images must be 4 MB or smaller.' }, { status: 413 });
+  const authorization = request.headers.get('authorization') || '';
+  const accessToken = authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7).trim() : '';
+  const user = accessToken ? await verifySupabaseAccessToken(accessToken) : null;
+  if (!user) return NextResponse.json({ error: 'Sign in before using Hue AI tools.' }, { status: 401 });
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const apiKey = process.env.CLOUDINARY_API_KEY;
   const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -52,7 +62,7 @@ export async function POST(request: Request) {
     const targetColor = String(incoming.get('targetColor') || '#0ea5e9');
 
     if (!(image instanceof File)) return NextResponse.json({ error: 'Choose a valid image before running Cloudinary AI.' }, { status: 400 });
-    if (image.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: 'The selected image is larger than the 10 MB Cloudinary limit on your current plan.' }, { status: 413 });
+    if (image.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: 'AI source images must be 4 MB or smaller. Regular artwork uploads may still be larger.' }, { status: 413 });
     const imageBuffer = Buffer.from(await image.arrayBuffer());
     const validatedImage = validateArtworkBuffer(imageBuffer, { maxBytes: MAX_IMAGE_BYTES });
     if (!VALID_ACTIONS.has(action)) return NextResponse.json({ error: 'Choose a supported Cloudinary edit action.' }, { status: 400 });

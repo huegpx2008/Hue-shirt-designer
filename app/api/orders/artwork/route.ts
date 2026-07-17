@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyArtworkAccessToken } from '@/lib/server/artwork-access';
 import { getStorageSignedUrl, hasSupabaseAdminConfig } from '@/lib/server/supabase-admin';
+import { enforceRateLimit } from '@/lib/server/request-security';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +27,8 @@ const errorPage = (message: string, status: number) => new NextResponse(`<!docty
 });
 
 export async function GET(request: Request) {
+  const retryAfter = enforceRateLimit(request, 'artwork-open', 120, 10 * 60 * 1000);
+  if (retryAfter) return errorPage('Too many artwork link requests. Please wait and try again.', 429);
   if (!hasSupabaseAdminConfig()) return errorPage('Hue Studio storage access is not configured.', 503);
   const token = new URL(request.url).searchParams.get('token') || '';
   try {

@@ -4109,7 +4109,7 @@ export default function Home() {
       formData.append('prompt', '');
       formData.append('targetColor', aiEditTargetColor);
       formData.append('quality', aiEditQuality);
-      const response = await fetch('/api/image-zone/ai-edit', { method: 'POST', body: formData });
+      const response = await fetch('/api/image-zone/ai-edit', { method: 'POST', headers: customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : undefined, body: formData });
       const result = await response.json() as { imageDataUrl?: string; error?: string };
       if (!response.ok || !result.imageDataUrl) throw new Error(result.error || 'Hue AI could not update this image.');
       const replacement = await FabricImage.fromURL(result.imageDataUrl);
@@ -5449,7 +5449,7 @@ export default function Home() {
       formData.append('action', aiEditAction);
       formData.append('targetColor', aiEditTargetColor);
       formData.append('quality', aiEditQuality);
-      const response = await fetch('/api/image-zone/ai-edit', { method: 'POST', body: formData });
+      const response = await fetch('/api/image-zone/ai-edit', { method: 'POST', headers: customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : undefined, body: formData });
       const result = await response.json() as { imageDataUrl?: string; error?: string };
       if (!response.ok || !result.imageDataUrl) throw new Error(result.error || 'The AI edit could not be generated.');
       const dimensions = await getImageNaturalSize(result.imageDataUrl);

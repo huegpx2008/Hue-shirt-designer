@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { applyStudioPricingAdjustment } from '@/lib/server/studio-pricing';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 const allowedProducts = new Set([
   "banner",
@@ -25,6 +26,10 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ product: string }> },
 ) {
+  if (!isSameOriginMutation(request)) return NextResponse.json({ ok: false, error: { message: 'This pricing request came from an untrusted site.' } }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'pricing', 120, 60 * 1000);
+  if (retryAfter) return NextResponse.json({ ok: false, error: { message: 'Too many pricing requests. Please wait and try again.' } }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 64 * 1024)) return NextResponse.json({ ok: false, error: { message: 'The pricing request is too large.' } }, { status: 413 });
   const { product } = await context.params;
 
   if (!allowedProducts.has(product)) {

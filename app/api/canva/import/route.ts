@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MAX_ARTWORK_BYTES, validateArtworkBuffer } from '@/lib/server/artwork-file-validation';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 const CANVA_EXPORTS_URL = "https://api.canva.com/rest/v1/exports";
 
@@ -72,6 +73,10 @@ const finishExport = async (exportPayload: JsonRecord, title: string) => {
 };
 
 export async function POST(request: NextRequest) {
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This Canva import request came from an untrusted site.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'canva-import', 20, 60 * 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many Canva exports. Please wait and try again.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 16 * 1024)) return NextResponse.json({ error: 'The Canva import request is too large.' }, { status: 413 });
   const accessToken = request.cookies.get("hue_canva_access_token")?.value;
   if (!accessToken) {
     return NextResponse.json({ error: "Canva is not connected yet." }, { status: 401 });
@@ -118,6 +123,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const retryAfter = enforceRateLimit(request, 'canva-import-status', 120, 10 * 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many Canva status checks. Please wait and try again.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
   const accessToken = request.cookies.get("hue_canva_access_token")?.value;
   if (!accessToken) {
     return NextResponse.json({ error: "Canva is not connected yet." }, { status: 401 });

@@ -65,7 +65,7 @@ The ordering app includes a protected management dashboard at `/admin`. It is de
 Initial setup:
 
 1. Run [`supabase/hue-studio-admin.sql`](supabase/hue-studio-admin.sql) once in the Supabase SQL editor.
-2. Add `SUPABASE_SERVICE_ROLE_KEY` and a long unique `ADMIN_DASHBOARD_SECRET` to the local and Vercel server environment variables.
+2. Add `SUPABASE_SERVICE_ROLE_KEY`, a long unique `ADMIN_DASHBOARD_SECRET`, and a separate random `ADMIN_SESSION_SECRET` to the local and Vercel server environment variables.
 3. Redeploy the project, then open `/admin` and sign in using `ADMIN_DASHBOARD_SECRET`.
 4. Add the deployed `/admin` URL as a link inside the existing `huegraphics.cc/admin` page.
 

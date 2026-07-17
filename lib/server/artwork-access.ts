@@ -10,10 +10,15 @@ const getSigningSecret = () => process.env.ARTWORK_LINK_SECRET || process.env.SU
 
 const sign = (value: string, secret: string) => createHmac('sha256', secret).update(value).digest('base64url');
 
-export const createArtworkAccessToken = (path: string, expiresIn = 60 * 60 * 24 * 365 * 7) => {
+const validArtworkPath = (path: string) => path.length <= 1024
+  && !path.includes('..')
+  && !path.includes('\\')
+  && (path.startsWith('orders/') || path.startsWith('customers/'));
+
+export const createArtworkAccessToken = (path: string, expiresIn = 60 * 60 * 24 * 90) => {
   const secret = getSigningSecret();
   if (!secret) throw new Error('Artwork access links are not configured. Add ARTWORK_LINK_SECRET.');
-  if (!path) throw new Error('An artwork storage path is required.');
+  if (!validArtworkPath(path)) throw new Error('A valid artwork storage path is required.');
   const payload: ArtworkAccessPayload = {
     exp: Math.floor(Date.now() / 1000) + expiresIn,
     path,
@@ -43,7 +48,7 @@ export const verifyArtworkAccessToken = (token: string) => {
   } catch {
     throw new Error('This artwork link is invalid.');
   }
-  if (payload.v !== 1 || !payload.path || !Number.isFinite(payload.exp)) throw new Error('This artwork link is invalid.');
+  if (payload.v !== 1 || !validArtworkPath(payload.path) || !Number.isFinite(payload.exp)) throw new Error('This artwork link is invalid.');
   if (payload.exp <= Math.floor(Date.now() / 1000)) throw new Error('This artwork link has expired.');
   return payload;
 };

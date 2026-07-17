@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
 import { getStorageBucket, getStorageSignedUrl, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
 import { STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
+import { enforceRateLimit } from '@/lib/server/request-security';
 
 type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string };
 
@@ -45,6 +46,8 @@ const listStorageFiles = async (prefix = '', depth = 0): Promise<StorageEntry[]>
 
 export async function GET(request: NextRequest) {
   if (!verifyAdminRequest(request)) return NextResponse.json({ error: 'Admin sign-in required.' }, { status: 401 });
+  const retryAfter = enforceRateLimit(request, 'admin-dashboard', 30, 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Admin refresh is temporarily limited. Wait a moment.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
   if (!hasSupabaseAdminConfig()) return NextResponse.json({ error: 'Add SUPABASE_SERVICE_ROLE_KEY to load admin data.' }, { status: 503 });
   try {
     const results = await Promise.allSettled([

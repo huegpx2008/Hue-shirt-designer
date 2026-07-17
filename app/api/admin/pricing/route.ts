@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
 import { STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 export async function POST(request: NextRequest) {
   if (!verifyAdminRequest(request)) return NextResponse.json({ error: 'Admin sign-in required.' }, { status: 401 });
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'Cross-site admin changes are not allowed.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'admin-pricing', 30, 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many pricing changes. Wait a moment.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 8192)) return NextResponse.json({ error: 'The pricing request is too large.' }, { status: 413 });
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const productKey = String(body.productKey || body.product_key || '').trim().toLowerCase();
   const product = STUDIO_PRICING_PRODUCTS.find((entry) => entry.key === productKey);

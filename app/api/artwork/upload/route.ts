@@ -13,6 +13,7 @@ import {
   hasSupabaseAdminConfig,
   verifySupabaseAccessToken,
 } from '@/lib/server/supabase-admin';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -61,6 +62,10 @@ const ownsPath = (storagePath: string, userId?: string, guestSessionId?: string)
 };
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This upload request came from an untrusted site.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'artwork-upload', 80, 10 * 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many artwork requests. Please wait and try again.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 16 * 1024)) return NextResponse.json({ error: 'The upload request is too large.' }, { status: 413 });
   if (!hasSupabaseAdminConfig()) return NextResponse.json({ error: 'Secure artwork storage is temporarily unavailable.' }, { status: 503 });
 
   try {

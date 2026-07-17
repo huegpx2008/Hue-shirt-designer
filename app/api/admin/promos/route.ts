@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 export async function POST(request: NextRequest) {
   if (!verifyAdminRequest(request)) return NextResponse.json({ error: 'Admin sign-in required.' }, { status: 401 });
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'Cross-site admin changes are not allowed.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'admin-promos', 30, 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many promo changes. Wait a moment.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 8192)) return NextResponse.json({ error: 'The promo request is too large.' }, { status: 413 });
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const code = String(body.code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
   const discountType = body.discount_type === 'fixed' ? 'fixed' : 'percent';
@@ -32,4 +37,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Promo code could not be saved.' }, { status: 500 });
   }
 }
-

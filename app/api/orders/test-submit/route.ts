@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
 import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 type OrderArtworkFile = {
   role?: string;
@@ -264,6 +265,10 @@ const validateOrderArtworkOwnership = (
 };
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This checkout request came from an untrusted site.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'order-submit', 12, 60 * 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many order submissions. Please wait before trying again.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 2 * 1024 * 1024)) return NextResponse.json({ error: 'The order request is too large.' }, { status: 413 });
   const resendApiKey = process.env.RESEND_API_KEY;
   const orderToEmail = process.env.QUOTE_TO_EMAIL || "jason@huegraphics.cc";
   const orderFromEmail = process.env.QUOTE_FROM_EMAIL || "Hue Graphics Orders <orders@huegraphics.cc>";

@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { calculatePromoDiscount, getPromoCode } from '@/lib/server/supabase-admin';
+import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This promo request came from an untrusted site.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'promo-validate', 30, 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many promo attempts. Please wait and try again.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 16 * 1024)) return NextResponse.json({ error: 'The promo request is too large.' }, { status: 413 });
   const body = await request.json().catch(() => ({})) as { code?: string; subtotal?: number };
   const code = String(body.code || '').trim().toUpperCase();
   const subtotal = Number(body.subtotal || 0);
@@ -22,4 +27,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'The promo code could not be applied.' }, { status: 400 });
   }
 }
-
