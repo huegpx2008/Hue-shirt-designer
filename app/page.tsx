@@ -4623,8 +4623,14 @@ export default function Home() {
 
   const readSmartTemplateAsset = (file: File | undefined, kind: 'logo' | 'photo') => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setArtworkEditorStatus('Smart Template logo and photo files must be PNG, JPG, WebP, GIF, or SVG images.');
+    const supportedType = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type.toLowerCase());
+    const supportedExtension = /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+    if (!supportedType || !supportedExtension) {
+      setArtworkEditorStatus('Smart Template logo and photo files must be PNG, JPG, WebP, or GIF images. SVG files are not accepted.');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setArtworkEditorStatus('Smart Template images must be 20 MB or smaller.');
       return;
     }
     const reader = new FileReader();

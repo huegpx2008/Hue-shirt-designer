@@ -265,6 +265,9 @@ const validateOrderArtworkOwnership = (
 };
 
 export async function POST(request: Request) {
+  if (String(process.env.CHECKOUT_ENABLED || 'true').toLowerCase() === 'false') {
+    return NextResponse.json({ error: 'Online checkout is temporarily paused. Please contact Hue Graphics for help with your order.' }, { status: 503 });
+  }
   if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This checkout request came from an untrusted site.' }, { status: 403 });
   const retryAfter = enforceRateLimit(request, 'order-submit', 12, 60 * 60 * 1000);
   if (retryAfter) return NextResponse.json({ error: 'Too many order submissions. Please wait before trying again.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });

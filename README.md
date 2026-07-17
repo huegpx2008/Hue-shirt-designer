@@ -55,6 +55,13 @@ Vercel will auto-detect the framework and build command.
 ## Notes
 
 - The project now includes customer authentication, artwork-library storage, pricing proxies, checkout prototyping, and multiple print-product builders.
+
+## Launch and security checks
+
+- Run `npm run launch:check` with the deployment environment loaded to validate required configuration without printing secret values.
+- Run `npm run build` before deployment.
+- Follow [SECURITY-LAUNCH-CHECKLIST.md](./SECURITY-LAUNCH-CHECKLIST.md) for privacy, pricing, order, email, and Admin smoke tests.
+- Set `CHECKOUT_ENABLED=false` in Vercel and redeploy to pause new order submissions during an incident.
 - Supabase stores private customer artwork; public catalog and website imagery may be delivered by Vercel, Cloudinary, or the SanMar CDN depending on the asset.
 - Experimental integrations should remain disabled until their server-side credentials, usage caps, and customer-facing error handling are configured.
 

@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "templates:thumbnails": "node scripts/generate-template-thumbnails.mjs",
+    "launch:check": "node scripts/verify-launch-readiness.mjs",
     "generate:catalog": "python scripts/import_catalog_preview.py --max-rows 500 --max-styles 200 --output public/data/sanmar-catalog.sample.generated.json",
     "audit:catalog": "python scripts/audit_catalog.py"
   },
