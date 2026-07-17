@@ -35,6 +35,23 @@ const guestSessionFromPath = (path?: string) => {
   return parts[0] === 'guest-orders' && parts[1] ? parts[1] : '';
 };
 
+const friendlyAdminError = (message?: string) => {
+  const value = String(message || '');
+  if (value.includes('PGRST205') || value.includes('Could not find the table')) return 'Supabase setup is incomplete. Run the required Hue Studio SQL, then refresh.';
+  return value || 'Admin data could not be loaded.';
+};
+
+const dashboardStatus = (sectionErrors?: Record<string, string>) => {
+  const updated = `Updated ${new Date().toLocaleTimeString()}`;
+  const missingPricing = Boolean(sectionErrors?.pricing);
+  const missingPromos = Boolean(sectionErrors?.promos);
+  if (missingPricing && missingPromos) return `${updated} · Run hue-studio-admin.sql in Supabase`;
+  if (missingPricing) return `${updated} · Pricing setup required`;
+  if (missingPromos) return `${updated} · Promo-code setup required`;
+  if (sectionErrors && Object.keys(sectionErrors).length) return `${updated} · Some admin sections could not be loaded`;
+  return updated;
+};
+
 export default function AdminPage() {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -59,14 +76,14 @@ export default function AdminPage() {
     }
     if (!response.ok) {
       setAuthenticated(true);
-      setStatus(payload.error || 'Admin data could not be loaded.');
+      setStatus(friendlyAdminError(payload.error));
       return;
     }
     setAuthenticated(true);
     const pricing = payload.pricing || [];
     setData({ users: payload.users || [], orders: payload.orders || [], files: payload.files || [], promos: payload.promos || [], pricing, pricingConfigured: payload.pricingConfigured === true });
     setPricingDrafts(Object.fromEntries(pricing.map((item) => [item.productKey, String(item.percentage)])));
-    setStatus(payload.sectionErrors?.pricing ? `Updated ${new Date().toLocaleTimeString()} · Pricing setup required` : `Updated ${new Date().toLocaleTimeString()}`);
+    setStatus(dashboardStatus(payload.sectionErrors));
   };
 
   useEffect(() => { void loadDashboard(); }, []);
@@ -124,6 +141,31 @@ export default function AdminPage() {
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) setStatus(payload.error || `${item.displayName} pricing could not be saved.`);
     else await loadDashboard();
+    setSavingPricingKey('');
+  };
+
+  const saveAllPricingAdjustments = async () => {
+    const adjustments = data.pricing.map((item) => ({ productKey: item.productKey, percentage: Number(pricingDrafts[item.productKey]), active: true }));
+    const invalid = adjustments.find((item) => !Number.isFinite(item.percentage) || item.percentage < 0 || item.percentage > 200);
+    if (invalid) {
+      const product = data.pricing.find((item) => item.productKey === invalid.productKey);
+      setStatus(`${product?.displayName || invalid.productKey} must be between 0% and 200%.`);
+      return;
+    }
+    setSavingPricingKey('__all__');
+    setStatus(`Saving all ${adjustments.length} pricing adjustments...`);
+    const response = await fetch('/api/admin/pricing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adjustments }),
+    });
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) setStatus(payload.error || 'Pricing adjustments could not be saved.');
+    else {
+      await loadDashboard();
+      setTab('pricing');
+      setStatus(`All ${adjustments.length} pricing adjustments were saved.`);
+    }
     setSavingPricingKey('');
   };
 
@@ -207,7 +249,7 @@ export default function AdminPage() {
           if (query && !groupText.includes(query)) return null;
           return <CustomerFiles key={group.user.id || group.user.email} user={group.user} orders={group.orders} files={group.files} onPreview={setPreviewFile} />;
         })}{unassignedFiles.length ? <CustomerFiles user={{ email: 'Unassigned / legacy storage' }} orders={[]} files={query ? unassignedFiles.filter((file) => `${file.path || ''} ${file.name || ''}`.toLowerCase().includes(query)) : unassignedFiles} onPreview={setPreviewFile} /> : null}</div> : null}
-        {tab === 'pricing' ? <PricingPanel items={data.pricing} categories={pricingCategories} configured={data.pricingConfigured} drafts={pricingDrafts} savingKey={savingPricingKey} onDraftChange={(productKey, value) => setPricingDrafts((current) => ({ ...current, [productKey]: value }))} onSave={savePricingAdjustment} /> : null}
+        {tab === 'pricing' ? <PricingPanel items={data.pricing} categories={pricingCategories} configured={data.pricingConfigured} drafts={pricingDrafts} savingKey={savingPricingKey} onDraftChange={(productKey, value) => setPricingDrafts((current) => ({ ...current, [productKey]: value }))} onSave={savePricingAdjustment} onSaveAll={saveAllPricingAdjustments} /> : null}
         {tab === 'promos' ? <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]"><form onSubmit={savePromo} className="h-fit rounded-2xl border border-[#38bdf8]/20 bg-[#071522] p-5"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Create or update</p><h2 className="mt-1 text-xl font-black">Promo code</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><AdminInput label="Code" value={promo.code} onChange={(value) => setPromo((current) => ({ ...current, code: value.toUpperCase() }))} /><AdminInput label="Description" value={promo.description} onChange={(value) => setPromo((current) => ({ ...current, description: value }))} /><label className="text-xs font-bold text-slate-400">Discount type<select value={promo.discount_type} onChange={(event) => setPromo((current) => ({ ...current, discount_type: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white"><option value="percent">Percent off</option><option value="fixed">Fixed amount</option></select></label><AdminInput label="Discount value" type="number" value={String(promo.discount_value)} onChange={(value) => setPromo((current) => ({ ...current, discount_value: Number(value) }))} /><AdminInput label="Minimum order" type="number" value={promo.minimum_order} onChange={(value) => setPromo((current) => ({ ...current, minimum_order: value }))} /><AdminInput label="Maximum discount" type="number" value={promo.maximum_discount} onChange={(value) => setPromo((current) => ({ ...current, maximum_discount: value }))} /><AdminInput label="Expires" type="date" value={promo.expires_at} onChange={(value) => setPromo((current) => ({ ...current, expires_at: value }))} /><AdminInput label="Maximum uses" type="number" value={promo.max_uses} onChange={(value) => setPromo((current) => ({ ...current, max_uses: value }))} /></div><button disabled={savingPromo} className="mt-5 h-12 w-full rounded-xl bg-[#1686c9] text-sm font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingPromo ? 'Saving...' : 'Save promo code'}</button></form><AdminList title="Promo codes">{data.promos.map((item) => <Row key={item.id || item.code} title={item.code || 'Code'} detail={`${item.description || 'No description'} · Used ${item.uses_count || 0}${item.max_uses ? ` of ${item.max_uses}` : ''} · ${item.expires_at ? `Expires ${date(item.expires_at)}` : 'No expiration'}`} value={`${item.discount_value || 0}${item.discount_type === 'percent' ? '%' : ' USD'} off${item.active === false ? ' · Inactive' : ''}`} />)}</AdminList></div> : null}
       </section>
     </div>
@@ -220,11 +262,11 @@ export default function AdminPage() {
   </main>;
 }
 
-function PricingPanel({ items, categories, configured, drafts, savingKey, onDraftChange, onSave }: { items: AdminPricing[]; categories: string[]; configured: boolean; drafts: Record<string, string>; savingKey: string; onDraftChange: (productKey: string, value: string) => void; onSave: (item: AdminPricing, percentage?: number) => Promise<void> }) {
+function PricingPanel({ items, categories, configured, drafts, savingKey, onDraftChange, onSave, onSaveAll }: { items: AdminPricing[]; categories: string[]; configured: boolean; drafts: Record<string, string>; savingKey: string; onDraftChange: (productKey: string, value: string) => void; onSave: (item: AdminPricing, percentage?: number) => Promise<void>; onSaveAll: () => Promise<void> }) {
   return <div className="space-y-5">
     <section className="rounded-2xl border border-[#38bdf8]/20 bg-[linear-gradient(135deg,#071522,#082238)] p-5">
       <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Studio pricing controls</p>
-      <div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-2xl font-black">Price from the master Hue API</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Set the percentage of the current master retail price charged in Hue Studio. Use <strong className="text-white">100%</strong> for standard pricing or <strong className="text-white">80%</strong> for 20% off. Future master API price changes still flow through automatically.</p></div><PricingLegend /></div>
+      <div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-2xl font-black">Price from the master Hue API</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Set the percentage of the current master retail price charged in Hue Studio. Use <strong className="text-white">100%</strong> for standard pricing or <strong className="text-white">80%</strong> for 20% off. Future master API price changes still flow through automatically.</p></div><div className="flex flex-col items-end gap-3"><PricingLegend /><button type="button" disabled={!configured || Boolean(savingKey)} onClick={() => void onSaveAll()} className="h-11 rounded-xl bg-[#22c55e] px-5 text-xs font-black uppercase text-white shadow-[0_0_22px_rgba(34,197,94,0.18)] hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-40">{savingKey === '__all__' ? 'Saving all...' : 'Apply all changes'}</button></div></div>
     </section>
     {!configured ? <section className="rounded-2xl border border-amber-300/25 bg-amber-300/[0.07] p-5 text-sm leading-6 text-amber-100">Run <strong>supabase/hue-studio-pricing-adjustments.sql</strong> in the Supabase SQL Editor, then refresh. Until then, the storefront safely uses 100% of every master price.</section> : null}
     {categories.map((category) => <section key={category} className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><header className="border-b border-white/10 px-5 py-4"><h3 className="text-lg font-black">{category}</h3></header><div className="grid gap-px bg-white/10 lg:grid-cols-2">{items.filter((item) => item.category === category).map((item) => {
@@ -232,7 +274,7 @@ function PricingPanel({ items, categories, configured, drafts, savingKey, onDraf
       const percentage = Number(draft);
       const validPercentage = Number.isFinite(percentage) ? percentage : item.percentage;
       const effect = validPercentage === 100 ? 'Standard master price' : validPercentage < 100 ? `${Math.round((100 - validPercentage) * 100) / 100}% lower than master` : `${Math.round((validPercentage - 100) * 100) / 100}% above master`;
-      return <div key={item.productKey} className="bg-[#071522] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-white">{item.displayName}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.productKey}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${validPercentage === 100 ? 'bg-slate-400/10 text-slate-300' : validPercentage < 100 ? 'bg-green-400/10 text-green-300' : 'bg-amber-300/10 text-amber-200'}`}>{effect}</span></div><div className="mt-4 flex flex-wrap items-end gap-2"><label className="min-w-44 flex-1 text-xs font-bold text-slate-400">Master price percentage<div className="relative mt-1"><input type="number" min="0" max="200" step="0.01" value={draft} onChange={(event) => onDraftChange(item.productKey, event.target.value)} className="h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 pr-8 text-base font-black text-white outline-none focus:border-[#38bdf8]" /><span className="pointer-events-none absolute right-3 top-3 text-sm font-black text-slate-500">%</span></div></label><button type="button" disabled={savingKey === item.productKey} onClick={() => void onSave(item)} className="h-11 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingKey === item.productKey ? 'Saving' : 'Save'}</button><button type="button" disabled={savingKey === item.productKey} onClick={() => { onDraftChange(item.productKey, '100'); void onSave(item, 100); }} className="h-11 rounded-xl border border-white/15 px-3 text-xs font-bold text-slate-300 hover:bg-white/[0.05]">Reset</button></div>{item.updatedAt ? <p className="mt-3 text-[10px] text-slate-600">Last saved {date(item.updatedAt)}</p> : null}</div>;
+      return <div key={item.productKey} className="bg-[#071522] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-white">{item.displayName}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.productKey}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${validPercentage === 100 ? 'bg-slate-400/10 text-slate-300' : validPercentage < 100 ? 'bg-green-400/10 text-green-300' : 'bg-amber-300/10 text-amber-200'}`}>{effect}</span></div><div className="mt-4 flex flex-wrap items-end gap-2"><label className="min-w-44 flex-1 text-xs font-bold text-slate-400">Master price percentage<div className="relative mt-1"><input type="number" min="0" max="200" step="0.01" value={draft} disabled={savingKey === '__all__'} onChange={(event) => onDraftChange(item.productKey, event.target.value)} className="h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 pr-8 text-base font-black text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /><span className="pointer-events-none absolute right-3 top-3 text-sm font-black text-slate-500">%</span></div></label><button type="button" disabled={Boolean(savingKey)} onClick={() => void onSave(item)} className="h-11 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingKey === item.productKey ? 'Saving' : 'Save'}</button><button type="button" disabled={Boolean(savingKey)} onClick={() => { onDraftChange(item.productKey, '100'); void onSave(item, 100); }} className="h-11 rounded-xl border border-white/15 px-3 text-xs font-bold text-slate-300 hover:bg-white/[0.05] disabled:opacity-50">Reset</button></div>{item.updatedAt ? <p className="mt-3 text-[10px] text-slate-600">Last saved {date(item.updatedAt)}</p> : null}</div>;
     })}</div></section>)}
   </div>;
 }

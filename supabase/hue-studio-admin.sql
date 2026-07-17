@@ -28,12 +28,6 @@ create table if not exists public.hue_orders (
   updated_at timestamptz not null default now()
 );
 
-create index if not exists hue_orders_customer_email_idx on public.hue_orders (lower(customer_email));
-create index if not exists hue_orders_created_at_idx on public.hue_orders (created_at desc);
-create index if not exists hue_orders_printavo_status_idx on public.hue_orders (printavo_status, created_at desc);
-create unique index if not exists hue_orders_submission_key_uidx on public.hue_orders (submission_key) where submission_key is not null;
-create index if not exists hue_orders_status_updated_idx on public.hue_orders (status, updated_at desc);
-
 -- Keep existing installations current when this setup file is run again.
 alter table public.hue_orders add column if not exists printavo_status text not null default 'not_added';
 alter table public.hue_orders add column if not exists printavo_order_number text null;
@@ -47,6 +41,15 @@ do $$ begin
     alter table public.hue_orders add constraint hue_orders_printavo_status_check check (printavo_status in ('not_added', 'added'));
   end if;
 end $$;
+
+-- Create indexes only after older installations have received all newer
+-- columns. `create table if not exists` does not add columns to an existing
+-- table, so placing these earlier would fail during an upgrade.
+create index if not exists hue_orders_customer_email_idx on public.hue_orders (lower(customer_email));
+create index if not exists hue_orders_created_at_idx on public.hue_orders (created_at desc);
+create index if not exists hue_orders_printavo_status_idx on public.hue_orders (printavo_status, created_at desc);
+create unique index if not exists hue_orders_submission_key_uidx on public.hue_orders (submission_key) where submission_key is not null;
+create index if not exists hue_orders_status_updated_idx on public.hue_orders (status, updated_at desc);
 
 create table if not exists public.hue_promo_codes (
   id uuid primary key default gen_random_uuid(),
