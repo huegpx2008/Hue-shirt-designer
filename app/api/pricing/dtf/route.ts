@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { applyStudioPricingAdjustment } from '@/lib/server/studio-pricing';
 
 const dtfPricingApiUrl = "https://quotes.huegraphics.cc/api/pricing/dtf";
 
@@ -27,7 +28,8 @@ export async function POST(request: Request) {
           },
         };
 
-    return NextResponse.json(data, { status: response.status });
+    const studioData = response.ok ? await applyStudioPricingAdjustment(data, 'dtf') : data;
+    return NextResponse.json(studioData, { status: response.status });
   } catch (error) {
     const message =
       error instanceof Error

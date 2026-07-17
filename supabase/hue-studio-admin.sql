@@ -16,6 +16,9 @@ create table if not exists public.hue_orders (
   tax numeric(12,2) not null default 0,
   total numeric(12,2) not null default 0,
   currency text not null default 'USD',
+  printavo_status text not null default 'not_added' check (printavo_status in ('not_added', 'added')),
+  printavo_order_number text null,
+  printavo_added_at timestamptz null,
   order_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -23,6 +26,17 @@ create table if not exists public.hue_orders (
 
 create index if not exists hue_orders_customer_email_idx on public.hue_orders (lower(customer_email));
 create index if not exists hue_orders_created_at_idx on public.hue_orders (created_at desc);
+create index if not exists hue_orders_printavo_status_idx on public.hue_orders (printavo_status, created_at desc);
+
+-- Keep existing installations current when this setup file is run again.
+alter table public.hue_orders add column if not exists printavo_status text not null default 'not_added';
+alter table public.hue_orders add column if not exists printavo_order_number text null;
+alter table public.hue_orders add column if not exists printavo_added_at timestamptz null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'hue_orders_printavo_status_check') then
+    alter table public.hue_orders add constraint hue_orders_printavo_status_check check (printavo_status in ('not_added', 'added'));
+  end if;
+end $$;
 
 create table if not exists public.hue_promo_codes (
   id uuid primary key default gen_random_uuid(),
@@ -43,8 +57,23 @@ create table if not exists public.hue_promo_codes (
 
 create index if not exists hue_promo_codes_code_idx on public.hue_promo_codes (code);
 
+create table if not exists public.hue_pricing_adjustments (
+  id uuid primary key default gen_random_uuid(),
+  product_key text not null unique,
+  display_name text null,
+  category text null,
+  percentage numeric(6,2) not null default 100 check (percentage >= 0 and percentage <= 200),
+  active boolean not null default true,
+  notes text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists hue_pricing_adjustments_product_key_idx on public.hue_pricing_adjustments (product_key);
+
 alter table public.hue_orders enable row level security;
 alter table public.hue_promo_codes enable row level security;
+alter table public.hue_pricing_adjustments enable row level security;
 
 -- These tables are intentionally service-role only. Customer browsers validate
 -- promo codes and submit orders through the protected Next.js API routes.
@@ -55,3 +84,4 @@ alter table public.hue_promo_codes enable row level security;
 grant usage on schema public to service_role;
 grant select, insert, update, delete on table public.hue_orders to service_role;
 grant select, insert, update, delete on table public.hue_promo_codes to service_role;
+grant select, insert, update, delete on table public.hue_pricing_adjustments to service_role;

@@ -51,7 +51,7 @@ type ProductMode = 'apparel' | 'signage';
 type SignProductId = 'banner' | 'mesh-banner' | 'yard-sign' | 'acm' | 'poster' | 'acrylic' | 'foamcore' | 'pvc' | 'polystyrene' | 'aluminum' | 'vinyl' | 'custom-cut-coroplast' | 'vehicle-magnet' | 'business-card' | 'handheld-paper' | 'carbonless' | 'door-hanger';
 type StoreView = 'store' | 'builder' | 'dtg';
 type StoreCategoryId = 'banners' | 'coro' | 'rigid' | 'decals' | 'magnets' | 'apparel' | 'misc';
-type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | 'webbing' | 'standoffs' | 'roundedCorners' | null;
+type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | 'webbing' | 'standoffs' | 'roundedCorners' | 'orientation' | 'coating' | null;
 type SignFieldType = 'number' | 'select' | 'checkbox';
 type SignFieldOption = { label: string; value: string };
 type SignField = { name: string; label: string; type: SignFieldType; defaultValue: string | boolean; step?: string; options?: SignFieldOption[] };
@@ -216,10 +216,17 @@ const getGuestUploadSessionId = () => {
 const getCustomerLibraryPrefix = (session: CustomerSession | null) => {
   if (!session?.user?.id) return `guest-orders/${getGuestUploadSessionId()}`;
   const customerLabel = getSafeStorageFolderName(session.user.email || 'customer', 'customer');
-  return `customers/${session.user.id}/${customerLabel}`;
+  return `customers/${customerLabel}/${session.user.id}`;
 };
 
-const getCustomerLegacyLibraryPrefix = (session: CustomerSession | null) => session?.user?.id ? `customers/${session.user.id}` : null;
+const getCustomerLegacyLibraryPrefixes = (session: CustomerSession | null) => {
+  if (!session?.user?.id) return [];
+  const customerLabel = getSafeStorageFolderName(session.user.email || 'customer', 'customer');
+  return [
+    `customers/${session.user.id}/${customerLabel}`,
+    `customers/${session.user.id}`,
+  ];
+};
 
 const isPreviewableImageFile = (file: File) => file.type.startsWith('image/');
 
@@ -841,7 +848,7 @@ const normalizeGeneratedArtworkForStorage = async (dataUrl: string, fileName: st
 const RIGID_SIGN_PRODUCT_IDS: SignProductId[] = ['acrylic', 'acm', 'pvc', 'foamcore', 'polystyrene', 'aluminum'];
 const SHEET_PRICED_PRODUCT_IDS: SignProductId[] = ['yard-sign', 'pvc', 'foamcore', 'polystyrene'];
 const SEPARATE_BACK_ARTWORK_PRODUCT_IDS: SignProductId[] = ['banner', 'acm', 'pvc', 'foamcore', 'polystyrene', 'aluminum'];
-const DOUBLE_SIDED_PRODUCT_IDS: SignProductId[] = ['banner', 'yard-sign', ...SEPARATE_BACK_ARTWORK_PRODUCT_IDS.filter((id) => id !== 'banner')];
+const DOUBLE_SIDED_PRODUCT_IDS: SignProductId[] = ['banner', 'yard-sign', 'business-card', ...SEPARATE_BACK_ARTWORK_PRODUCT_IDS.filter((id) => id !== 'banner')];
 const BANNER_MATERIAL_OPTIONS = [
   { value: '13-single', label: '13oz Vinyl', note: 'Single-sided everyday banner' },
   { value: '15-single', label: '15oz Vinyl', note: 'Heavier indoor/outdoor vinyl' },
@@ -1037,7 +1044,45 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
     apiSlug: id,
     description,
     preview: 'banner' as const,
-    fields: id === 'vehicle-magnet'
+    fields: id === 'business-card'
+      ? [
+          { name: 'width', label: 'Width (inches)', type: 'number' as const, defaultValue: '3.5', step: '0.25' },
+          { name: 'height', label: 'Height (inches)', type: 'number' as const, defaultValue: '2', step: '0.25' },
+          { name: 'quantity', label: 'Quantity', type: 'number' as const, defaultValue: '250', step: '1' },
+          {
+            name: 'orientation',
+            label: 'Orientation',
+            type: 'select' as const,
+            defaultValue: 'Landscape',
+            options: [
+              { label: 'Landscape (3.5" × 2")', value: 'Landscape' },
+              { label: 'Portrait (2" × 3.5")', value: 'Portrait' }
+            ]
+          },
+          {
+            name: 'coating',
+            label: 'Coating',
+            type: 'select' as const,
+            defaultValue: 'No Coating',
+            options: [
+              { label: 'No Coating', value: 'No Coating' },
+              { label: 'Gloss Laminate', value: 'Gloss Laminate' }
+            ]
+          },
+          { name: 'material', label: 'Stock', type: 'select' as const, defaultValue: materialOptions[0]?.value || 'standard', options: materialOptions },
+          {
+            name: 'sides',
+            label: 'Print Sides',
+            type: 'select' as const,
+            defaultValue: 'single',
+            options: [
+              { label: 'Single-Sided', value: 'single' },
+              { label: 'Double-Sided', value: 'double' }
+            ]
+          },
+          { name: 'rush', label: 'Rush', type: 'checkbox' as const, defaultValue: false }
+        ]
+      : id === 'vehicle-magnet'
       ? [
           { name: 'size', label: 'Size', type: 'select' as const, defaultValue: '', options: MAGNET_SIZE_OPTIONS },
           { name: 'quantity', label: 'Quantity', type: 'number' as const, defaultValue: '1', step: '1' },
@@ -1063,7 +1108,7 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
       : [
           { name: 'width', label: 'Width (inches)', type: 'number' as const, defaultValue: '0', step: '0.25' },
           { name: 'height', label: 'Height (inches)', type: 'number' as const, defaultValue: '0', step: '0.25' },
-          { name: 'quantity', label: 'Quantity', type: 'number' as const, defaultValue: id === 'business-card' ? '250' : '1', step: '1' },
+          { name: 'quantity', label: 'Quantity', type: 'number' as const, defaultValue: '1', step: '1' },
           { name: 'material', label: 'Material', type: 'select' as const, defaultValue: materialOptions[0]?.value || 'standard', options: materialOptions },
           {
             name: 'sides',
@@ -1223,6 +1268,10 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
       webbing: Boolean(values.webbing),
       polePocket: Boolean(values.polePocket),
       windSlits: Boolean(values.windSlits),
+      ...(product.id === 'business-card' ? {
+        coating: String(values.coating || 'No Coating'),
+        orientation: String(values.orientation || 'Landscape')
+      } : {}),
       roundedCorners: product.id === 'acrylic' || ['acm', 'aluminum'].includes(product.id) ? String(values.roundedCorners || 'none') !== 'none' : values.roundedCorners || 'none',
       ...(['acm', 'aluminum', 'vehicle-magnet'].includes(product.id) ? { roundedCornerRadius: String(values.roundedCorners || 'none') } : {}),
       standOffs: product.id === 'acrylic' && Boolean(values.standOffs),
@@ -1694,6 +1743,8 @@ export default function Home() {
   const [artworkEditorCanRedo, setArtworkEditorCanRedo] = useState(false);
   const [customerSession, setCustomerSession] = useState<CustomerSession | null>(null);
   const [showCustomerLogin, setShowCustomerLogin] = useState(false);
+  const [showGuestArtworkWarning, setShowGuestArtworkWarning] = useState(false);
+  const [pendingGuestUploadStatus, setPendingGuestUploadStatus] = useState('Choose an image or PDF artwork file.');
   const [customerAuthMode, setCustomerAuthMode] = useState<'signin' | 'signup'>('signin');
   const [customerAuthEmail, setCustomerAuthEmail] = useState('');
   const [customerAuthPassword, setCustomerAuthPassword] = useState('');
@@ -1838,8 +1889,8 @@ export default function Home() {
     let mounted = true;
     const loadImageLibrary = async () => {
       const libraryPrefix = getCustomerLibraryPrefix(customerSession);
-      const legacyLibraryPrefix = getCustomerLegacyLibraryPrefix(customerSession);
-      const libraryPrefixes = Array.from(new Set([libraryPrefix, legacyLibraryPrefix].filter(Boolean) as string[]));
+      const legacyLibraryPrefixes = getCustomerLegacyLibraryPrefixes(customerSession);
+      const libraryPrefixes = Array.from(new Set([libraryPrefix, ...legacyLibraryPrefixes]));
       setIsImageLibraryLoading(true);
       try {
         const libraryResponses = await Promise.all(libraryPrefixes.map(async (prefix) => {
@@ -2185,6 +2236,7 @@ export default function Home() {
   const primaryCustomCoroItem = isCustomCoro ? coroSheetArtworkItems.find((item) => Number(item.signWidth || 0) > 0 && Number(item.signHeight || 0) > 0) : null;
   const isCoroBuilder = productMode === 'signage' && isSheetPricedProduct;
   const isBannerBuilder = productMode === 'signage' && selectedSignProduct.preview === 'banner';
+  const isBusinessCardBuilder = productMode === 'signage' && selectedSignProduct.id === 'business-card';
   const isTrueBannerBuilder = isBannerBuilder && (selectedSignProduct.id === 'banner' || selectedSignProduct.id === 'mesh-banner');
   const supportsDoubleSidedProduct = productMode === 'signage' && DOUBLE_SIDED_PRODUCT_IDS.includes(selectedSignProduct.id);
   const isRigidSignBuilder = productMode === 'signage' && RIGID_SIGN_PRODUCT_IDS.includes(selectedSignProduct.id);
@@ -3260,17 +3312,38 @@ export default function Home() {
     setAcrylicTransparencyAcknowledged(true);
     setShowAcrylicTransparencyNotice(false);
     if (nextAction === 'upload') {
-      setImageLibraryStatus('Choose a transparent PNG artwork file for Acrylic spot white.');
-      artworkUploadInputRef.current?.click();
+      requestArtworkUpload('Choose a transparent PNG artwork file for Acrylic spot white.');
       return;
     }
     setShowImageZone(true);
   };
 
+  const requestArtworkUpload = (status = 'Choose an image or PDF artwork file.') => {
+    if (!customerSession?.access_token) {
+      setPendingGuestUploadStatus(status);
+      setShowGuestArtworkWarning(true);
+      return;
+    }
+    setImageLibraryStatus(status);
+    artworkUploadInputRef.current?.click();
+  };
+
+  const continueGuestArtworkUpload = () => {
+    setShowGuestArtworkWarning(false);
+    setImageLibraryStatus(pendingGuestUploadStatus);
+    window.setTimeout(() => artworkUploadInputRef.current?.click(), 0);
+  };
+
+  const openAccountFromGuestArtworkWarning = () => {
+    setShowGuestArtworkWarning(false);
+    setCustomerAuthMode('signup');
+    setCustomerAuthStatus('Create an account or sign in to keep artwork securely in your private Image Zone library.');
+    setShowCustomerLogin(true);
+  };
+
   const triggerArtworkUpload = () => {
     if (requestAcrylicArtworkNotice('upload')) return;
-    setImageLibraryStatus('Choose an image or PDF artwork file.');
-    artworkUploadInputRef.current?.click();
+    requestArtworkUpload();
   };
 
   const canPlaceImageZoneItem = (item: ImageZoneItem) => Boolean(item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') || isLikelyImagePath(item.name) || isLikelyImagePath(item.dataUrl));
@@ -6309,6 +6382,10 @@ export default function Home() {
     }
     setSignValues((prev) => {
       const next = { ...prev, [name]: value };
+      if (selectedSignProduct.id === 'business-card' && name === 'orientation' && typeof value === 'string') {
+        next.width = value === 'Portrait' ? '2' : '3.5';
+        next.height = value === 'Portrait' ? '3.5' : '2';
+      }
       if (isBannerBuilder && lockSignProportions && signArtworkSize && typeof value === 'string' && (name === 'width' || name === 'height')) {
         const changedDimension = Number(value);
         const artworkAspect = signArtworkSize.width / Math.max(0.01, signArtworkSize.height);
@@ -6381,6 +6458,14 @@ export default function Home() {
     }
     if (label === 'Rounded Corners') {
       openCoroOptionPanel('roundedCorners');
+      return;
+    }
+    if (label === 'Orientation') {
+      openCoroOptionPanel('orientation');
+      return;
+    }
+    if (label === 'Coating') {
+      openCoroOptionPanel('coating');
       return;
     }
     if (label === 'Standoffs') {
@@ -6692,7 +6777,7 @@ export default function Home() {
                 </div>
               </div> : null}
               <div className="grid gap-2">
-                {selectedSignProduct.fields.filter((field) => selectedSignProduct.id !== 'yard-sign' || field.name !== 'size').map((field) => field.type === 'checkbox' ? <label key={field.name} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"><input type="checkbox" checked={Boolean(signValues[field.name])} onChange={(event) => { setSignValues((prev) => ({ ...prev, [field.name]: event.target.checked })); setSignEstimate(null); }} /><span>{field.label}</span></label> : <label key={field.name} className="text-xs font-medium text-slate-600">{field.label}{field.type === 'select' ? <select value={String(signValues[field.name] ?? '')} onChange={(event) => { setSignValues((prev) => ({ ...prev, [field.name]: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950">{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <input type="number" min={field.name === 'quantity' ? 1 : 0.25} step={field.step} value={String(signValues[field.name] ?? '')} onChange={(event) => { setSignValues((prev) => ({ ...prev, [field.name]: event.target.value })); setSignEstimate(null); }} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" />}</label>)}
+                {selectedSignProduct.fields.filter((field) => selectedSignProduct.id !== 'yard-sign' || field.name !== 'size').map((field) => field.type === 'checkbox' ? <label key={field.name} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"><input type="checkbox" checked={Boolean(signValues[field.name])} onChange={(event) => updateSignOption(field.name, event.target.checked)} /><span>{field.label}</span></label> : <label key={field.name} className="text-xs font-medium text-slate-600">{field.label}{field.type === 'select' ? <select value={String(signValues[field.name] ?? '')} onChange={(event) => updateSignOption(field.name, event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950">{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <input type="number" min={field.name === 'quantity' ? 1 : 0.25} step={field.step} value={String(signValues[field.name] ?? '')} onChange={(event) => updateSignOption(field.name, event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" />}</label>)}
               </div>
             </div>}
           </div>
@@ -6772,6 +6857,16 @@ export default function Home() {
                       <span>{signWidth || 0}&quot; × {signHeight || 0}&quot;</span>
                       <span>Rigid panel</span>
                       <span>Smooth print surface</span>
+                    </> : isBusinessCardBuilder ? <>
+                      <span />
+                      <span className="font-bold text-slate-100">Order Price</span>
+                      <span className="font-bold text-slate-100">Per Card</span>
+                      <span>{String(signValues.orientation || 'Landscape')}</span>
+                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{String(signValues.coating || 'No Coating')}</span>
+                      <span>{designerQuantity} cards</span>
+                      <span>{String(signValues.sides || 'single') === 'double' ? 'Front and back' : 'Front only'}</span>
                     </> : isBannerBuilder ? <>
                       <span />
                       <span className="font-bold text-slate-100">Banner Price</span>
@@ -6795,7 +6890,7 @@ export default function Home() {
                 <div className={`text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
                   <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isCoroBuilder && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : '$0.00'}</p>
-                  <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${isRigidSignBuilder ? 'Rigid panel estimate' : 'Production estimate'}`}</p>
+                  <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : isBusinessCardBuilder ? `${designerQuantity} business cards` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${isRigidSignBuilder ? 'Rigid panel estimate' : 'Production estimate'}`}</p>
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
                   {isBannerBuilder && !isCoroBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
                   {isProductionBuilder && signEstimateStatus ? <p className={`mt-2 max-w-[240px] text-xs leading-4 ${signEstimate ? 'text-emerald-300' : isSignEstimateLoading ? 'text-[#8be3ff]' : 'text-amber-300'}`}>{signEstimateStatus}</p> : null}
@@ -6919,12 +7014,12 @@ export default function Home() {
                     </div>
                     <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45">Remove</button>
                   </div>
-                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-dropzone group mt-3 flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
+                  <button type="button" onClick={() => requestArtworkUpload(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-dropzone group mt-3 flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
                     {signArtworkPreviewUrl ? <span className="w-full"><img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" /><span className="mt-2 block text-xs font-black text-slate-800">Current artwork</span><span className="mt-1 block text-[10px] text-slate-400">Click to replace</span></span> : <span><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#e8f7ff] text-[#1678b8] transition group-hover:-translate-y-0.5 group-hover:bg-[#d7f2ff]"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><span className="mt-3 block text-xs font-black text-slate-800">Upload front artwork</span><span className="mt-1 block text-[10px] leading-4 text-slate-400">Choose a file or select from your library</span></span>}
-                  </label>
+                  </button>
                   <div className="mt-3 text-xs"><button type="button" className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button></div>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2"><label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label><button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button></div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => requestArtworkUpload(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</button><button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button></div>
                 {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
@@ -6997,7 +7092,7 @@ export default function Home() {
                 </div>
                 <button type="button" onClick={startAddBannerItem} className="hue-add-artwork mt-3 flex h-20 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#38bdf8]/40 bg-white/[0.04] text-sm font-black text-[#8be3ff] hover:border-[#38bdf8]/80 hover:bg-[#0ea5e9]/10"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0ea5e9]/15 text-lg leading-none">+</span>Add another set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <label htmlFor="artwork-upload-input" onClick={(event) => { if (requestAcrylicArtworkNotice('upload')) { event.preventDefault(); return; } setImageLibraryStatus('Choose finished banner artwork.'); }} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label>
+                  <button type="button" onClick={() => { if (requestAcrylicArtworkNotice('upload')) return; requestArtworkUpload('Choose finished banner artwork.'); }} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</button>
                   <button type="button" onClick={openArtworkLibrary} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button>
                 </div>
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
@@ -7118,9 +7213,9 @@ export default function Home() {
                     <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45">Remove</button>
                   </div>
                   <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                    <label htmlFor="artwork-upload-input" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); setImageLibraryStatus('Choose an image or PDF artwork file for the front side.'); }} className="hue-artwork-dropzone group flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
+                    <button type="button" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); requestArtworkUpload('Choose an image or PDF artwork file for the front side.'); }} className="hue-artwork-dropzone group flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
                       <span><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#e8f7ff] text-[#1678b8] transition group-hover:-translate-y-0.5 group-hover:bg-[#d7f2ff]"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><span className="mt-3 block text-xs font-black text-slate-800">Upload front artwork</span><span className="mt-1 block text-[10px] leading-4 text-slate-400">Choose a file or select from your library</span></span>
-                    </label>
+                    </button>
                     {hasCoroDoubleSided ? <button type="button" onClick={() => setImageLibraryStatus('Add the front image first, then choose or copy the back image.')} className="hue-artwork-dropzone flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-amber-300 bg-white p-3 text-center text-[10px] font-bold uppercase text-amber-600 hover:border-[#1678b8] hover:text-[#1678b8]">Select back artwork</button> : null}
                   </div>
                   <div className="mt-3 text-xs">
@@ -7129,7 +7224,7 @@ export default function Home() {
                 </div>}
                 <button type="button" onClick={startAddCoroSign} className="hue-add-artwork mt-3 flex h-20 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#38bdf8]/40 bg-white/[0.04] text-sm font-black text-[#8be3ff] hover:border-[#38bdf8]/80 hover:bg-[#0ea5e9]/10"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0ea5e9]/15 text-lg leading-none">+</span>Add another set</button>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</label>
+                  <button type="button" onClick={() => requestArtworkUpload()} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</button>
                   <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button>
                 </div>
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
@@ -7159,7 +7254,7 @@ export default function Home() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-[#1678b8]">{activeCoroOptionPanel === 'sides' ? 'Print Sides' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : activeCoroOptionPanel}</p>
-                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? 'Custom Magnet Size' : 'Vehicle Magnet Size' : isCoroBuilder ? selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? 'Custom CORO Size' : 'Select CORO Size' : `${selectedSignProduct.name} Size` : isBannerBuilder ? 'Banner Size' : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : activeCoroOptionPanel === 'webbing' ? 'Mesh Webbing' : activeCoroOptionPanel === 'standoffs' ? 'Acrylic Standoffs' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : 'Options'}</h3>
+                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? 'Custom Magnet Size' : 'Vehicle Magnet Size' : isCoroBuilder ? selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? 'Custom CORO Size' : 'Select CORO Size' : `${selectedSignProduct.name} Size` : isBusinessCardBuilder ? 'Business Card Size' : isBannerBuilder ? 'Banner Size' : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'orientation' ? 'Select Card Orientation' : activeCoroOptionPanel === 'coating' ? 'Select Card Coating' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : activeCoroOptionPanel === 'webbing' ? 'Mesh Webbing' : activeCoroOptionPanel === 'standoffs' ? 'Acrylic Standoffs' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : 'Options'}</h3>
                   </div>
                   <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
                 </div>
@@ -7254,6 +7349,18 @@ export default function Home() {
                     return <button key={String(option.value)} type="button" onClick={() => { updateSignOption('roundedCorners', option.value); setActiveCoroOptionPanel(null); }} className={`border-b border-slate-100 px-4 py-3 text-left text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}><span className="block font-black">{option.label}</span><span className={`mt-1 block text-xs ${selected ? 'text-blue-100' : 'text-slate-500'}`}>{option.note}</span></button>;
                   })}
                 </div> : null}
+                {activeCoroOptionPanel === 'orientation' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {[{ value: 'Landscape', label: 'Landscape', note: '3.5 inches wide × 2 inches high' }, { value: 'Portrait', label: 'Portrait', note: '2 inches wide × 3.5 inches high' }].map((option) => {
+                    const selected = String(signValues.orientation || 'Landscape') === option.value;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('orientation', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                  })}
+                </div> : null}
+                {activeCoroOptionPanel === 'coating' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {[{ value: 'No Coating', label: 'No Coating', note: 'Standard business card finish' }, { value: 'Gloss Laminate', label: 'Gloss Laminate', note: 'Gloss laminated finish' }].map((option) => {
+                    const selected = String(signValues.coating || 'No Coating') === option.value;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('coating', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                  })}
+                </div> : null}
               </div> : null}
               {isProductionBuilder ? <div className="hue-builder-zoom absolute bottom-6 left-8 z-20 flex items-center gap-3 text-xs text-slate-200">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/45 font-black shadow-[0_0_22px_rgba(14,165,233,0.18)]">N</div>
@@ -7264,7 +7371,15 @@ export default function Home() {
                 </div>
               </div> : null}
               {productMode === 'signage' ? <div className={`hue-builder-option-bar absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${isProductionBuilder ? 'bottom-6 left-60 right-8 max-h-11 justify-end overflow-hidden' : 'inset-x-3 bottom-4 justify-center'}`}>
-                {(selectedSignProduct.id === 'acrylic'
+                {(selectedSignProduct.id === 'business-card'
+                  ? [
+                      ['Images', String(bannerOrderItems.length + 1), signArtworkStatusOk],
+                      ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
+                      ['Orientation', String(signValues.orientation || 'Landscape'), true],
+                      ['Coating', String(signValues.coating || 'No Coating'), true],
+                      ['Print Sides', String(signValues.sides || 'single'), true]
+                    ] as [string, string, boolean][]
+                  : selectedSignProduct.id === 'acrylic'
                   ? [
                       ['Images', String(bannerOrderItems.length + 1), signArtworkStatusOk],
                       ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
@@ -7545,6 +7660,27 @@ export default function Home() {
               {customerSession ? <button type="button" onClick={() => { void handleCustomerSignOut(); }} className="flex-1 rounded border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20">Sign Out</button> : null}
               <button type="button" onClick={() => setShowCustomerLogin(false)} className="flex-1 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-4 py-3 text-sm font-black text-white hover:bg-[#103656]">Close</button>
             </div>
+          </div>
+        </section>
+      </div> : null}
+
+      {showGuestArtworkWarning ? <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#02070d]/85 p-4 backdrop-blur-md">
+        <section className="w-[min(600px,94vw)] overflow-hidden rounded-2xl border border-amber-300/30 bg-[#07111f] text-slate-100 shadow-[0_36px_110px_rgba(0,0,0,0.76),0_0_58px_rgba(245,158,11,0.12)]">
+          <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.20),transparent_42%),#071522] px-6 py-5">
+            <p className="text-xs font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Image Zone</p>
+            <h3 className="mt-2 text-2xl font-black text-white">Keep your artwork safe</h3>
+          </div>
+          <div className="px-6 py-6">
+            <div className="flex gap-4 rounded-xl border border-amber-300/25 bg-amber-300/[0.07] p-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-amber-300/40 bg-amber-300/10 text-xl font-black text-amber-200">!</span>
+              <div><p className="font-black text-amber-100">You are uploading as a guest.</p><p className="mt-2 text-sm leading-6 text-slate-300">Guest artwork is temporary and can be lost when this browser is refreshed or closed. We recommend creating an account or signing in so your files are saved securely and available for future orders.</p></div>
+            </div>
+            <p className="mt-4 text-xs leading-5 text-slate-400">You may still continue as a guest and complete your order. Keep this browser open until checkout is finished.</p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={openAccountFromGuestArtworkWarning} className="rounded-xl bg-[#1686c9] px-5 py-3.5 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f6da8]">Create Account / Sign In</button>
+              <button type="button" onClick={continueGuestArtworkUpload} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3.5 text-sm font-bold text-slate-200 hover:border-white/30 hover:bg-white/[0.1]">Continue as Guest</button>
+            </div>
+            <button type="button" onClick={() => setShowGuestArtworkWarning(false)} className="mt-3 w-full rounded-xl px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-300">Cancel upload</button>
           </div>
         </section>
       </div> : null}
@@ -8244,7 +8380,7 @@ export default function Home() {
               <option>Recent Uploads</option>
               <option>CORO Orders</option>
             </select>
-            <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</label>
+            <button type="button" onClick={() => requestArtworkUpload()} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</button>
             <button type="button" onClick={openCanvaImport} className="h-10 rounded-xl border border-[#22d3ee]/35 bg-[#083044] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#0c3b55]">Import Canva</button>
             <button type="button" onClick={() => openNewArtworkCreator('image-zone-create')} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit in Hue Designer</button>
@@ -8264,13 +8400,18 @@ export default function Home() {
             {imageLibraryStatus ? <span className="hidden max-w-xl truncate text-slate-400 lg:inline"><span className="mx-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
             {selectedImageZoneId ? <span className="ml-auto rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 font-bold text-emerald-300">● Artwork selected</span> : null}
           </div>
+          {!customerSession?.access_token ? <div className="flex flex-col gap-3 border-b border-amber-300/20 bg-[linear-gradient(90deg,rgba(245,158,11,0.13),rgba(14,165,233,0.06))] px-5 py-3 text-white sm:flex-row sm:items-center">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-300/35 bg-amber-300/10 text-base font-black text-amber-200">!</span>
+            <div className="min-w-0 flex-1"><p className="text-xs font-black uppercase tracking-[0.15em] text-amber-200">Guest artwork is temporary</p><p className="mt-1 text-xs leading-5 text-slate-300">Refreshing or closing this browser can remove uploaded artwork. Create an account or sign in to keep files securely in your private Image Zone library.</p></div>
+            <button type="button" onClick={openAccountFromGuestArtworkWarning} className="shrink-0 rounded-lg border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Create Account / Sign In</button>
+          </div> : null}
           <div className="hue-image-library-grid min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
             {imageZoneItems.length === 0 ? <div className="flex h-full min-h-80 items-center justify-center rounded-2xl border border-dashed border-[#38bdf8]/35 bg-white/[0.035] text-center">
               <div>
                 <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/20 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.15)]">+</span><p className="mt-5 text-lg font-black text-white">Your artwork vault is ready</p>
                 <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  <label htmlFor="artwork-upload-input" onClick={() => setImageLibraryStatus('Choose an image or PDF artwork file.')} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</label>
+                  <button type="button" onClick={() => requestArtworkUpload()} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</button>
                   <button type="button" onClick={openCanvaImport} className="inline-flex rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Import Canva</button>
                 </div>
               </div>

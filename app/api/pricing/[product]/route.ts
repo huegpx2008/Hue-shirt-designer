@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { applyStudioPricingAdjustment } from '@/lib/server/studio-pricing';
 
 const allowedProducts = new Set([
   "banner",
@@ -64,7 +65,8 @@ export async function POST(
           },
         };
 
-    return NextResponse.json(data, { status: response.status });
+    const studioData = response.ok ? await applyStudioPricingAdjustment(data, product) : data;
+    return NextResponse.json(studioData, { status: response.status });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "The pricing API could not be reached.";

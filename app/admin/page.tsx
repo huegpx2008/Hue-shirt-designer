@@ -4,33 +4,54 @@ import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 
 type AdminUser = { id?: string; email?: string; created_at?: string; last_sign_in_at?: string; user_metadata?: { full_name?: string; name?: string } };
 type AdminProductionArtwork = { id?: string; label?: string; quantity?: number; sizeLabel?: string; sheetLabel?: string; frontName?: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
-type AdminOrderItem = { id?: string; productName?: string; quantity?: number; sizeLabel?: string; productionBreakdown?: AdminProductionArtwork[] };
-type AdminOrderData = { items?: AdminOrderItem[]; fulfillment?: { method?: string }; customer?: { phone?: string } };
-type AdminOrder = { id?: string; order_number?: string; created_at?: string; status?: string; customer_email?: string; customer_name?: string; total?: number; currency?: string; order_data?: AdminOrderData };
+type AdminArtworkFile = { role?: string; name?: string; storagePath?: string; storageUrl?: string; source?: string };
+type AdminOrderItem = { id?: string; productId?: string; productName?: string; quantity?: number; sizeLabel?: string; optionSummary?: string[]; productionSummary?: string[]; price?: { total?: number | null; each?: number | null; currency?: string; sheetCount?: number; pricePerSheet?: number | null }; artworkFiles?: AdminArtworkFile[]; productionBreakdown?: AdminProductionArtwork[] };
+type AdminOrderData = { status?: string; paymentMode?: string; currency?: string; subtotal?: number; total?: number; promotion?: { code?: string; description?: string; discountAmount?: number }; shipping?: { amount?: number; label?: string }; tax?: { rate?: number; amount?: number; label?: string }; items?: AdminOrderItem[]; fulfillment?: { method?: string; address?: { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string } }; customer?: { phone?: string; userId?: string; email?: string; name?: string; organization?: string; notes?: string; taxExempt?: boolean; checkoutMode?: string } };
+type AdminOrder = { id?: string; order_number?: string; created_at?: string; status?: string; customer_user_id?: string; customer_email?: string; customer_name?: string; subtotal?: number; discount?: number; promo_code?: string; shipping?: number; tax?: number; total?: number; currency?: string; printavo_status?: 'not_added' | 'added'; printavo_order_number?: string | null; printavo_added_at?: string | null; order_data?: AdminOrderData };
 type AdminFile = { id?: string | null; name?: string; path?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; preview_url?: string };
 type AdminPromo = { id?: string; code?: string; description?: string; discount_type?: 'percent' | 'fixed'; discount_value?: number; minimum_order?: number; expires_at?: string; max_uses?: number; uses_count?: number; active?: boolean };
-type DashboardData = { users: AdminUser[]; orders: AdminOrder[]; files: AdminFile[]; promos: AdminPromo[] };
-type AdminTab = 'overview' | 'orders' | 'users' | 'files' | 'promos';
+type AdminPricing = { productKey: string; displayName: string; category: string; percentage: number; active: boolean; notes?: string; updatedAt?: string | null };
+type DashboardData = { users: AdminUser[]; orders: AdminOrder[]; files: AdminFile[]; promos: AdminPromo[]; pricing: AdminPricing[]; pricingConfigured: boolean };
+type AdminTab = 'overview' | 'orders' | 'users' | 'guests' | 'files' | 'pricing' | 'promos';
+type GuestGroupData = { key: string; label: string; detail: string; orders: AdminOrder[]; files: AdminFile[] };
 
 const money = (value: unknown, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0));
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
 const fileSize = (value?: number) => value ? `${(value / 1024 / 1024).toFixed(value > 1024 * 1024 ? 1 : 2)} MB` : '—';
+const orderBelongsToUser = (order: AdminOrder, user: AdminUser) => Boolean(
+  (user.id && (order.customer_user_id === user.id || order.order_data?.customer?.userId === user.id))
+  || (user.email && (order.customer_email || order.order_data?.customer?.email || '').toLowerCase() === user.email.toLowerCase())
+);
+const getOrderStoragePaths = (order: AdminOrder) => new Set((order.order_data?.items || []).flatMap((item) => [
+  ...(item.artworkFiles || []).map((file) => file.storagePath),
+  ...(item.productionBreakdown || []).flatMap((artwork) => [artwork.frontStoragePath, artwork.backStoragePath]),
+]).filter(Boolean) as string[]);
+const fileBelongsToCustomer = (file: AdminFile, user: AdminUser, orders: AdminOrder[]) => {
+  if (user.id && String(file.path || '').split('/').includes(user.id)) return true;
+  return orders.some((order) => getOrderStoragePaths(order).has(file.path || ''));
+};
+const guestSessionFromPath = (path?: string) => {
+  const parts = String(path || '').split('/');
+  return parts[0] === 'guest-orders' && parts[1] ? parts[1] : '';
+};
 
 export default function AdminPage() {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [status, setStatus] = useState('Checking admin access...');
-  const [data, setData] = useState<DashboardData>({ users: [], orders: [], files: [], promos: [] });
+  const [data, setData] = useState<DashboardData>({ users: [], orders: [], files: [], promos: [], pricing: [], pricingConfigured: false });
   const [tab, setTab] = useState<AdminTab>('overview');
   const [search, setSearch] = useState('');
   const [promo, setPromo] = useState({ code: '', description: '', discount_type: 'percent', discount_value: 10, minimum_order: '', maximum_discount: '', expires_at: '', max_uses: '' });
   const [savingPromo, setSavingPromo] = useState(false);
+  const [pricingDrafts, setPricingDrafts] = useState<Record<string, string>>({});
+  const [savingPricingKey, setSavingPricingKey] = useState('');
   const [previewFile, setPreviewFile] = useState<AdminFile | null>(null);
 
   const loadDashboard = async () => {
     setStatus('Loading Hue Studio data...');
     const response = await fetch('/api/admin/dashboard', { cache: 'no-store' });
-    const payload = await response.json().catch(() => ({})) as DashboardData & { error?: string };
+    const payload = await response.json().catch(() => ({})) as DashboardData & { error?: string; sectionErrors?: Record<string, string> };
     if (response.status === 401) {
       setAuthenticated(false);
       setStatus('Enter the Hue Studio admin password.');
@@ -42,8 +63,10 @@ export default function AdminPage() {
       return;
     }
     setAuthenticated(true);
-    setData({ users: payload.users || [], orders: payload.orders || [], files: payload.files || [], promos: payload.promos || [] });
-    setStatus(`Updated ${new Date().toLocaleTimeString()}`);
+    const pricing = payload.pricing || [];
+    setData({ users: payload.users || [], orders: payload.orders || [], files: payload.files || [], promos: payload.promos || [], pricing, pricingConfigured: payload.pricingConfigured === true });
+    setPricingDrafts(Object.fromEntries(pricing.map((item) => [item.productKey, String(item.percentage)])));
+    setStatus(payload.sectionErrors?.pricing ? `Updated ${new Date().toLocaleTimeString()} · Pricing setup required` : `Updated ${new Date().toLocaleTimeString()}`);
   };
 
   useEffect(() => { void loadDashboard(); }, []);
@@ -65,7 +88,8 @@ export default function AdminPage() {
   const signOut = async () => {
     await fetch('/api/admin/logout', { method: 'POST' });
     setAuthenticated(false);
-    setData({ users: [], orders: [], files: [], promos: [] });
+    setData({ users: [], orders: [], files: [], promos: [], pricing: [], pricingConfigured: false });
+    setPricingDrafts({});
     setStatus('Signed out.');
   };
 
@@ -84,12 +108,73 @@ export default function AdminPage() {
     setSavingPromo(false);
   };
 
+  const savePricingAdjustment = async (item: AdminPricing, nextPercentage?: number) => {
+    const percentage = nextPercentage ?? Number(pricingDrafts[item.productKey]);
+    if (!Number.isFinite(percentage) || percentage < 0 || percentage > 200) {
+      setStatus('Pricing percentage must be between 0% and 200%.');
+      return;
+    }
+    setSavingPricingKey(item.productKey);
+    setStatus(`Saving ${item.displayName} pricing...`);
+    const response = await fetch('/api/admin/pricing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productKey: item.productKey, percentage, active: true }),
+    });
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) setStatus(payload.error || `${item.displayName} pricing could not be saved.`);
+    else await loadDashboard();
+    setSavingPricingKey('');
+  };
+
   const query = search.trim().toLowerCase();
   const filteredUsers = useMemo(() => data.users.filter((user) => `${user.email || ''} ${user.user_metadata?.full_name || user.user_metadata?.name || ''}`.toLowerCase().includes(query)), [data.users, query]);
   const filteredOrders = useMemo(() => data.orders.filter((order) => `${order.order_number || ''} ${order.customer_email || ''} ${order.customer_name || ''}`.toLowerCase().includes(query)), [data.orders, query]);
-  const filteredFiles = useMemo(() => data.files.filter((file) => `${file.path || ''} ${file.name || ''}`.toLowerCase().includes(query)), [data.files, query]);
+  const customerGroups = useMemo(() => data.users.map((user) => {
+    const orders = data.orders.filter((order) => orderBelongsToUser(order, user));
+    const files = data.files.filter((file) => fileBelongsToCustomer(file, user, orders));
+    return { user, orders, files };
+  }), [data.users, data.orders, data.files]);
+  const guestOrders = useMemo(() => data.orders.filter((order) => !data.users.some((user) => orderBelongsToUser(order, user))), [data.orders, data.users]);
+  const guestGroups = useMemo(() => {
+    const groups = new Map<string, GuestGroupData>();
+    const ensureGroup = (key: string, label: string, detail: string) => {
+      if (!groups.has(key)) groups.set(key, { key, label, detail, orders: [], files: [] });
+      return groups.get(key)!;
+    };
+    guestOrders.forEach((order) => {
+      const paths = Array.from(getOrderStoragePaths(order));
+      const session = paths.map(guestSessionFromPath).find(Boolean);
+      const key = session ? `session:${session}` : `order:${order.order_number || order.id || 'guest'}`;
+      const label = order.customer_name || order.customer_email || 'Guest checkout';
+      const detail = order.customer_email || (session ? `Guest session ${session.slice(0, 12)}` : 'No account created');
+      ensureGroup(key, label, detail).orders.push(order);
+    });
+    data.files.forEach((file) => {
+      const session = guestSessionFromPath(file.path);
+      let group = session ? ensureGroup(`session:${session}`, 'Guest upload session', `Session ${session.slice(0, 12)}`) : undefined;
+      if (!group) {
+        const order = guestOrders.find((entry) => getOrderStoragePaths(entry).has(file.path || ''));
+        if (order) {
+          const orderPaths = Array.from(getOrderStoragePaths(order));
+          const orderSession = orderPaths.map(guestSessionFromPath).find(Boolean);
+          const key = orderSession ? `session:${orderSession}` : `order:${order.order_number || order.id || 'guest'}`;
+          group = ensureGroup(key, order.customer_name || order.customer_email || 'Guest checkout', order.customer_email || 'No account created');
+        }
+      }
+      if (group && !group.files.some((entry) => entry.path === file.path)) group.files.push(file);
+    });
+    return Array.from(groups.values()).sort((a, b) => String(b.orders[0]?.created_at || b.files[0]?.created_at || '').localeCompare(String(a.orders[0]?.created_at || a.files[0]?.created_at || '')));
+  }, [data.files, guestOrders]);
+  const assignedFilePaths = useMemo(() => new Set(customerGroups.flatMap((group) => group.files.map((file) => file.path).filter(Boolean) as string[])), [customerGroups]);
+  const guestFilePaths = useMemo(() => new Set(guestGroups.flatMap((group) => group.files.map((file) => file.path).filter(Boolean) as string[])), [guestGroups]);
+  const unassignedFiles = useMemo(() => data.files.filter((file) => !file.path || (!assignedFilePaths.has(file.path) && !guestFilePaths.has(file.path))), [data.files, assignedFilePaths, guestFilePaths]);
   const revenue = data.orders.reduce((total, order) => total + Number(order.total || 0), 0);
   const storageBytes = data.files.reduce((total, file) => total + Number(file.metadata?.size || 0), 0);
+  const awaitingPrintavoCount = data.orders.filter((order) => order.printavo_status !== 'added').length;
+  const adjustedPricingCount = data.pricing.filter((item) => item.active && item.percentage !== 100).length;
+  const pricingCategories = useMemo(() => Array.from(new Set(data.pricing.map((item) => item.category))), [data.pricing]);
+  const updateOrder = (updatedOrder: AdminOrder) => setData((current) => ({ ...current, orders: current.orders.map((order) => order.id === updatedOrder.id ? updatedOrder : order) }));
 
   if (authenticated !== true) return <main className="flex min-h-screen items-center justify-center bg-[#030a12] p-5 text-white">
     <form onSubmit={signIn} className="w-full max-w-md rounded-[24px] border border-[#38bdf8]/25 bg-[#071522] p-7 shadow-[0_34px_110px_rgba(0,0,0,0.65),0_0_54px_rgba(14,165,233,0.14)]">
@@ -104,12 +189,25 @@ export default function AdminPage() {
   return <main className="min-h-screen bg-[#030a12] text-white">
     <header className="sticky top-0 z-30 border-b border-white/10 bg-[#07111f]/95 px-5 py-4 backdrop-blur md:px-8"><div className="mx-auto flex max-w-[1700px] flex-wrap items-center gap-4"><img src="/brand/hue-graphics-mark.png" alt="" className="h-11 w-11 rounded-lg border border-[#38bdf8]/30" /><div className="mr-auto"><p className="text-[9px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Graphics</p><h1 className="text-xl font-black">Studio Admin</h1></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search users, orders, or files" className="h-10 min-w-64 flex-1 rounded-xl border border-white/15 bg-black/25 px-4 text-sm outline-none focus:border-[#38bdf8] md:max-w-md" /><button onClick={() => void loadDashboard()} className="h-10 rounded-xl border border-[#38bdf8]/30 bg-[#0c2a40] px-4 text-xs font-black text-[#9be8ff]">Refresh</button><a href="/" className="h-10 rounded-xl border border-white/15 px-4 py-3 text-xs font-bold text-slate-300">Store</a><button onClick={signOut} className="h-10 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300">Sign out</button></div></header>
     <div className="mx-auto grid max-w-[1700px] gap-5 px-5 py-5 md:px-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-      <aside className="h-fit rounded-2xl border border-white/10 bg-[#071522] p-3 lg:sticky lg:top-24"><p className="px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Management</p>{(['overview', 'orders', 'users', 'files', 'promos'] as AdminTab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`mb-1 w-full rounded-xl px-3 py-3 text-left text-sm font-bold capitalize ${tab === item ? 'bg-[#1686c9] text-white' : 'text-slate-300 hover:bg-white/[0.06]'}`}>{item}<span className="float-right text-xs opacity-60">{item === 'orders' ? data.orders.length : item === 'users' ? data.users.length : item === 'files' ? data.files.length : item === 'promos' ? data.promos.length : ''}</span></button>)}<p className="mt-3 border-t border-white/10 px-3 pt-3 text-[10px] leading-5 text-slate-500">{status}</p></aside>
+      <aside className="h-fit rounded-2xl border border-white/10 bg-[#071522] p-3 lg:sticky lg:top-24"><p className="px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Management</p>{(['overview', 'orders', 'users', 'guests', 'files', 'pricing', 'promos'] as AdminTab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`mb-1 w-full rounded-xl px-3 py-3 text-left text-sm font-bold capitalize ${tab === item ? 'bg-[#1686c9] text-white' : 'text-slate-300 hover:bg-white/[0.06]'}`}>{item === 'users' ? 'customers' : item}<span className="float-right text-xs opacity-60">{item === 'orders' ? data.orders.length : item === 'users' ? data.users.length : item === 'guests' ? guestGroups.length : item === 'files' ? data.files.length : item === 'pricing' ? adjustedPricingCount : item === 'promos' ? data.promos.length : ''}</span></button>)}<p className="mt-3 border-t border-white/10 px-3 pt-3 text-[10px] leading-5 text-slate-500">{status}</p></aside>
       <section className="min-w-0">
-        {tab === 'overview' ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[[data.users.length, 'Customer accounts'], [data.orders.length, 'Orders'], [money(revenue), 'Recorded revenue'], [fileSize(storageBytes), 'Artwork storage']].map(([value, label]) => <div key={String(label)} className="rounded-2xl border border-white/10 bg-[#071522] p-5"><p className="text-3xl font-black text-white">{value}</p><p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p></div>)}</div><div className="mt-5 grid gap-5 xl:grid-cols-2"><AdminList title="Recent orders">{data.orders.slice(0, 8).map((order) => <Row key={order.id || order.order_number} title={order.order_number || 'Order'} detail={`${order.customer_email || 'No email'} · ${date(order.created_at)}`} value={money(order.total, order.currency)} />)}</AdminList><AdminList title="Recent customers">{data.users.slice(0, 8).map((user) => <Row key={user.id || user.email} title={user.email || 'Customer'} detail={`Joined ${date(user.created_at)}`} value={user.last_sign_in_at ? 'Active' : 'New'} />)}</AdminList></div></> : null}
-        {tab === 'orders' ? <AdminList title="Orders">{filteredOrders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={data.files} />)}</AdminList> : null}
-        {tab === 'users' ? <AdminList title="Customer accounts">{filteredUsers.map((user) => <Row key={user.id || user.email} title={user.email || 'Customer'} detail={`Created ${date(user.created_at)} · Last sign-in ${date(user.last_sign_in_at)}`} value={user.id?.slice(0, 8) || ''} />)}</AdminList> : null}
-        {tab === 'files' ? <AdminList title="Artwork files">{filteredFiles.map((file, index) => <FileRow key={file.id || file.path || `${file.name}-${index}`} file={file} onPreview={() => setPreviewFile(file)} />)}</AdminList> : null}
+        {tab === 'overview' ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[[data.users.length, 'Customer accounts'], [data.orders.length, 'Orders'], [awaitingPrintavoCount, 'Awaiting Printavo'], [money(revenue), 'Recorded revenue'], [fileSize(storageBytes), 'Artwork storage']].map(([value, label]) => <div key={String(label)} className={`rounded-2xl border p-5 ${label === 'Awaiting Printavo' && Number(value) > 0 ? 'border-amber-300/25 bg-amber-300/[0.07]' : 'border-white/10 bg-[#071522]'}`}><p className={`text-3xl font-black ${label === 'Awaiting Printavo' && Number(value) > 0 ? 'text-amber-200' : 'text-white'}`}>{value}</p><p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p></div>)}</div><div className="mt-5 grid gap-5 xl:grid-cols-2"><AdminList title="Recent orders">{data.orders.slice(0, 8).map((order) => <Row key={order.id || order.order_number} title={order.order_number || 'Order'} detail={`${order.customer_email || 'No email'} · ${date(order.created_at)}`} value={money(order.total, order.currency)} />)}</AdminList><AdminList title="Recent customers">{data.users.slice(0, 8).map((user) => <Row key={user.id || user.email} title={user.email || 'Customer'} detail={`Joined ${date(user.created_at)}`} value={user.last_sign_in_at ? 'Active' : 'New'} />)}</AdminList></div></> : null}
+        {tab === 'orders' ? <AdminList title="All orders — complete order details">{filteredOrders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={data.files} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />)}</AdminList> : null}
+        {tab === 'users' ? <AdminList title="Customers — orders and artwork">{filteredUsers.map((user) => {
+          const group = customerGroups.find((entry) => entry.user.id === user.id || entry.user.email === user.email);
+          return <CustomerRow key={user.id || user.email} user={user} orders={group?.orders || []} files={group?.files || []} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />;
+        })}</AdminList> : null}
+        {tab === 'guests' ? <div className="space-y-4"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Guest checkout</p><h2 className="mt-1 text-2xl font-black">Guest orders and artwork</h2><p className="mt-1 text-sm text-slate-400">Artwork is grouped by guest upload session and connected to its submitted order whenever possible.</p></div>{guestGroups.map((group) => {
+          const groupText = `${group.label} ${group.detail} ${group.orders.map((order) => order.order_number).join(' ')} ${group.files.map((file) => `${file.name || ''} ${file.path || ''}`).join(' ')}`.toLowerCase();
+          if (query && !groupText.includes(query)) return null;
+          return <GuestFiles key={group.key} group={group} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />;
+        })}{guestGroups.length === 0 ? <p className="rounded-2xl border border-white/10 bg-[#071522] p-5 text-sm text-slate-500">No guest uploads or guest orders found.</p> : null}</div> : null}
+        {tab === 'files' ? <div className="space-y-4"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Customer artwork</p><h2 className="mt-1 text-2xl font-black">Files organized by customer</h2><p className="mt-1 text-sm text-slate-400">Open a customer to see library uploads and final-production order files together.</p></div>{customerGroups.map((group) => {
+          const groupText = `${group.user.email || ''} ${group.user.user_metadata?.full_name || group.user.user_metadata?.name || ''} ${group.orders.map((order) => order.order_number).join(' ')} ${group.files.map((file) => `${file.name || ''} ${file.path || ''}`).join(' ')}`.toLowerCase();
+          if (query && !groupText.includes(query)) return null;
+          return <CustomerFiles key={group.user.id || group.user.email} user={group.user} orders={group.orders} files={group.files} onPreview={setPreviewFile} />;
+        })}{unassignedFiles.length ? <CustomerFiles user={{ email: 'Unassigned / legacy storage' }} orders={[]} files={query ? unassignedFiles.filter((file) => `${file.path || ''} ${file.name || ''}`.toLowerCase().includes(query)) : unassignedFiles} onPreview={setPreviewFile} /> : null}</div> : null}
+        {tab === 'pricing' ? <PricingPanel items={data.pricing} categories={pricingCategories} configured={data.pricingConfigured} drafts={pricingDrafts} savingKey={savingPricingKey} onDraftChange={(productKey, value) => setPricingDrafts((current) => ({ ...current, [productKey]: value }))} onSave={savePricingAdjustment} /> : null}
         {tab === 'promos' ? <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]"><form onSubmit={savePromo} className="h-fit rounded-2xl border border-[#38bdf8]/20 bg-[#071522] p-5"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Create or update</p><h2 className="mt-1 text-xl font-black">Promo code</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><AdminInput label="Code" value={promo.code} onChange={(value) => setPromo((current) => ({ ...current, code: value.toUpperCase() }))} /><AdminInput label="Description" value={promo.description} onChange={(value) => setPromo((current) => ({ ...current, description: value }))} /><label className="text-xs font-bold text-slate-400">Discount type<select value={promo.discount_type} onChange={(event) => setPromo((current) => ({ ...current, discount_type: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white"><option value="percent">Percent off</option><option value="fixed">Fixed amount</option></select></label><AdminInput label="Discount value" type="number" value={String(promo.discount_value)} onChange={(value) => setPromo((current) => ({ ...current, discount_value: Number(value) }))} /><AdminInput label="Minimum order" type="number" value={promo.minimum_order} onChange={(value) => setPromo((current) => ({ ...current, minimum_order: value }))} /><AdminInput label="Maximum discount" type="number" value={promo.maximum_discount} onChange={(value) => setPromo((current) => ({ ...current, maximum_discount: value }))} /><AdminInput label="Expires" type="date" value={promo.expires_at} onChange={(value) => setPromo((current) => ({ ...current, expires_at: value }))} /><AdminInput label="Maximum uses" type="number" value={promo.max_uses} onChange={(value) => setPromo((current) => ({ ...current, max_uses: value }))} /></div><button disabled={savingPromo} className="mt-5 h-12 w-full rounded-xl bg-[#1686c9] text-sm font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingPromo ? 'Saving...' : 'Save promo code'}</button></form><AdminList title="Promo codes">{data.promos.map((item) => <Row key={item.id || item.code} title={item.code || 'Code'} detail={`${item.description || 'No description'} · Used ${item.uses_count || 0}${item.max_uses ? ` of ${item.max_uses}` : ''} · ${item.expires_at ? `Expires ${date(item.expires_at)}` : 'No expiration'}`} value={`${item.discount_value || 0}${item.discount_type === 'percent' ? '%' : ' USD'} off${item.active === false ? ' · Inactive' : ''}`} />)}</AdminList></div> : null}
       </section>
     </div>
@@ -122,33 +220,143 @@ export default function AdminPage() {
   </main>;
 }
 
+function PricingPanel({ items, categories, configured, drafts, savingKey, onDraftChange, onSave }: { items: AdminPricing[]; categories: string[]; configured: boolean; drafts: Record<string, string>; savingKey: string; onDraftChange: (productKey: string, value: string) => void; onSave: (item: AdminPricing, percentage?: number) => Promise<void> }) {
+  return <div className="space-y-5">
+    <section className="rounded-2xl border border-[#38bdf8]/20 bg-[linear-gradient(135deg,#071522,#082238)] p-5">
+      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Studio pricing controls</p>
+      <div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-2xl font-black">Price from the master Hue API</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Set the percentage of the current master retail price charged in Hue Studio. Use <strong className="text-white">100%</strong> for standard pricing or <strong className="text-white">80%</strong> for 20% off. Future master API price changes still flow through automatically.</p></div><PricingLegend /></div>
+    </section>
+    {!configured ? <section className="rounded-2xl border border-amber-300/25 bg-amber-300/[0.07] p-5 text-sm leading-6 text-amber-100">Run <strong>supabase/hue-studio-pricing-adjustments.sql</strong> in the Supabase SQL Editor, then refresh. Until then, the storefront safely uses 100% of every master price.</section> : null}
+    {categories.map((category) => <section key={category} className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><header className="border-b border-white/10 px-5 py-4"><h3 className="text-lg font-black">{category}</h3></header><div className="grid gap-px bg-white/10 lg:grid-cols-2">{items.filter((item) => item.category === category).map((item) => {
+      const draft = drafts[item.productKey] ?? String(item.percentage);
+      const percentage = Number(draft);
+      const validPercentage = Number.isFinite(percentage) ? percentage : item.percentage;
+      const effect = validPercentage === 100 ? 'Standard master price' : validPercentage < 100 ? `${Math.round((100 - validPercentage) * 100) / 100}% lower than master` : `${Math.round((validPercentage - 100) * 100) / 100}% above master`;
+      return <div key={item.productKey} className="bg-[#071522] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-white">{item.displayName}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.productKey}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${validPercentage === 100 ? 'bg-slate-400/10 text-slate-300' : validPercentage < 100 ? 'bg-green-400/10 text-green-300' : 'bg-amber-300/10 text-amber-200'}`}>{effect}</span></div><div className="mt-4 flex flex-wrap items-end gap-2"><label className="min-w-44 flex-1 text-xs font-bold text-slate-400">Master price percentage<div className="relative mt-1"><input type="number" min="0" max="200" step="0.01" value={draft} onChange={(event) => onDraftChange(item.productKey, event.target.value)} className="h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 pr-8 text-base font-black text-white outline-none focus:border-[#38bdf8]" /><span className="pointer-events-none absolute right-3 top-3 text-sm font-black text-slate-500">%</span></div></label><button type="button" disabled={savingKey === item.productKey} onClick={() => void onSave(item)} className="h-11 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingKey === item.productKey ? 'Saving' : 'Save'}</button><button type="button" disabled={savingKey === item.productKey} onClick={() => { onDraftChange(item.productKey, '100'); void onSave(item, 100); }} className="h-11 rounded-xl border border-white/15 px-3 text-xs font-bold text-slate-300 hover:bg-white/[0.05]">Reset</button></div>{item.updatedAt ? <p className="mt-3 text-[10px] text-slate-600">Last saved {date(item.updatedAt)}</p> : null}</div>;
+    })}</div></section>)}
+  </div>;
+}
+function PricingLegend() { return <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase"><span className="rounded-full bg-slate-400/10 px-3 py-1.5 text-slate-300">100% standard</span><span className="rounded-full bg-green-400/10 px-3 py-1.5 text-green-300">80% = 20% off</span><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">110% = 10% above</span></div>; }
 function AdminList({ title, children }: { title: string; children: ReactNode }) { return <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><div className="border-b border-white/10 px-5 py-4"><h2 className="text-lg font-black">{title}</h2></div><div className="divide-y divide-white/10">{children || <p className="p-5 text-sm text-slate-500">Nothing to show yet.</p>}</div></div>; }
 function Row({ title, detail, value }: { title: string; detail: string; value: string }) { return <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{title}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{detail}</p></div><p className="text-xs font-bold text-[#8be3ff]">{value}</p></div>; }
-function OrderRow({ order, files }: { order: AdminOrder; files: AdminFile[] }) {
+function CustomerRow({ user, orders, files, onPreview, onOrderUpdated }: { user: AdminUser; orders: AdminOrder[]; files: AdminFile[]; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void }) {
   const [open, setOpen] = useState(false);
+  const name = user.user_metadata?.full_name || user.user_metadata?.name;
+  return <div className="px-5 py-4">
+    <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full flex-wrap items-start justify-between gap-3 text-left">
+      <div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{name || user.email || 'Customer'}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{name ? `${user.email} · ` : ''}Created ${date(user.created_at)} · Last sign-in ${date(user.last_sign_in_at)}</p></div>
+      <div className="text-right"><p className="text-xs font-black text-[#8be3ff]">{orders.length} order{orders.length === 1 ? '' : 's'} · {files.length} file{files.length === 1 ? '' : 's'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Close customer' : 'Open customer'}</p></div>
+    </button>
+    {open ? <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
+      <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Orders</p>{orders.length ? <div className="overflow-hidden rounded-xl border border-white/10 bg-[#030b13] divide-y divide-white/10">{orders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={files} onPreview={onPreview} onOrderUpdated={onOrderUpdated} />)}</div> : <p className="rounded-xl border border-white/10 bg-[#030b13] p-4 text-xs text-slate-500">No submitted orders for this customer yet.</p>}</div>
+      <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">All customer files</p>{files.length ? <div className="overflow-hidden rounded-xl border border-white/10 bg-[#030b13] divide-y divide-white/10">{files.map((file, index) => <FileRow key={file.id || file.path || `${file.name}-${index}`} file={file} onPreview={() => onPreview(file)} />)}</div> : <p className="rounded-xl border border-white/10 bg-[#030b13] p-4 text-xs text-slate-500">No artwork files found.</p>}</div>
+    </div> : null}
+  </div>;
+}
+function GuestFiles({ group, onPreview, onOrderUpdated }: { group: GuestGroupData; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void }) {
+  const [open, setOpen] = useState(false);
+  return <section className="overflow-hidden rounded-2xl border border-amber-300/20 bg-[#071522]">
+    <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full flex-wrap items-center justify-between gap-3 px-5 py-4 text-left hover:bg-white/[0.03]">
+      <div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-amber-300/15 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-amber-200">Guest</span><p className="text-base font-black text-white">{group.label}</p></div><p className="mt-1 text-xs text-slate-400">{group.detail}</p></div>
+      <div className="text-right"><p className="text-xs font-black text-[#8be3ff]">{group.orders.length} order{group.orders.length === 1 ? '' : 's'} · {group.files.length} file{group.files.length === 1 ? '' : 's'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Close guest session' : 'Open guest session'}</p></div>
+    </button>
+    {open ? <div className="space-y-4 border-t border-white/10 p-4">
+      <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Guest orders</p>{group.orders.length ? <div className="overflow-hidden rounded-xl border border-white/10 bg-[#030b13] divide-y divide-white/10">{group.orders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={group.files} onPreview={onPreview} onOrderUpdated={onOrderUpdated} />)}</div> : <p className="rounded-xl border border-white/10 bg-[#030b13] p-4 text-xs text-slate-500">Artwork uploaded, but no order has been submitted from this guest session.</p>}</div>
+      <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Guest files</p>{group.files.length ? <div className="overflow-hidden rounded-xl border border-white/10 bg-[#030b13] divide-y divide-white/10">{group.files.map((file, index) => <FileRow key={file.id || file.path || `${file.name}-${index}`} file={file} onPreview={() => onPreview(file)} />)}</div> : <p className="rounded-xl border border-white/10 bg-[#030b13] p-4 text-xs text-slate-500">No stored artwork files were found for this guest order.</p>}</div>
+    </div> : null}
+  </section>;
+}
+function CustomerFiles({ user, orders, files, onPreview }: { user: AdminUser; orders: AdminOrder[]; files: AdminFile[]; onPreview: (file: AdminFile) => void }) {
+  const [open, setOpen] = useState(false);
+  if (!files.length && !orders.length) return null;
+  const name = user.user_metadata?.full_name || user.user_metadata?.name;
+  return <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]">
+    <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full flex-wrap items-center justify-between gap-3 px-5 py-4 text-left hover:bg-white/[0.03]">
+      <div><p className="text-base font-black text-white">{name || user.email || 'Customer'}</p>{name ? <p className="mt-1 text-xs text-slate-400">{user.email}</p> : null}</div>
+      <div className="text-right"><p className="text-xs font-black text-[#8be3ff]">{files.length} file{files.length === 1 ? '' : 's'} · {orders.length} order{orders.length === 1 ? '' : 's'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Hide files' : 'View files'}</p></div>
+    </button>
+    {open ? <div className="divide-y divide-white/10 border-t border-white/10">{files.map((file, index) => <FileRow key={file.id || file.path || `${file.name}-${index}`} file={file} onPreview={() => onPreview(file)} />)}</div> : null}
+  </section>;
+}
+function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrder; files: AdminFile[]; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void }) {
+  const [open, setOpen] = useState(false);
+  const [printavoStatus, setPrintavoStatus] = useState<'not_added' | 'added'>(order.printavo_status === 'added' ? 'added' : 'not_added');
+  const [printavoOrderNumber, setPrintavoOrderNumber] = useState(order.printavo_order_number || '');
+  const [savingPrintavo, setSavingPrintavo] = useState(false);
+  const [printavoMessage, setPrintavoMessage] = useState('');
+  useEffect(() => {
+    setPrintavoStatus(order.printavo_status === 'added' ? 'added' : 'not_added');
+    setPrintavoOrderNumber(order.printavo_order_number || '');
+  }, [order.printavo_status, order.printavo_order_number]);
   const items = order.order_data?.items || [];
   const artworkCount = items.reduce((total, item) => total + (item.productionBreakdown?.length || 0), 0);
   const previewFor = (storagePath?: string, fallback?: string) => files.find((file) => storagePath && file.path === storagePath)?.preview_url || fallback;
+  const customer = order.order_data?.customer;
+  const fulfillment = order.order_data?.fulfillment;
+  const address = fulfillment?.address;
+  const subtotal = order.subtotal ?? order.order_data?.subtotal ?? order.total ?? order.order_data?.total ?? 0;
+  const discount = order.discount ?? order.order_data?.promotion?.discountAmount ?? 0;
+  const shipping = order.shipping ?? order.order_data?.shipping?.amount ?? 0;
+  const tax = order.tax ?? order.order_data?.tax?.amount ?? 0;
+  const total = order.total ?? order.order_data?.total ?? 0;
+  const currency = order.currency || order.order_data?.currency || 'USD';
+  const savePrintavo = async () => {
+    if (!order.id) return;
+    setSavingPrintavo(true);
+    setPrintavoMessage('');
+    const response = await fetch('/api/admin/orders/printavo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId: order.id, printavoStatus, printavoOrderNumber }) });
+    const payload = await response.json().catch(() => ({})) as { order?: AdminOrder; error?: string };
+    if (!response.ok || !payload.order) setPrintavoMessage(payload.error || 'Could not update Printavo tracking.');
+    else {
+      onOrderUpdated(payload.order);
+      setPrintavoMessage(printavoStatus === 'added' ? 'Recorded as added to Printavo.' : 'Returned to the Not added list.');
+    }
+    setSavingPrintavo(false);
+  };
   return <div className="px-5 py-4">
     <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full flex-wrap items-start justify-between gap-3 text-left">
       <div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{order.order_number || 'Order'}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{order.customer_name || 'Customer'} · {order.customer_email || 'No email'} · {date(order.created_at)}</p></div>
-      <div className="text-right"><p className="text-xs font-bold text-[#8be3ff]">{money(order.total, order.currency)} · {order.status || 'received'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Hide details' : `View ${artworkCount || ''} artwork detail${artworkCount === 1 ? '' : 's'}`}</p></div>
+      <div className="text-right"><p className="text-xs font-bold text-[#8be3ff]">{money(order.total, order.currency)} · {order.status || 'received'}</p><span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${order.printavo_status === 'added' ? 'bg-green-400/15 text-green-300' : 'bg-amber-300/15 text-amber-200'}`}>{order.printavo_status === 'added' ? 'Added to Printavo' : 'Not added to Printavo'}</span><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Hide details' : `View ${artworkCount || ''} artwork detail${artworkCount === 1 ? '' : 's'}`}</p></div>
     </button>
     {open ? <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+      <section className={`rounded-xl border p-4 ${printavoStatus === 'added' ? 'border-green-400/20 bg-green-400/[0.05]' : 'border-amber-300/20 bg-amber-300/[0.05]'}`}>
+        <div className="flex flex-wrap items-end gap-3"><div className="min-w-52 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Printavo workflow</p><p className="mt-1 text-xs text-slate-400">Track whether this Hue order has been entered into Printavo manually.</p></div><label className="text-xs font-bold text-slate-300">Tracking status<select value={printavoStatus} onChange={(event) => setPrintavoStatus(event.target.value === 'added' ? 'added' : 'not_added')} className="mt-1 block h-10 min-w-48 rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-[#38bdf8]"><option value="not_added">Not added</option><option value="added">Added to Printavo</option></select></label><label className="min-w-52 flex-1 text-xs font-bold text-slate-300">Printavo order number (optional)<input value={printavoOrderNumber} onChange={(event) => setPrintavoOrderNumber(event.target.value)} placeholder="Example: 12345" className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-[#38bdf8]" /></label><button type="button" disabled={savingPrintavo || !order.id} onClick={() => void savePrintavo()} className="h-10 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white disabled:opacity-50">{savingPrintavo ? 'Saving...' : 'Save tracking'}</button></div>
+        {order.printavo_added_at && order.printavo_status === 'added' ? <p className="mt-2 text-[10px] text-green-300">Marked added {date(order.printavo_added_at)}{order.printavo_order_number ? ` · Printavo #${order.printavo_order_number}` : ''}</p> : null}{printavoMessage ? <p className={`mt-2 text-xs ${printavoMessage.startsWith('Could') ? 'text-red-300' : 'text-green-300'}`}>{printavoMessage}</p> : null}
+      </section>
+      <div className="grid gap-3 xl:grid-cols-3">
+        <section className="rounded-xl border border-white/10 bg-[#020a12] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Customer</p><div className="mt-3 space-y-1 text-xs leading-5 text-slate-300"><p className="font-black text-white">{customer?.name || order.customer_name || 'Name not provided'}</p>{customer?.organization ? <p>{customer.organization}</p> : null}<p>{customer?.email || order.customer_email || 'No email'}</p><p>{customer?.phone || 'No phone'}</p><p>{customer?.checkoutMode === 'account' || order.customer_user_id ? 'Hue account customer' : 'Guest checkout'}</p><p>Tax exempt: {customer?.taxExempt ? 'Yes — verify form' : 'No'}</p>{customer?.notes ? <p className="mt-2 rounded-lg bg-white/[0.04] p-2 text-amber-100"><span className="font-black">Order notes:</span> {customer.notes}</p> : null}</div></section>
+        <section className="rounded-xl border border-white/10 bg-[#020a12] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Fulfillment</p><div className="mt-3 space-y-1 text-xs leading-5 text-slate-300"><p className="font-black text-white">{fulfillment?.method === 'direct_ship' ? 'Direct shipping' : 'Local pickup'}</p>{fulfillment?.method === 'direct_ship' ? <><p>{address?.line1 || 'Address not provided'}</p>{address?.line2 ? <p>{address.line2}</p> : null}<p>{[address?.city, address?.state, address?.postalCode].filter(Boolean).join(', ')}</p></> : <p>Customer will pick up at Hue Graphics.</p>}<p className="pt-2 text-slate-500">Submitted {date(order.created_at)}</p><p className="text-slate-500">Status: {order.status || order.order_data?.status || 'received'}</p><p className="text-slate-500">Payment: {order.order_data?.paymentMode || 'Not recorded'}</p></div></section>
+        <section className="rounded-xl border border-green-400/15 bg-[#03130f] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-green-300">Order totals</p><div className="mt-3 space-y-2 text-xs text-slate-300"><OrderMoney label="Subtotal" value={subtotal} currency={currency} />{discount ? <OrderMoney label={`Discount${order.promo_code || order.order_data?.promotion?.code ? ` (${order.promo_code || order.order_data?.promotion?.code})` : ''}`} value={-discount} currency={currency} /> : null}<OrderMoney label={order.order_data?.shipping?.label || 'Shipping'} value={shipping} currency={currency} /><OrderMoney label={order.order_data?.tax?.label || 'Tax'} value={tax} currency={currency} /><div className="mt-2 flex items-center justify-between border-t border-green-300/20 pt-3 text-base font-black text-green-300"><span>Total</span><span>{money(total, currency)}</span></div></div></section>
+      </div>
       {items.length === 0 ? <p className="text-xs text-amber-200">This older order does not contain a structured item breakdown.</p> : items.map((item, itemIndex) => <section key={item.id || `${order.order_number}-item-${itemIndex}`} className="rounded-xl border border-white/10 bg-[#020a12] p-3">
         <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-black text-white">Item {itemIndex + 1}: {item.productName || 'Print item'}</p><p className="mt-1 text-xs text-slate-400">{item.sizeLabel || 'Size not listed'} · Total qty {item.quantity || 0}</p></div><span className="rounded-full bg-[#0ea5e9]/15 px-2.5 py-1 text-[10px] font-black uppercase text-[#9be8ff]">Production breakdown</span></div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2"><OrderDetailList title="Selected options" items={item.optionSummary} empty="No option details were recorded for this older item." /><OrderDetailList title="Production notes" items={item.productionSummary} empty="No production notes were recorded." /></div>
+        {item.price ? <div className="mt-3 flex flex-wrap gap-2 text-[11px]"><span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Item total: <strong className="text-white">{money(item.price.total, item.price.currency || currency)}</strong></span><span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Each: <strong className="text-white">{money(item.price.each, item.price.currency || currency)}</strong></span>{item.price.sheetCount ? <span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Sheets: <strong className="text-white">{item.price.sheetCount}</strong></span> : null}{item.price.pricePerSheet ? <span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Per sheet: <strong className="text-white">{money(item.price.pricePerSheet, item.price.currency || currency)}</strong></span> : null}</div> : null}
         {(item.productionBreakdown || []).length ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{item.productionBreakdown?.map((artwork, artworkIndex) => {
           const frontPreview = previewFor(artwork.frontStoragePath, artwork.frontPreviewUrl);
           const backPreview = previewFor(artwork.backStoragePath, artwork.backPreviewUrl);
+          const frontFile = files.find((file) => file.path === artwork.frontStoragePath);
+          const backFile = files.find((file) => file.path === artwork.backStoragePath);
           return <div key={artwork.id || `${itemIndex}-${artworkIndex}`} className="flex gap-3 rounded-lg border border-[#38bdf8]/25 bg-[#071827] p-2.5">
-            <div className="flex shrink-0 gap-1">{frontPreview ? <img src={frontPreview} alt={`${artwork.label || 'Artwork'} front`} className="h-20 w-20 rounded bg-white object-contain" /> : <div className="flex h-20 w-20 items-center justify-center rounded border border-dashed border-white/20 text-[9px] text-slate-500">No preview</div>}{backPreview ? <img src={backPreview} alt={`${artwork.label || 'Artwork'} back`} className="h-20 w-20 rounded bg-white object-contain" /> : null}</div>
+            <div className="flex shrink-0 gap-1">{frontPreview ? <button type="button" onClick={() => frontFile && onPreview(frontFile)} disabled={!frontFile} className="h-20 w-20 overflow-hidden rounded bg-white"><img src={frontPreview} alt={`${artwork.label || 'Artwork'} front`} className="h-full w-full object-contain" /></button> : <div className="flex h-20 w-20 items-center justify-center rounded border border-dashed border-white/20 text-[9px] text-slate-500">No preview</div>}{backPreview ? <button type="button" onClick={() => backFile && onPreview(backFile)} disabled={!backFile} className="h-20 w-20 overflow-hidden rounded bg-white"><img src={backPreview} alt={`${artwork.label || 'Artwork'} back`} className="h-full w-full object-contain" /></button> : null}</div>
             <div className="min-w-0"><p className="truncate text-xs font-black text-white">{artwork.label || `Artwork set ${artworkIndex + 1}`}</p><p className="mt-1 text-xl font-black text-green-300">Qty {artwork.quantity || 0}</p><p className="mt-1 text-[11px] text-slate-300">{artwork.sizeLabel || item.sizeLabel}</p>{artwork.sheetLabel ? <p className="text-[11px] text-[#9be8ff]">{artwork.sheetLabel}</p> : null}<p className="mt-1 truncate text-[10px] text-slate-500">{artwork.frontName}</p></div>
           </div>;
         })}</div> : <p className="mt-3 text-xs text-amber-200">This item predates the per-artwork quantity breakdown.</p>}
+        {(item.artworkFiles || []).length ? <div className="mt-3"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Original and final production files</p><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{item.artworkFiles?.map((reference, fileIndex) => {
+          const storedFile = files.find((file) => file.path === reference.storagePath);
+          const preview = storedFile?.preview_url;
+          const isFinal = /final production/i.test(reference.role || '');
+          return <button type="button" key={`${reference.storagePath || reference.name}-${fileIndex}`} onClick={() => storedFile && onPreview(storedFile)} disabled={!storedFile?.preview_url} className="flex min-w-0 gap-3 rounded-lg border border-white/10 bg-[#071827] p-2.5 text-left enabled:hover:border-[#38bdf8]/50 disabled:opacity-70">
+            {preview ? <img src={preview} alt={reference.name || 'Artwork'} className="h-16 w-16 shrink-0 rounded bg-white object-contain" /> : <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-white/20 text-[9px] text-slate-500">FILE</div>}
+            <div className="min-w-0"><span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${isFinal ? 'bg-green-400/15 text-green-300' : 'bg-sky-400/15 text-sky-200'}`}>{isFinal ? 'Final production' : 'Original'}</span><p className="mt-1 truncate text-xs font-black text-white">{reference.name || 'Artwork file'}</p><p className="mt-1 line-clamp-2 break-all text-[10px] text-slate-500">{reference.storagePath || 'No cloud path'}</p></div>
+          </button>;
+        })}</div></div> : null}
       </section>)}
     </div> : null}
   </div>;
 }
+function OrderMoney({ label, value, currency }: { label: string; value: number; currency: string }) { return <div className="flex items-center justify-between gap-4"><span>{label}</span><strong className={value < 0 ? 'text-green-300' : 'text-white'}>{money(value, currency)}</strong></div>; }
+function OrderDetailList({ title, items, empty }: { title: string; items?: string[]; empty: string }) { return <div className="rounded-lg border border-white/10 bg-[#071827] p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{title}</p>{items?.length ? <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-300">{items.map((item, index) => <li key={`${title}-${index}`} className="flex gap-2"><span className="text-[#67d8ff]">•</span><span>{item}</span></li>)}</ul> : <p className="mt-2 text-xs text-slate-500">{empty}</p>}</div>; }
 function FileRow({ file, onPreview }: { file: AdminFile; onPreview: () => void }) {
   const imageFile = Boolean(file.preview_url);
   const typeLabel = file.metadata?.mimetype?.split('/').pop()?.toUpperCase() || file.name?.split('.').pop()?.toUpperCase() || 'FILE';

@@ -1,26 +1,11 @@
--- SECURITY FIX: stop signed-out visitors from browsing the shared legacy guest folder.
--- Run this once in the Supabase SQL Editor for the Hue Studio project.
--- Existing files are not deleted. Review and clean up `test-library/` separately.
+-- Hue Studio customer-first artwork folders
+-- Run this once in Supabase SQL Editor BEFORE deploying the matching app update.
+--
+-- New files: customers/{email-safe-folder}/{auth.uid()}/{file}
+-- Old files: customers/{auth.uid()}/{email-safe-folder}/{file}
+--
+-- Both layouts remain private and usable. This changes policies only; it does not delete or move files.
 
-drop policy if exists "Hue guest artwork can be listed and previewed" on storage.objects;
-drop policy if exists "Hue guest artwork can be uploaded" on storage.objects;
-drop policy if exists "Hue guest production files can be uploaded" on storage.objects;
-
--- Guest checkout may save final production files into an unlisted random session folder.
--- There is intentionally no anonymous SELECT policy, so this does not create a guest library.
-create policy "Hue guest production files can be uploaded"
-on storage.objects
-for insert
-to anon
-with check (
-  bucket_id = 'artwork-files'
-  and (storage.foldername(name))[1] = 'guest-orders'
-  and length((storage.foldername(name))[2]) >= 20
-);
-
--- Cloud Image Zone files are private to the authenticated customer id in either supported path layout.
--- New: customers/{email-safe-folder}/{auth.uid()}/{file}
--- Legacy: customers/{auth.uid()}/{email-safe-folder}/{file}
 drop policy if exists "Hue customers can upload their artwork" on storage.objects;
 create policy "Hue customers can upload their artwork"
 on storage.objects

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { calculatePromoDiscount, getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch } from "@/lib/server/supabase-admin";
 
 type OrderArtworkFile = {
@@ -193,6 +194,18 @@ const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPay
   return warnings;
 };
 
+const attachDurableArtworkLinks = (order: NonNullable<TestOrderEmailPayload['order']>, origin: string) => {
+  for (const item of order.items || []) {
+    for (const file of item.artworkFiles || []) {
+      if (file.storagePath) file.storageUrl = createArtworkAccessUrl(origin, file.storagePath);
+    }
+    for (const artwork of item.productionBreakdown || []) {
+      if (artwork.frontStoragePath) artwork.frontPreviewUrl = createArtworkAccessUrl(origin, artwork.frontStoragePath);
+      if (artwork.backStoragePath) artwork.backPreviewUrl = createArtworkAccessUrl(origin, artwork.backStoragePath);
+    }
+  }
+};
+
 export async function POST(request: Request) {
   const resendApiKey = process.env.RESEND_API_KEY;
   const orderToEmail = process.env.QUOTE_TO_EMAIL || "jason@huegraphics.cc";
@@ -234,6 +247,8 @@ export async function POST(request: Request) {
     try {
       const organizationWarnings = await organizeOrderProductionFiles(order);
       if (organizationWarnings.length) persistenceWarning = organizationWarnings.join(' ');
+      const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+      attachDurableArtworkLinks(order, configuredOrigin || new URL(request.url).origin);
       await supabaseAdminFetch('/rest/v1/hue_orders?on_conflict=order_number', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },

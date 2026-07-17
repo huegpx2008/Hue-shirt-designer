@@ -1,13 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
 import { getStorageBucket, getStorageSignedUrl, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
 
 type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string };
 
 const canPreviewImage = (entry: StorageEntry) => String(entry.metadata?.mimetype || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(entry.name || '');
 
+const listAllOrders = async () => {
+  const pageSize = 1000;
+  const orders: unknown[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await supabaseAdminFetch(`/rest/v1/hue_orders?select=*&order=created_at.desc&limit=${pageSize}&offset=${offset}`) as unknown[];
+    orders.push(...page);
+    if (page.length < pageSize) return orders;
+  }
+};
+
+const listAllUsers = async () => {
+  const perPage = 200;
+  const users: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const payload = await supabaseAdminFetch(`/auth/v1/admin/users?page=${page}&per_page=${perPage}`) as { users?: unknown[] };
+    const pageUsers = payload.users || [];
+    users.push(...pageUsers);
+    if (pageUsers.length < perPage) return { users };
+  }
+};
+
 const listStorageFiles = async (prefix = '', depth = 0): Promise<StorageEntry[]> => {
-  const entries = await supabaseAdminFetch(`/storage/v1/object/list/${encodeURIComponent(getStorageBucket())}`, { method: 'POST', body: JSON.stringify({ prefix, limit: 1000, offset: 0, sortBy: { column: 'created_at', order: 'desc' } }) }) as StorageEntry[];
+  const pageSize = 1000;
+  const entries: StorageEntry[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await supabaseAdminFetch(`/storage/v1/object/list/${encodeURIComponent(getStorageBucket())}`, { method: 'POST', body: JSON.stringify({ prefix, limit: pageSize, offset, sortBy: { column: 'created_at', order: 'desc' } }) }) as StorageEntry[];
+    entries.push(...page);
+    if (page.length < pageSize) break;
+  }
   const files = entries.filter((entry) => entry.id).map((entry) => ({ ...entry, path: prefix ? `${prefix}/${entry.name}` : entry.name }));
   if (depth >= 4) return files;
   const folders = entries.filter((entry) => !entry.id && entry.name);
@@ -20,12 +48,13 @@ export async function GET(request: NextRequest) {
   if (!hasSupabaseAdminConfig()) return NextResponse.json({ error: 'Add SUPABASE_SERVICE_ROLE_KEY to load admin data.' }, { status: 503 });
   try {
     const results = await Promise.allSettled([
-      supabaseAdminFetch('/auth/v1/admin/users?page=1&per_page=200') as Promise<{ users?: unknown[] }>,
-      supabaseAdminFetch('/rest/v1/hue_orders?select=*&order=created_at.desc&limit=250') as Promise<unknown[]>,
+      listAllUsers(),
+      listAllOrders(),
       listStorageFiles(),
-      supabaseAdminFetch('/rest/v1/hue_promo_codes?select=*&order=created_at.desc') as Promise<unknown[]>
+      supabaseAdminFetch('/rest/v1/hue_promo_codes?select=*&order=created_at.desc') as Promise<unknown[]>,
+      supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=*&order=category.asc,display_name.asc') as Promise<unknown[]>
     ]);
-    const sectionNames = ['users', 'orders', 'files', 'promos'] as const;
+    const sectionNames = ['users', 'orders', 'files', 'promos', 'pricing'] as const;
     const sectionErrors = results.reduce<Record<string, string>>((errors, result, index) => {
       if (result.status === 'rejected') {
         errors[sectionNames[index]] = result.reason instanceof Error ? result.reason.message : 'This section could not be loaded.';
@@ -34,7 +63,9 @@ export async function GET(request: NextRequest) {
     }, {});
     const usersPayload = results[0].status === 'fulfilled' ? results[0].value : { users: [] };
     const orders = results[1].status === 'fulfilled' ? results[1].value : [];
-    const rawFiles = results[2].status === 'fulfilled' ? results[2].value : [];
+    const rawFiles = results[2].status === 'fulfilled'
+      ? results[2].value.filter((file) => file.name !== '.emptyFolderPlaceholder' && !file.path?.endsWith('/.emptyFolderPlaceholder'))
+      : [];
     const files = await Promise.all(rawFiles.map(async (file) => {
       if (!file.path || !canPreviewImage(file)) return file;
       try {
@@ -44,7 +75,28 @@ export async function GET(request: NextRequest) {
       }
     }));
     const promos = results[3].status === 'fulfilled' ? results[3].value : [];
-    return NextResponse.json({ users: usersPayload.users || [], orders, files, promos, sectionErrors });
+    const savedPricing = results[4].status === 'fulfilled' ? results[4].value as Array<Record<string, unknown>> : [];
+    const pricing = STUDIO_PRICING_PRODUCTS.map((product) => {
+      const saved = savedPricing.find((entry) => entry.product_key === product.key);
+      return {
+        productKey: product.key,
+        displayName: String(saved?.display_name || product.name),
+        category: String(saved?.category || product.category),
+        percentage: Number(saved?.percentage ?? 100),
+        active: saved?.active !== false,
+        notes: saved?.notes ? String(saved.notes) : '',
+        updatedAt: saved?.updated_at ? String(saved.updated_at) : null,
+      };
+    });
+    return NextResponse.json({
+      users: usersPayload.users || [],
+      orders,
+      files,
+      promos,
+      pricing,
+      pricingConfigured: results[4].status === 'fulfilled',
+      sectionErrors,
+    });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Admin data could not be loaded.' }, { status: 500 });
   }
