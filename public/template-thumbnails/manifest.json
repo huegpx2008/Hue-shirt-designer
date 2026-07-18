@@ -289,6 +289,78 @@
       "file": "/template-thumbnails/business-modern-check-in.svg",
       "family": "modern-edge",
       "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-modern-consultant-front",
+      "file": "/template-thumbnails/card-modern-consultant-front.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-modern-consultant-back",
+      "file": "/template-thumbnails/card-modern-consultant-back.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-minimal-professional-front",
+      "file": "/template-thumbnails/card-minimal-professional-front.svg",
+      "family": "minimal-clear",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-minimal-professional-back",
+      "file": "/template-thumbnails/card-minimal-professional-back.svg",
+      "family": "minimal-clear",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-bold-contractor-front",
+      "file": "/template-thumbnails/card-bold-contractor-front.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-bold-contractor-back",
+      "file": "/template-thumbnails/card-bold-contractor-back.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-luxury-beauty-front",
+      "file": "/template-thumbnails/card-luxury-beauty-front.svg",
+      "family": "luxury-signature",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-luxury-beauty-back",
+      "file": "/template-thumbnails/card-luxury-beauty-back.svg",
+      "family": "luxury-signature",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-playful-creative-front",
+      "file": "/template-thumbnails/card-playful-creative-front.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-playful-creative-back",
+      "file": "/template-thumbnails/card-playful-creative-back.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-classic-realtor-front",
+      "file": "/template-thumbnails/card-classic-realtor-front.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "card-classic-realtor-back",
+      "file": "/template-thumbnails/card-classic-realtor-back.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
     }
   ]
 }

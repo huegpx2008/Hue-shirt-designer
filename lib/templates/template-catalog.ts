@@ -1,6 +1,6 @@
 import rawTemplateCatalog from '@/data/hue-template-catalog.json';
 
-export const SMART_TEMPLATE_CATEGORIES = ['Real Estate', 'Business', 'Contractors', 'Events', 'Parking & Directional', 'Political & Campaign', 'School & Graduation', 'Church & Nonprofit', 'Restaurant & Food', 'Construction & Safety', 'Property & Regulatory', 'Retail & Promotion'] as const;
+export const SMART_TEMPLATE_CATEGORIES = ['Real Estate', 'Business', 'Business Cards', 'Contractors', 'Events', 'Parking & Directional', 'Political & Campaign', 'School & Graduation', 'Church & Nonprofit', 'Restaurant & Food', 'Construction & Safety', 'Property & Regulatory', 'Retail & Promotion'] as const;
 export const SMART_TEMPLATE_STYLES = ['Modern', 'Bold', 'Premium', 'Minimal', 'Industrial', 'Classic', 'Luxury', 'Playful'] as const;
 export const SMART_TEMPLATE_LAYOUTS = ['band', 'split', 'frame'] as const;
 export const SMART_TEMPLATE_ASSET_SOURCE_TYPES = ['hue-original', 'adobe-firefly', 'adobe-stock'] as const;

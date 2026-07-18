@@ -4613,6 +4613,7 @@ export default function Home() {
     const categoryDetails: Record<SmartTemplateCategory, { detailLine: string; footerNote: string }> = {
       'Real Estate': { detailLine: '123 Main Street', footerNote: 'Licensed Real Estate Professional' },
       'Business': { detailLine: '123 Main Street · Your City', footerNote: 'Locally owned and operated' },
+      'Business Cards': { detailLine: 'YOUR TITLE · YOUR COMPANY', footerNote: 'Replace every detail with your own' },
       'Contractors': { detailLine: 'Residential · Commercial', footerNote: 'Licensed · Insured · Free Estimates' },
       'Events': { detailLine: '123 Main Street · Your City', footerNote: 'Everyone is welcome' },
       'Parking & Directional': { detailLine: 'CUSTOMER PARKING', footerNote: 'Please follow posted instructions' },
@@ -4637,7 +4638,10 @@ export default function Home() {
       primary: template.primary,
       accent: template.accent,
       background: template.background,
-      includeQr: template.category === 'Real Estate' || template.category === 'Business'
+      includeQr:
+        template.category === 'Real Estate' ||
+        template.category === 'Business' ||
+        (template.category === 'Business Cards' && template.tags.includes('qr'))
     });
     setSmartTemplateLogo(null);
     setSmartTemplatePhoto(null);

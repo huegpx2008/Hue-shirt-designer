@@ -147,6 +147,42 @@
     },
     {
       "id": "business-modern-check-in", "name": "Customer Check-In", "category": "Business", "style": "Modern", "family": "modern-edge", "description": "Friendly customer check-in sign for offices and service counters.", "headline": "CHECK IN HERE", "subheadline": "WE WILL BE RIGHT WITH YOU", "callout": "WELCOME", "primary": "#075985", "accent": "#22d3ee", "background": "#f8fafc", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["check-in", "customer", "office"]
+    },
+    {
+      "id": "card-modern-consultant-front", "name": "Modern Consultant - Front", "category": "Business Cards", "style": "Modern", "family": "modern-edge", "description": "Clean contemporary front with a strong name, title, and brand band.", "headline": "JORDAN TAYLOR", "subheadline": "BUSINESS CONSULTANT", "callout": "YOUR COMPANY", "primary": "#082f49", "accent": "#38bdf8", "background": "#f8fafc", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "consultant", "professional", "front"]
+    },
+    {
+      "id": "card-modern-consultant-back", "name": "Modern Consultant - Back", "category": "Business Cards", "style": "Modern", "family": "modern-edge", "description": "Matching contact back with room for phone, website, and an editable QR code.", "headline": "LET'S CONNECT", "subheadline": "SCAN OR GET IN TOUCH", "callout": "YOUR COMPANY", "primary": "#082f49", "accent": "#38bdf8", "background": "#f8fafc", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "contact", "qr", "back"]
+    },
+    {
+      "id": "card-minimal-professional-front", "name": "Minimal Professional - Front", "category": "Business Cards", "style": "Minimal", "family": "minimal-clear", "description": "Simple, spacious card front for attorneys, accountants, and office professionals.", "headline": "ALEX MORGAN", "subheadline": "MANAGING PARTNER", "callout": "MORGAN & CO.", "primary": "#111827", "accent": "#64748b", "background": "#ffffff", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "minimal", "attorney", "professional", "front"]
+    },
+    {
+      "id": "card-minimal-professional-back", "name": "Minimal Professional - Back", "category": "Business Cards", "style": "Minimal", "family": "minimal-clear", "description": "Understated matching back focused on direct contact information.", "headline": "MORGAN & CO.", "subheadline": "TRUSTED PROFESSIONAL SERVICE", "callout": "CONTACT", "primary": "#111827", "accent": "#64748b", "background": "#ffffff", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "minimal", "contact", "back"]
+    },
+    {
+      "id": "card-bold-contractor-front", "name": "Bold Contractor - Front", "category": "Business Cards", "style": "Bold", "family": "bold-impact", "description": "High-impact trade card with an immediate service message and strong phone visibility.", "headline": "PRO BUILDERS", "subheadline": "ROOFING · REPAIRS · REMODELING", "callout": "FREE ESTIMATES", "primary": "#172554", "accent": "#f97316", "background": "#ffffff", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "contractor", "home services", "front"]
+    },
+    {
+      "id": "card-bold-contractor-back", "name": "Bold Contractor - Back", "category": "Business Cards", "style": "Bold", "family": "bold-impact", "description": "Matching service-list back with a clear estimate call to action.", "headline": "CALL TODAY", "subheadline": "LICENSED · INSURED · LOCAL", "callout": "FREE ESTIMATES", "primary": "#172554", "accent": "#f97316", "background": "#ffffff", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "contractor", "services", "back"]
+    },
+    {
+      "id": "card-luxury-beauty-front", "name": "Luxury Beauty - Front", "category": "Business Cards", "style": "Luxury", "family": "luxury-signature", "description": "Elegant salon and beauty card with refined typography and a premium frame.", "headline": "AVA ROSE", "subheadline": "HAIR & BEAUTY STUDIO", "callout": "BEAUTY, ELEVATED", "primary": "#292524", "accent": "#c08497", "background": "#fffaf8", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "salon", "beauty", "luxury", "front"]
+    },
+    {
+      "id": "card-luxury-beauty-back", "name": "Luxury Beauty - Back", "category": "Business Cards", "style": "Luxury", "family": "luxury-signature", "description": "Matching appointment back with contact details and QR booking space.", "headline": "BOOK YOUR VISIT", "subheadline": "APPOINTMENTS AVAILABLE", "callout": "SCAN TO BOOK", "primary": "#292524", "accent": "#c08497", "background": "#fffaf8", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "salon", "appointment", "qr", "back"]
+    },
+    {
+      "id": "card-playful-creative-front", "name": "Creative Studio - Front", "category": "Business Cards", "style": "Playful", "family": "playful-pop", "description": "Bright, friendly front for photographers, artists, makers, and creative services.", "headline": "MAYA CREATES", "subheadline": "PHOTO · DESIGN · CONTENT", "callout": "MAKE IT MEMORABLE", "primary": "#5b21b6", "accent": "#22d3ee", "background": "#fff7ed", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "creative", "photographer", "designer", "front"]
+    },
+    {
+      "id": "card-playful-creative-back", "name": "Creative Studio - Back", "category": "Business Cards", "style": "Playful", "family": "playful-pop", "description": "Colorful matching back for portfolio links, social handles, and a QR code.", "headline": "SEE MY WORK", "subheadline": "PORTFOLIO & SOCIAL", "callout": "LET'S CREATE", "primary": "#5b21b6", "accent": "#22d3ee", "background": "#fff7ed", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "creative", "portfolio", "qr", "back"]
+    },
+    {
+      "id": "card-classic-realtor-front", "name": "Classic Realtor - Front", "category": "Business Cards", "style": "Classic", "family": "classic-trust", "description": "Trustworthy real-estate card front with room for an agent name and brokerage.", "headline": "SAM PARKER", "subheadline": "REALTOR®", "callout": "PARKER REALTY", "primary": "#1e3a5f", "accent": "#c9a227", "background": "#fffdf8", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "realtor", "agent", "real estate", "front"]
+    },
+    {
+      "id": "card-classic-realtor-back", "name": "Classic Realtor - Back", "category": "Business Cards", "style": "Classic", "family": "classic-trust", "description": "Matching agent contact back with website, phone, and editable QR code.", "headline": "READY TO MOVE?", "subheadline": "BUY · SELL · INVEST", "callout": "LET'S TALK", "primary": "#1e3a5f", "accent": "#c9a227", "background": "#fffdf8", "suggestedSizes": ["3.5 x 2"], "tags": ["business card", "realtor", "contact", "qr", "back"]
     }
     ]
   },
