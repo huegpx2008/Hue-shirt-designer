@@ -8542,14 +8542,16 @@ export default function Home() {
         </section>
       </div> : null}
 
-      {showImageZone ? <div className={`fixed inset-0 ${showArtworkEditor ? 'z-[95]' : 'z-50'} flex items-center justify-center bg-[#02070d]/80 p-0 backdrop-blur-md sm:p-4`}>
+      {showImageZone ? <div className={`hue-image-library-overlay fixed inset-0 ${showArtworkEditor ? 'z-[95]' : 'z-50'} flex items-center justify-center bg-[#02070d]/80 p-0 backdrop-blur-md sm:p-4`}>
         <section className="hue-image-library flex h-full w-full flex-col overflow-hidden border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)] sm:h-[min(800px,90vh)] sm:w-[min(1380px,96vw)] sm:rounded-[22px]">
           <div className="hue-image-library-header relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
             <div className="hue-image-library-brand mr-auto flex min-w-[280px] items-center gap-3">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
-              <div><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Studio</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Zone</h2><p className="mt-0.5 text-xs text-slate-400">Your saved artwork library</p></div>
+              <div className="min-w-0 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Studio</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Zone</h2><p className="mt-0.5 text-xs text-slate-400">Your saved artwork library</p></div>
+              <button type="button" aria-label="Close Image Zone" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="hue-image-library-mobile-close hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] text-lg font-bold text-slate-300">×</button>
             </div>
-            <select className="h-10 min-w-48 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
+            <div className="hue-image-library-actions contents">
+            <select className="hue-image-library-folder h-10 min-w-48 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
               <option>Home</option>
               <option>Recent Uploads</option>
               <option>CORO Orders</option>
@@ -8559,22 +8561,23 @@ export default function Home() {
             <button type="button" onClick={() => openNewArtworkCreator('image-zone-create')} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={openAiEditor} className="h-10 rounded-xl border border-violet-300/30 bg-violet-500/10 px-4 text-xs font-black uppercase text-violet-100 hover:border-violet-300/60 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-35">AI Tools</button>
-            <button type="button" className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Image setup</button>
-            <div className="order-last flex w-full items-center gap-2 pt-2"><span className="text-lg text-[#67d8ff]">⌕</span><input className="h-10 min-w-56 flex-1 rounded-xl border border-white/15 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" placeholder="Search your artwork library" />
+            <button type="button" className="hue-image-library-setup h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold text-slate-200 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Image setup</button>
+            </div>
+            <div className="hue-image-library-search order-last flex w-full items-center gap-2 pt-2"><span className="text-lg text-[#67d8ff]">⌕</span><input className="h-10 min-w-56 flex-1 rounded-xl border border-white/15 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#38bdf8] focus:ring-2 focus:ring-[#38bdf8]/10" placeholder="Search artwork" />
             <select className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-3 text-sm text-slate-100 outline-none focus:border-[#38bdf8]">
               <option>Sort: Date</option>
               <option>Sort: Name</option>
               <option>Sort: Size</option>
             </select>
-            <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close Image Zone</button></div>
+            <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="hue-image-library-desktop-close h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close Image Zone</button></div>
           </div>
-          <div className="flex items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
+          <div className="hue-image-library-summary flex items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
             <button type="button" className="rounded-lg border border-[#38bdf8]/35 bg-[#0c2a40] px-4 py-2 font-black uppercase text-[#8be3ff] hover:bg-[#10364f]">Select all</button>
             <span className="font-semibold text-slate-300"><strong className="text-white">{imageZoneItems.length}</strong> item{imageZoneItems.length === 1 ? '' : 's'} in your artwork vault</span>
             {imageLibraryStatus ? <span className="hidden max-w-xl truncate text-slate-400 lg:inline"><span className="mx-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
             {selectedImageZoneId ? <span className="ml-auto rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 font-bold text-emerald-300">● Artwork selected</span> : null}
           </div>
-          {!customerSession?.access_token ? <div className="flex flex-col gap-3 border-b border-amber-300/20 bg-[linear-gradient(90deg,rgba(245,158,11,0.13),rgba(14,165,233,0.06))] px-5 py-3 text-white sm:flex-row sm:items-center">
+          {!customerSession?.access_token ? <div className="hue-image-library-guest flex flex-col gap-3 border-b border-amber-300/20 bg-[linear-gradient(90deg,rgba(245,158,11,0.13),rgba(14,165,233,0.06))] px-5 py-3 text-white sm:flex-row sm:items-center">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-300/35 bg-amber-300/10 text-base font-black text-amber-200">!</span>
             <div className="min-w-0 flex-1"><p className="text-xs font-black uppercase tracking-[0.15em] text-amber-200">Guest artwork is temporary</p><p className="mt-1 text-xs leading-5 text-slate-300">Refreshing or closing this browser can remove uploaded artwork. Create an account or sign in to keep files securely in your private Image Zone library.</p></div>
             <button type="button" onClick={openAccountFromGuestArtworkWarning} className="shrink-0 rounded-lg border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Create Account / Sign In</button>
@@ -8594,7 +8597,7 @@ export default function Home() {
                 const selected = selectedImageZoneId === item.id;
                 return <article key={item.id} className={`group grid min-h-36 grid-cols-[92px_minmax(0,1fr)] gap-3 rounded-2xl border p-3 text-left transition sm:min-h-40 sm:grid-cols-[118px_minmax(0,1fr)] ${selected ? 'border-[#38bdf8] bg-[#f2fbff] shadow-[0_18px_46px_rgba(14,165,233,0.22),0_0_0_3px_rgba(56,189,248,0.12)]' : 'border-white/10 bg-white/[0.055] shadow-[0_16px_38px_rgba(0,0,0,0.24)] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.08]'}`}>
                   <button type="button" onClick={() => setSelectedImageZoneId(item.id)} aria-label={`Select ${item.name}`} className={`relative flex h-28 items-center justify-center overflow-hidden rounded-xl border sm:h-32 ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
-                    {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
+                    {canPlaceImageZoneItem(item) ? <img src={item.dataUrl} alt="" decoding="async" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center text-sm font-black text-slate-500">PDF</span>}
                     {selected ? <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1686c9] text-xs font-black text-white shadow-md">✓</span> : null}
                     <span className="absolute bottom-2 left-2 flex flex-col items-start gap-1">{item.backDataUrl ? <span className="rounded-full bg-[#071827]/90 px-2 py-1 text-[9px] font-black uppercase text-[#8be3ff] shadow">Front + Back</span> : null}{item.editorProject ? <span className="rounded-full bg-emerald-600/90 px-2 py-1 text-[9px] font-black uppercase text-white shadow">Editable</span> : null}</span>
                   </button>
@@ -8610,7 +8613,7 @@ export default function Home() {
               })}
             </div>}
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4">
+          <div className="hue-image-library-footer flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4">
             <p className="text-xs text-slate-400"><span className="mr-2 text-emerald-400">●</span>{customerSession?.access_token
               ? (isSupabaseStorageConfigured ? 'Original artwork is securely saved to your private Hue cloud library.' : 'Cloud storage is not configured; artwork remains in this browser session.')
               : 'Guest artwork stays in this browser session. Sign in to use a private Hue cloud library.'}</p>

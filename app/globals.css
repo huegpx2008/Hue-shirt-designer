@@ -777,45 +777,44 @@ body {
     font-size: 11px !important;
   }
 
+  .hue-image-library-overlay {
+    height: 100dvh;
+    min-height: 100dvh;
+    background: #02070d !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .hue-image-library {
+    height: 100dvh !important;
+    min-height: 0;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
   .hue-image-library-header {
-    display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex !important;
+    flex-direction: column;
     flex: 0 0 auto;
     gap: 7px !important;
-    max-height: 42vh;
-    overflow-y: auto;
-    padding: 10px !important;
+    max-height: none;
+    overflow: visible;
+    padding: max(8px, env(safe-area-inset-top)) 10px 8px !important;
   }
 
-  .hue-image-library-brand,
-  .hue-image-library-header > div.order-last {
-    grid-column: 1 / -1;
+  .hue-image-library-brand {
     width: 100%;
     min-width: 0 !important;
+    margin: 0 !important;
   }
 
-  .hue-image-library-header > div.order-last {
-    display: grid !important;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px !important;
-  }
-
-  .hue-image-library-header > div.order-last > span {
-    display: none;
-  }
-
-  .hue-image-library-header > div.order-last > input {
-    min-width: 0 !important;
-  }
-
-  .hue-image-library-header > div.order-last > button {
-    grid-column: 1 / -1;
-    width: 100%;
+  .hue-image-library-mobile-close {
+    display: flex !important;
   }
 
   .hue-image-library-brand > span {
-    width: 40px !important;
-    height: 40px !important;
+    width: 38px !important;
+    height: 38px !important;
   }
 
   .hue-image-library-brand h2 {
@@ -826,37 +825,161 @@ body {
     display: none;
   }
 
-  .hue-image-library-header > select,
-  .hue-image-library-header > button,
-  .hue-image-library-header > label {
+  .hue-image-library-actions {
+    display: flex !important;
     width: 100%;
-    min-width: 0 !important;
-    justify-content: center;
-    padding-left: 8px !important;
-    padding-right: 8px !important;
-    font-size: 9px !important;
+    gap: 7px;
+    overflow-x: auto;
+    padding-bottom: 1px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .hue-image-library-grid {
-    padding: 10px !important;
-  }
-
-  .hue-image-library > div:last-child {
-    padding: 9px 10px !important;
-  }
-
-  .hue-image-library > div:last-child > p {
+  .hue-image-library-actions::-webkit-scrollbar {
     display: none;
   }
 
-  .hue-image-library > div:last-child > div,
-  .hue-image-library > div:last-child button {
-    width: 100%;
+  .hue-image-library-actions > button {
+    flex: 0 0 auto;
+    min-width: 78px;
+    height: 38px !important;
+    padding: 0 11px !important;
+    font-size: 9px !important;
+    scroll-snap-align: start;
   }
 
-  .hue-image-library header,
-  .hue-image-library > div:first-of-type {
+  .hue-image-library-folder,
+  .hue-image-library-setup {
+    display: none !important;
+  }
+
+  .hue-image-library-search {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 108px;
+    width: 100%;
+    gap: 7px !important;
+    padding: 0 !important;
+  }
+
+  .hue-image-library-search > span,
+  .hue-image-library-desktop-close {
+    display: none !important;
+  }
+
+  .hue-image-library-search > input,
+  .hue-image-library-search > select {
+    min-width: 0 !important;
+    width: 100%;
+    height: 38px !important;
+    padding: 0 9px !important;
+    font-size: 11px !important;
+  }
+
+  .hue-image-library-summary {
+    flex: 0 0 auto;
+    min-height: 42px;
+    gap: 8px !important;
+    padding: 6px 10px !important;
+  }
+
+  .hue-image-library-summary > button {
+    padding: 7px 9px !important;
+    font-size: 9px !important;
+  }
+
+  .hue-image-library-summary > span {
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  .hue-image-library-summary > span:last-child {
+    margin-left: auto;
+    max-width: 102px;
+    overflow: hidden;
+    padding: 4px 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hue-image-library-guest {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px !important;
+    padding: 7px 10px !important;
+  }
+
+  .hue-image-library-guest > span {
+    display: none;
+  }
+
+  .hue-image-library-guest p:first-child {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+  }
+
+  .hue-image-library-guest p:last-child {
+    margin-top: 2px !important;
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .hue-image-library-guest > button {
+    max-width: 96px;
+    padding: 7px 8px !important;
+    font-size: 8px !important;
+    line-height: 1.2;
+  }
+
+  .hue-image-library-grid {
+    min-height: 0 !important;
+    flex: 1 1 0%;
+    overflow-anchor: none;
+    overscroll-behavior: contain;
+    padding: 8px 10px !important;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .hue-image-library-grid > div.grid {
+    gap: 8px !important;
+  }
+
+  .hue-image-library-grid article {
+    min-height: 118px !important;
+    grid-template-columns: 84px minmax(0, 1fr) !important;
+    gap: 10px !important;
+    contain: layout paint;
+    padding: 9px !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .hue-image-library-grid article > button:first-child {
+    height: 100px !important;
+  }
+
+  .hue-image-library-footer {
+    display: grid !important;
+    grid-template-columns: minmax(92px, 0.7fr) minmax(0, 1.4fr);
+    flex: 0 0 auto;
+    gap: 8px !important;
+    padding: 8px 10px max(8px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .hue-image-library-footer > p {
+    display: none;
+  }
+
+  .hue-image-library-footer > div {
+    display: contents !important;
+  }
+
+  .hue-image-library-footer button {
+    width: 100%;
+    min-height: 44px;
+    padding: 7px 8px !important;
+    font-size: 11px !important;
   }
 }
 
