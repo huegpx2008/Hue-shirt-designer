@@ -94,10 +94,14 @@ if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.templates) || !Array.i
 }
 
 const families = new Map(catalog.families.map((family) => [family.id, family]));
+const collectionTemplates = catalog.collections && typeof catalog.collections === 'object'
+  ? Object.values(catalog.collections).flatMap((collection) => Array.isArray(collection) ? collection : [])
+  : [];
+const templates = [...catalog.templates, ...collectionTemplates];
 await mkdir(OUTPUT_DIR, { recursive: true });
 
 const manifest = [];
-for (const template of catalog.templates) {
+for (const template of templates) {
   const family = families.get(template.family);
   if (!family) throw new Error(`Template ${template.id} references missing family ${template.family}.`);
   const fileName = `${template.id}.svg`;

@@ -16,6 +16,7 @@ import {
   SMART_TEMPLATE_STYLE_FILTERS,
   SMART_TEMPLATE_STYLES,
   SMART_TEMPLATES,
+  getSmartTemplateAssetLabel,
   getSmartTemplateFamily,
   getSmartTemplateThumbnailUrl,
   type SmartTemplate,
@@ -4614,7 +4615,14 @@ export default function Home() {
       'Business': { detailLine: '123 Main Street · Your City', footerNote: 'Locally owned and operated' },
       'Contractors': { detailLine: 'Residential · Commercial', footerNote: 'Licensed · Insured · Free Estimates' },
       'Events': { detailLine: '123 Main Street · Your City', footerNote: 'Everyone is welcome' },
-      'Parking & Directional': { detailLine: 'CUSTOMER PARKING', footerNote: 'Please follow posted instructions' }
+      'Parking & Directional': { detailLine: 'CUSTOMER PARKING', footerNote: 'Please follow posted instructions' },
+      'Political & Campaign': { detailLine: 'YOUR CITY / YOUR COUNTY', footerNote: 'Paid for by the candidate committee' },
+      'School & Graduation': { detailLine: 'SCHOOL NAME / CLASS OF 2026', footerNote: 'Celebrating students and community' },
+      'Church & Nonprofit': { detailLine: '123 Main Street / Your City', footerNote: 'Serving our community together' },
+      'Restaurant & Food': { detailLine: '123 Main Street / Your City', footerNote: 'Fresh food / Friendly service' },
+      'Construction & Safety': { detailLine: 'ACTIVE WORK AREA', footerNote: 'Follow all posted safety instructions' },
+      'Property & Regulatory': { detailLine: 'PROPERTY MANAGEMENT', footerNote: 'Please observe posted rules' },
+      'Retail & Promotion': { detailLine: '123 Main Street / Your City', footerNote: 'Shop local / Thank you for visiting' }
     };
     setSelectedSmartTemplateId(template.id);
     setSmartTemplateForm({
@@ -8438,7 +8446,7 @@ export default function Home() {
                   {groupedTemplates.map((group) => <section key={group.key} className="rounded-2xl border border-white/[0.07] bg-black/10 p-3"><div className="mb-3 flex items-end justify-between gap-3"><div><p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">{smartTemplateBrowseMode === 'industry' ? 'Industry' : smartTemplateBrowseMode === 'style' ? 'Design Style' : 'Design Family'}</p><h3 className="mt-0.5 text-base font-black text-white">{group.label}</h3><p className="mt-1 text-[9px] text-slate-500">{group.description}</p></div><span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[9px] font-black text-slate-400">{group.templates.length}</span></div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{group.templates.map((template) => {
                     const selected = template.id === selectedSmartTemplateId;
                     const family = getSmartTemplateFamily(template);
-                    return <button key={template.id} type="button" onClick={() => chooseSmartTemplate(template)} className={`group overflow-hidden rounded-2xl border text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_28px_rgba(14,165,233,0.2)]' : 'border-white/10 bg-white/[0.035] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}><div className="relative aspect-[4/2.45] overflow-hidden bg-[#071522]"><img src={getSmartTemplateThumbnailUrl(template)} alt={`${template.name} template preview`} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.015]" /><span className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 px-2 py-1 text-[7px] font-black uppercase tracking-wide text-slate-700">{family.name}</span></div><div className="p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-black text-white">{template.name}</p><p className="mt-1 text-[9px] font-black uppercase tracking-wide text-[#67d8ff]">{template.category} / {family.name}</p></div>{selected ? <span className="rounded-full bg-[#22c55e]/15 px-2 py-1 text-[8px] font-black uppercase text-emerald-300">Selected</span> : null}</div><p className="mt-2 text-[10px] leading-4 text-slate-400">{template.description}</p><p className="mt-2 text-[9px] font-bold text-slate-500">Suggested: {template.suggestedSizes.join(' / ')}</p></div></button>;
+                    return <button key={template.id} type="button" onClick={() => chooseSmartTemplate(template)} className={`group overflow-hidden rounded-2xl border text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_28px_rgba(14,165,233,0.2)]' : 'border-white/10 bg-white/[0.035] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}><div className="relative aspect-[4/2.45] overflow-hidden bg-[#071522]"><img src={getSmartTemplateThumbnailUrl(template)} alt={`${template.name} template preview`} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.015]" /><span className="absolute left-2 top-2 rounded-full border border-[#38bdf8]/25 bg-[#061827]/90 px-2 py-1 text-[7px] font-black uppercase tracking-wide text-[#67d8ff]">{getSmartTemplateAssetLabel(template)}</span><span className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 px-2 py-1 text-[7px] font-black uppercase tracking-wide text-slate-700">{family.name}</span></div><div className="p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-black text-white">{template.name}</p><p className="mt-1 text-[9px] font-black uppercase tracking-wide text-[#67d8ff]">{template.category} / {family.name}</p></div>{selected ? <span className="rounded-full bg-[#22c55e]/15 px-2 py-1 text-[8px] font-black uppercase text-emerald-300">Selected</span> : null}</div><p className="mt-2 text-[10px] leading-4 text-slate-400">{template.description}</p><p className="mt-2 text-[9px] font-bold text-slate-500">Suggested: {template.suggestedSizes.join(' / ')}</p></div></button>;
                   })}</div></section>)}
                   {!filteredTemplates.length ? <div className="rounded-2xl border border-dashed border-white/15 p-10 text-center"><p className="font-black text-white">No matching templates</p><p className="mt-2 text-sm text-slate-400">Try another search or clear the active filters.</p><button type="button" onClick={clearSmartTemplateFilters} className="mt-4 rounded-xl bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white">Show all templates</button></div> : null}
                 </div>

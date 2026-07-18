@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="392" viewBox="0 0 640 392" role="img" aria-labelledby="title desc">
+  <title id="title">By Appointment template preview</title>
+  <desc id="desc">Automatic preview for the Classic Trust design family.</desc>
+  <defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#00101f" flood-opacity=".18"/></filter></defs>
+  <g filter="url(#shadow)">
+    <rect width="640" height="392" fill="#fffdf8"/>
+    <rect x="22" y="22" width="596" height="348" rx="7" fill="none" stroke="#1e3a5f" stroke-width="9"/>
+    <rect x="37" y="37" width="566" height="318" rx="4" fill="none" stroke="#c9a227" stroke-width="2"/>
+    <line x1="145" y1="91" x2="495" y2="91" stroke="#c9a227" stroke-width="5"/>
+    
+    <text x="320" y="72" fill="#1e3a5f" font-family="Arial" font-size="15" font-weight="900" text-anchor="middle" letter-spacing="2.5">CALL TO SCHEDULE</text>
+    <text x="320" y="184" fill="#1e3a5f" font-family="Georgia" font-size="60" font-weight="800" text-anchor="middle" letter-spacing="0.4">BY APPOINTMENT</text>
+    <text x="320" y="226" fill="#c9a227" font-family="Arial" font-size="20" font-weight="800" text-anchor="middle" letter-spacing="0">PERSONAL SERVICE, RESERVED FOR YOU</text>
+    <line x1="155" y1="255" x2="485" y2="255" stroke="#1e3a5f" stroke-width="2" opacity=".45"/>
+    <text x="320" y="300" fill="#1e3a5f" font-family="Arial" font-size="15" font-weight="800" text-anchor="middle" letter-spacing="1">555.555.0123  /  YOURWEBSITE.COM</text>
+    <text x="320" y="335" fill="#c9a227" font-family="Arial" font-size="11" font-weight="900" text-anchor="middle" letter-spacing="3">BUSINESS</text></g>
+  <rect x=".75" y=".75" width="638.5" height="390.5" fill="none" stroke="#ffffff" stroke-opacity=".18" stroke-width="1.5"/>
+</svg>

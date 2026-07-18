@@ -145,6 +145,150 @@
       "file": "/template-thumbnails/parking-luxury-guest.svg",
       "family": "luxury-signature",
       "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "campaign-bold-candidate",
+      "file": "/template-thumbnails/campaign-bold-candidate.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "campaign-modern-issue",
+      "file": "/template-thumbnails/campaign-modern-issue.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "campaign-classic-elect",
+      "file": "/template-thumbnails/campaign-classic-elect.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "school-bold-graduate",
+      "file": "/template-thumbnails/school-bold-graduate.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "school-modern-welcome",
+      "file": "/template-thumbnails/school-modern-welcome.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "school-playful-spirit",
+      "file": "/template-thumbnails/school-playful-spirit.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "church-classic-welcome",
+      "file": "/template-thumbnails/church-classic-welcome.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "nonprofit-modern-donate",
+      "file": "/template-thumbnails/nonprofit-modern-donate.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "nonprofit-playful-fundraiser",
+      "file": "/template-thumbnails/nonprofit-playful-fundraiser.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "restaurant-bold-now-open",
+      "file": "/template-thumbnails/restaurant-bold-now-open.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "restaurant-luxury-reservation",
+      "file": "/template-thumbnails/restaurant-luxury-reservation.svg",
+      "family": "luxury-signature",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "restaurant-playful-food-truck",
+      "file": "/template-thumbnails/restaurant-playful-food-truck.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "safety-industrial-hard-hat",
+      "file": "/template-thumbnails/safety-industrial-hard-hat.svg",
+      "family": "industrial-grid",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "safety-bold-danger",
+      "file": "/template-thumbnails/safety-bold-danger.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "safety-minimal-site",
+      "file": "/template-thumbnails/safety-minimal-site.svg",
+      "family": "minimal-clear",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "property-bold-private",
+      "file": "/template-thumbnails/property-bold-private.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "property-classic-rules",
+      "file": "/template-thumbnails/property-classic-rules.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "property-minimal-hours",
+      "file": "/template-thumbnails/property-minimal-hours.svg",
+      "family": "minimal-clear",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "retail-bold-sale",
+      "file": "/template-thumbnails/retail-bold-sale.svg",
+      "family": "bold-impact",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "retail-modern-pickup",
+      "file": "/template-thumbnails/retail-modern-pickup.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "retail-playful-pop-up",
+      "file": "/template-thumbnails/retail-playful-pop-up.svg",
+      "family": "playful-pop",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-classic-appointment",
+      "file": "/template-thumbnails/business-classic-appointment.svg",
+      "family": "classic-trust",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-industrial-delivery",
+      "file": "/template-thumbnails/business-industrial-delivery.svg",
+      "family": "industrial-grid",
+      "generatedFrom": "data/hue-template-catalog.json"
+    },
+    {
+      "id": "business-modern-check-in",
+      "file": "/template-thumbnails/business-modern-check-in.svg",
+      "family": "modern-edge",
+      "generatedFrom": "data/hue-template-catalog.json"
     }
   ]
 }

@@ -1,12 +1,14 @@
 import rawTemplateCatalog from '@/data/hue-template-catalog.json';
 
-export const SMART_TEMPLATE_CATEGORIES = ['Real Estate', 'Business', 'Contractors', 'Events', 'Parking & Directional'] as const;
+export const SMART_TEMPLATE_CATEGORIES = ['Real Estate', 'Business', 'Contractors', 'Events', 'Parking & Directional', 'Political & Campaign', 'School & Graduation', 'Church & Nonprofit', 'Restaurant & Food', 'Construction & Safety', 'Property & Regulatory', 'Retail & Promotion'] as const;
 export const SMART_TEMPLATE_STYLES = ['Modern', 'Bold', 'Premium', 'Minimal', 'Industrial', 'Classic', 'Luxury', 'Playful'] as const;
 export const SMART_TEMPLATE_LAYOUTS = ['band', 'split', 'frame'] as const;
+export const SMART_TEMPLATE_ASSET_SOURCE_TYPES = ['hue-original', 'adobe-firefly', 'adobe-stock'] as const;
 
 export type SmartTemplateCategory = (typeof SMART_TEMPLATE_CATEGORIES)[number];
 export type SmartTemplateStyle = (typeof SMART_TEMPLATE_STYLES)[number];
 export type SmartTemplateLayout = (typeof SMART_TEMPLATE_LAYOUTS)[number];
+export type SmartTemplateAssetSourceType = (typeof SMART_TEMPLATE_ASSET_SOURCE_TYPES)[number];
 export type SmartTemplateFamilyId = 'modern-edge' | 'bold-impact' | 'premium-frame' | 'minimal-clear' | 'industrial-grid' | 'classic-trust' | 'luxury-signature' | 'playful-pop';
 
 export type SmartTemplateFamily = {
@@ -17,6 +19,14 @@ export type SmartTemplateFamily = {
   layout: SmartTemplateLayout;
   headlineFont: string;
   bodyFont: string;
+};
+
+export type SmartTemplateAssetSource = {
+  type: SmartTemplateAssetSourceType;
+  provider: string;
+  license: string;
+  assetId?: string;
+  sourceUrl?: string;
 };
 
 export type SmartTemplate = {
@@ -34,6 +44,7 @@ export type SmartTemplate = {
   background: string;
   suggestedSizes: string[];
   tags: string[];
+  assetSource: SmartTemplateAssetSource;
 };
 
 type TemplateCatalog = {
@@ -66,10 +77,30 @@ const requireColor = (record: Record<string, unknown>, key: string, context: str
   if (!HEX_COLOR.test(value)) throw new Error(`${context}.${key} must be a six-digit hex color.`);
   return value;
 };
+const parseAssetSource = (record: Record<string, unknown>, context: string): SmartTemplateAssetSource => {
+  const source = record.assetSource;
+  if (source === undefined) return { type: 'hue-original', provider: 'Hue Graphics', license: 'Hue-owned original design' };
+  if (!isRecord(source)) throw new Error(`${context}.assetSource must be an object.`);
+  const type = requireEnum(source, 'type', SMART_TEMPLATE_ASSET_SOURCE_TYPES, `${context}.assetSource`);
+  const license = requireString(source, 'license', `${context}.assetSource`);
+  if (type === 'adobe-stock' && !/extended/i.test(license)) throw new Error(`${context}.assetSource Adobe Stock assets must record an Extended License.`);
+  const optionalString = (key: string) => typeof source[key] === 'string' && String(source[key]).trim() ? String(source[key]).trim() : undefined;
+  return {
+    type,
+    provider: requireString(source, 'provider', `${context}.assetSource`),
+    license,
+    assetId: optionalString('assetId'),
+    sourceUrl: optionalString('sourceUrl')
+  };
+};
 
 const parseTemplateCatalog = (source: unknown): TemplateCatalog => {
   if (!isRecord(source) || source.schemaVersion !== 1) throw new Error('Hue template catalog must use schemaVersion 1.');
   if (!Array.isArray(source.families) || !Array.isArray(source.templates)) throw new Error('Hue template catalog requires families and templates arrays.');
+  const collectionTemplates = isRecord(source.collections)
+    ? Object.values(source.collections).flatMap((collection) => Array.isArray(collection) ? collection : [])
+    : [];
+  const sourceTemplates = [...source.templates, ...collectionTemplates];
 
   const familyIds = new Set<string>();
   const families = source.families.map((entry, index): SmartTemplateFamily => {
@@ -94,7 +125,7 @@ const parseTemplateCatalog = (source: unknown): TemplateCatalog => {
   });
 
   const templateIds = new Set<string>();
-  const templates = source.templates.map((entry, index): SmartTemplate => {
+  const templates = sourceTemplates.map((entry, index): SmartTemplate => {
     const context = `templates[${index}]`;
     if (!isRecord(entry)) throw new Error(`${context} must be an object.`);
     const id = requireString(entry, 'id', context);
@@ -119,7 +150,8 @@ const parseTemplateCatalog = (source: unknown): TemplateCatalog => {
       accent: requireColor(entry, 'accent', context),
       background: requireColor(entry, 'background', context),
       suggestedSizes: requireStringArray(entry, 'suggestedSizes', context),
-      tags: Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim())).map((tag) => tag.trim()) : []
+      tags: Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim())).map((tag) => tag.trim()) : [],
+      assetSource: parseAssetSource(entry, context)
     };
   });
 
@@ -136,3 +168,4 @@ export const SMART_TEMPLATE_CATEGORY_FILTERS: Array<'All' | SmartTemplateCategor
 export const SMART_TEMPLATE_STYLE_FILTERS: Array<'All' | SmartTemplateStyle> = ['All', ...SMART_TEMPLATE_STYLES];
 export const getSmartTemplateFamily = (template: SmartTemplate) => SMART_TEMPLATE_FAMILY_BY_ID[template.family];
 export const getSmartTemplateThumbnailUrl = (template: SmartTemplate) => `/template-thumbnails/${template.id}.svg`;
+export const getSmartTemplateAssetLabel = (template: SmartTemplate) => template.assetSource.type === 'adobe-stock' ? 'Adobe Stock · Extended' : template.assetSource.type === 'adobe-firefly' ? 'Adobe Firefly' : 'Hue Original';

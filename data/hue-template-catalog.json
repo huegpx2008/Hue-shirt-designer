@@ -74,6 +74,82 @@
       "bodyFont": "Trebuchet MS, Arial, sans-serif"
     }
   ],
+  "collections": {
+    "hueOriginal2026": [
+    {
+      "id": "campaign-bold-candidate", "name": "Bold Candidate", "category": "Political & Campaign", "style": "Bold", "family": "bold-impact", "description": "High-impact candidate yard sign with strong name recognition.", "headline": "VOTE MORGAN", "subheadline": "CITY COUNCIL", "callout": "ELECTION DAY", "primary": "#0f172a", "accent": "#ef4444", "background": "#ffffff", "suggestedSizes": ["24 x 18", "18 x 24"], "tags": ["campaign", "candidate", "election"]
+    },
+    {
+      "id": "campaign-modern-issue", "name": "Modern Issue Campaign", "category": "Political & Campaign", "style": "Modern", "family": "modern-edge", "description": "Clean advocacy sign for ballot issues and community campaigns.", "headline": "VOTE YES", "subheadline": "FOR A BETTER COMMUNITY", "callout": "NOVEMBER 5", "primary": "#075985", "accent": "#22d3ee", "background": "#f8fafc", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["ballot", "advocacy", "vote"]
+    },
+    {
+      "id": "campaign-classic-elect", "name": "Classic Elect", "category": "Political & Campaign", "style": "Classic", "family": "classic-trust", "description": "Traditional campaign layout with a confident civic feel.", "headline": "ELECT TAYLOR", "subheadline": "COUNTY COMMISSION", "callout": "LEADERSHIP YOU CAN TRUST", "primary": "#1e3a8a", "accent": "#dc2626", "background": "#ffffff", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["elect", "county", "political"]
+    },
+    {
+      "id": "school-bold-graduate", "name": "Proud Graduate", "category": "School & Graduation", "style": "Bold", "family": "bold-impact", "description": "Celebratory graduate yard sign with room for a name and school.", "headline": "CONGRATS, JORDAN!", "subheadline": "CLASS OF 2026", "callout": "WE ARE PROUD OF YOU", "primary": "#172554", "accent": "#fbbf24", "background": "#ffffff", "suggestedSizes": ["24 x 18", "18 x 24"], "tags": ["graduation", "senior", "school"]
+    },
+    {
+      "id": "school-modern-welcome", "name": "School Welcome", "category": "School & Graduation", "style": "Modern", "family": "modern-edge", "description": "Friendly campus welcome sign for entrances and open houses.", "headline": "WELCOME FAMILIES", "subheadline": "RIVERDALE ACADEMY", "callout": "CHECK IN HERE", "primary": "#0c4a6e", "accent": "#38bdf8", "background": "#f0f9ff", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["school", "welcome", "campus"]
+    },
+    {
+      "id": "school-playful-spirit", "name": "Team Spirit", "category": "School & Graduation", "style": "Playful", "family": "playful-pop", "description": "Energetic school-spirit sign for teams, clubs, and events.", "headline": "GO TIGERS!", "subheadline": "PRIDE STARTS HERE", "callout": "HOME GAME FRIDAY", "primary": "#6d28d9", "accent": "#facc15", "background": "#fff7ed", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["team", "spirit", "sports"]
+    },
+    {
+      "id": "church-classic-welcome", "name": "Church Welcome", "category": "Church & Nonprofit", "style": "Classic", "family": "classic-trust", "description": "Warm, trustworthy welcome sign for services and church events.", "headline": "YOU ARE WELCOME", "subheadline": "SUNDAY SERVICE 10 AM", "callout": "NEW HOPE CHURCH", "primary": "#312e81", "accent": "#d4a72c", "background": "#fffdf8", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["church", "service", "welcome"]
+    },
+    {
+      "id": "nonprofit-modern-donate", "name": "Community Donation Drive", "category": "Church & Nonprofit", "style": "Modern", "family": "modern-edge", "description": "Clean nonprofit sign for donation drives and volunteer events.", "headline": "DONATION DRIVE", "subheadline": "GIVE LOCAL. HELP LOCAL.", "callout": "DROP OFF HERE", "primary": "#065f46", "accent": "#34d399", "background": "#f0fdf4", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["nonprofit", "donation", "community"]
+    },
+    {
+      "id": "nonprofit-playful-fundraiser", "name": "Charity Fundraiser", "category": "Church & Nonprofit", "style": "Playful", "family": "playful-pop", "description": "Upbeat fundraiser sign for family-friendly community events.", "headline": "FUNDRAISER TODAY", "subheadline": "FOOD - FUN - COMMUNITY", "callout": "EVERY DOLLAR HELPS", "primary": "#7c2d12", "accent": "#fb923c", "background": "#fff7ed", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["fundraiser", "charity", "event"]
+    },
+    {
+      "id": "restaurant-bold-now-open", "name": "Restaurant Now Open", "category": "Restaurant & Food", "style": "Bold", "family": "bold-impact", "description": "Attention-grabbing opening sign for restaurants and food businesses.", "headline": "NOW OPEN", "subheadline": "FRESH FOOD. LOCAL FLAVOR.", "callout": "DINE IN OR TAKE OUT", "primary": "#18181b", "accent": "#f97316", "background": "#fff7ed", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["restaurant", "opening", "food"]
+    },
+    {
+      "id": "restaurant-luxury-reservation", "name": "Dining Reservations", "category": "Restaurant & Food", "style": "Luxury", "family": "luxury-signature", "description": "Refined dining sign for reservations, patios, and special service.", "headline": "RESERVATIONS", "subheadline": "AN EVENING TO REMEMBER", "callout": "BOOK YOUR TABLE", "primary": "#1c1917", "accent": "#b08d57", "background": "#fffdf8", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["dining", "reservation", "restaurant"]
+    },
+    {
+      "id": "restaurant-playful-food-truck", "name": "Food Truck Stop", "category": "Restaurant & Food", "style": "Playful", "family": "playful-pop", "description": "Bright directional sign for food trucks, pop-ups, and festivals.", "headline": "GOOD FOOD THIS WAY", "subheadline": "FOLLOW THE FLAVOR", "callout": "ORDER HERE", "primary": "#9a3412", "accent": "#facc15", "background": "#fffbeb", "suggestedSizes": ["24 x 18", "18 x 24"], "tags": ["food truck", "directional", "festival"]
+    },
+    {
+      "id": "safety-industrial-hard-hat", "name": "Hard Hat Area", "category": "Construction & Safety", "style": "Industrial", "family": "industrial-grid", "description": "Structured safety notice for active construction zones.", "headline": "HARD HAT AREA", "subheadline": "AUTHORIZED PERSONNEL ONLY", "callout": "SAFETY FIRST", "primary": "#111827", "accent": "#facc15", "background": "#ffffff", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["safety", "construction", "hard hat"]
+    },
+    {
+      "id": "safety-bold-danger", "name": "Danger Keep Out", "category": "Construction & Safety", "style": "Bold", "family": "bold-impact", "description": "High-visibility hazard sign for restricted work areas.", "headline": "DANGER", "subheadline": "KEEP OUT", "callout": "ACTIVE WORK ZONE", "primary": "#111827", "accent": "#dc2626", "background": "#ffffff", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["danger", "restricted", "work zone"]
+    },
+    {
+      "id": "safety-minimal-site", "name": "Site Information", "category": "Construction & Safety", "style": "Minimal", "family": "minimal-clear", "description": "Clear job-site information sign for contractors and visitors.", "headline": "SITE INFORMATION", "subheadline": "CHECK IN BEFORE ENTRY", "callout": "PROJECT OFFICE", "primary": "#1f2937", "accent": "#0ea5e9", "background": "#f8fafc", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["job site", "information", "contractor"]
+    },
+    {
+      "id": "property-bold-private", "name": "Private Property", "category": "Property & Regulatory", "style": "Bold", "family": "bold-impact", "description": "Strong property notice for restricted land and private facilities.", "headline": "PRIVATE PROPERTY", "subheadline": "NO TRESPASSING", "callout": "VIOLATORS MAY BE PROSECUTED", "primary": "#111827", "accent": "#dc2626", "background": "#ffffff", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["private property", "trespassing", "notice"]
+    },
+    {
+      "id": "property-classic-rules", "name": "Property Rules", "category": "Property & Regulatory", "style": "Classic", "family": "classic-trust", "description": "Professional rule sign for communities, pools, and shared spaces.", "headline": "PROPERTY RULES", "subheadline": "PLEASE RESPECT OUR COMMUNITY", "callout": "MANAGEMENT", "primary": "#1e3a5f", "accent": "#c9a227", "background": "#fffdf8", "suggestedSizes": ["18 x 24", "24 x 36"], "tags": ["rules", "property", "community"]
+    },
+    {
+      "id": "property-minimal-hours", "name": "Facility Hours", "category": "Property & Regulatory", "style": "Minimal", "family": "minimal-clear", "description": "Simple facility-hours sign for lobbies, gates, and amenities.", "headline": "FACILITY HOURS", "subheadline": "MON-FRI 8 AM-6 PM", "callout": "CLOSED WEEKENDS", "primary": "#0f172a", "accent": "#0284c7", "background": "#ffffff", "suggestedSizes": ["12 x 18", "18 x 24"], "tags": ["hours", "facility", "notice"]
+    },
+    {
+      "id": "retail-bold-sale", "name": "Big Retail Sale", "category": "Retail & Promotion", "style": "Bold", "family": "bold-impact", "description": "High-energy sale sign for storefronts and seasonal promotions.", "headline": "BIG SALE", "subheadline": "UP TO 50% OFF", "callout": "THIS WEEKEND ONLY", "primary": "#111827", "accent": "#ef4444", "background": "#ffffff", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["retail", "sale", "promotion"]
+    },
+    {
+      "id": "retail-modern-pickup", "name": "Order Pickup", "category": "Retail & Promotion", "style": "Modern", "family": "modern-edge", "description": "Clean pickup sign for shops, bakeries, and service counters.", "headline": "ORDER PICKUP", "subheadline": "SKIP THE LINE", "callout": "CHECK IN HERE", "primary": "#0c4a6e", "accent": "#38bdf8", "background": "#f0f9ff", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["pickup", "retail", "directional"]
+    },
+    {
+      "id": "retail-playful-pop-up", "name": "Pop-Up Shop", "category": "Retail & Promotion", "style": "Playful", "family": "playful-pop", "description": "Colorful promotion sign for temporary shops and markets.", "headline": "POP-UP SHOP", "subheadline": "ONE DAY ONLY", "callout": "SHOP LOCAL", "primary": "#6d28d9", "accent": "#22d3ee", "background": "#fff7ed", "suggestedSizes": ["24 x 18", "36 x 24"], "tags": ["pop-up", "market", "shop"]
+    },
+    {
+      "id": "business-classic-appointment", "name": "By Appointment", "category": "Business", "style": "Classic", "family": "classic-trust", "description": "Professional appointment notice for offices and service businesses.", "headline": "BY APPOINTMENT", "subheadline": "PERSONAL SERVICE, RESERVED FOR YOU", "callout": "CALL TO SCHEDULE", "primary": "#1e3a5f", "accent": "#c9a227", "background": "#fffdf8", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["appointment", "office", "service"]
+    },
+    {
+      "id": "business-industrial-delivery", "name": "Delivery Entrance", "category": "Business", "style": "Industrial", "family": "industrial-grid", "description": "Clear operational sign for receiving areas and warehouses.", "headline": "DELIVERIES", "subheadline": "USE REAR ENTRANCE", "callout": "RECEIVING HOURS 8-4", "primary": "#111827", "accent": "#f59e0b", "background": "#ffffff", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["delivery", "warehouse", "entrance"]
+    },
+    {
+      "id": "business-modern-check-in", "name": "Customer Check-In", "category": "Business", "style": "Modern", "family": "modern-edge", "description": "Friendly customer check-in sign for offices and service counters.", "headline": "CHECK IN HERE", "subheadline": "WE WILL BE RIGHT WITH YOU", "callout": "WELCOME", "primary": "#075985", "accent": "#22d3ee", "background": "#f8fafc", "suggestedSizes": ["18 x 24", "24 x 18"], "tags": ["check-in", "customer", "office"]
+    }
+    ]
+  },
   "templates": [
     {
       "id": "realty-modern-sale",
