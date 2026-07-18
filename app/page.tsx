@@ -7565,7 +7565,7 @@ export default function Home() {
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
-              {isProductionBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-20 left-1/2 z-20 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+              {isProductionBuilder && activeCoroOptionPanel && activeCoroOptionPanel !== 'images' ? <div className="absolute bottom-20 left-1/2 z-50 w-[min(760px,92vw)] -translate-x-1/2 rounded-lg border border-slate-600 bg-[#f8fafc] p-4 text-slate-950 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-[#1678b8]">{activeCoroOptionPanel === 'sides' ? 'Print Sides' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : activeCoroOptionPanel}</p>

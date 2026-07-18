@@ -4,6 +4,14 @@ import { STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
+const SHEET_PRICED_PRODUCTS = new Set(['yard-sign', 'pvc', 'foamcore', 'polystyrene']);
+
+const requiredNumber = (value: unknown, fallback: number, min: number, max: number, label: string) => {
+  const parsed = value === undefined || value === null || value === '' ? fallback : Number(value);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) throw new Error(`${label} must be between ${min} and ${max}.`);
+  return parsed;
+};
+
 export async function POST(request: NextRequest) {
   if (!verifyAdminRequest(request)) return NextResponse.json({ error: 'Admin sign-in required.' }, { status: 401 });
   if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'Cross-site admin changes are not allowed.' }, { status: 403 });
@@ -26,7 +34,7 @@ export async function POST(request: NextRequest) {
       const percentage = Number(adjustment.percentage);
       if (!product) throw new Error('Choose a valid Hue Studio product.');
       if (!Number.isFinite(percentage) || percentage < 0 || percentage > 200) throw new Error(`${product.name} must be between 0% and 200%.`);
-      return {
+      const payload: Record<string, unknown> = {
         product_key: product.key,
         display_name: product.name,
         category: product.category,
@@ -35,6 +43,12 @@ export async function POST(request: NextRequest) {
         notes: String(adjustment.notes || '').trim() || null,
         updated_at: now,
       };
+      if (SHEET_PRICED_PRODUCTS.has(product.key)) {
+        payload.sheet_included_pieces = Math.round(requiredNumber(adjustment.sheetIncludedPieces ?? adjustment.sheet_included_pieces, 10, 1, 10000, `${product.name} included pieces`));
+        payload.sheet_extra_percent = requiredNumber(adjustment.sheetExtraPercent ?? adjustment.sheet_extra_percent, 0.325, 0, 100, `${product.name} extra percentage`);
+        payload.sheet_max_surcharge_percent = requiredNumber(adjustment.sheetMaxSurchargePercent ?? adjustment.sheet_max_surcharge_percent, 30, 0, 500, `${product.name} maximum surcharge`);
+      }
+      return payload;
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Choose valid pricing adjustments.' }, { status: 400 });

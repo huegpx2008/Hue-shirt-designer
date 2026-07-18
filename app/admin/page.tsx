@@ -10,8 +10,9 @@ type AdminOrderData = { status?: string; paymentMode?: string; currency?: string
 type AdminOrder = { id?: string; order_number?: string; created_at?: string; status?: string; customer_user_id?: string; customer_email?: string; customer_name?: string; subtotal?: number; discount?: number; promo_code?: string; shipping?: number; tax?: number; total?: number; currency?: string; printavo_status?: 'not_added' | 'added'; printavo_order_number?: string | null; printavo_added_at?: string | null; order_data?: AdminOrderData };
 type AdminFile = { id?: string | null; name?: string; path?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; preview_url?: string };
 type AdminPromo = { id?: string; code?: string; description?: string; discount_type?: 'percent' | 'fixed'; discount_value?: number; minimum_order?: number; expires_at?: string; max_uses?: number; uses_count?: number; active?: boolean };
-type AdminPricing = { productKey: string; displayName: string; category: string; percentage: number; active: boolean; notes?: string; updatedAt?: string | null };
-type DashboardData = { users: AdminUser[]; orders: AdminOrder[]; files: AdminFile[]; promos: AdminPromo[]; pricing: AdminPricing[]; pricingConfigured: boolean };
+type AdminPricing = { productKey: string; sourceLabel?: string; displayName: string; category: string; percentage: number; active: boolean; notes?: string; updatedAt?: string | null; isSheetPriced?: boolean; sheetIncludedPieces?: number; sheetExtraPercent?: number; sheetMaxSurchargePercent?: number };
+type SheetPricingDraft = { includedPieces: string; extraPercent: string; maxSurchargePercent: string };
+type DashboardData = { users: AdminUser[]; orders: AdminOrder[]; files: AdminFile[]; promos: AdminPromo[]; pricing: AdminPricing[]; pricingConfigured: boolean; sheetPricingConfigured: boolean };
 type AdminTab = 'overview' | 'orders' | 'users' | 'guests' | 'files' | 'pricing' | 'promos';
 type GuestGroupData = { key: string; label: string; detail: string; orders: AdminOrder[]; files: AdminFile[] };
 
@@ -56,12 +57,13 @@ export default function AdminPage() {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [status, setStatus] = useState('Checking admin access...');
-  const [data, setData] = useState<DashboardData>({ users: [], orders: [], files: [], promos: [], pricing: [], pricingConfigured: false });
+  const [data, setData] = useState<DashboardData>({ users: [], orders: [], files: [], promos: [], pricing: [], pricingConfigured: false, sheetPricingConfigured: false });
   const [tab, setTab] = useState<AdminTab>('overview');
   const [search, setSearch] = useState('');
   const [promo, setPromo] = useState({ code: '', description: '', discount_type: 'percent', discount_value: 10, minimum_order: '', maximum_discount: '', expires_at: '', max_uses: '' });
   const [savingPromo, setSavingPromo] = useState(false);
   const [pricingDrafts, setPricingDrafts] = useState<Record<string, string>>({});
+  const [sheetPricingDrafts, setSheetPricingDrafts] = useState<Record<string, SheetPricingDraft>>({});
   const [savingPricingKey, setSavingPricingKey] = useState('');
   const [previewFile, setPreviewFile] = useState<AdminFile | null>(null);
 
@@ -81,8 +83,13 @@ export default function AdminPage() {
     }
     setAuthenticated(true);
     const pricing = payload.pricing || [];
-    setData({ users: payload.users || [], orders: payload.orders || [], files: payload.files || [], promos: payload.promos || [], pricing, pricingConfigured: payload.pricingConfigured === true });
+    setData({ users: payload.users || [], orders: payload.orders || [], files: payload.files || [], promos: payload.promos || [], pricing, pricingConfigured: payload.pricingConfigured === true, sheetPricingConfigured: payload.sheetPricingConfigured === true });
     setPricingDrafts(Object.fromEntries(pricing.map((item) => [item.productKey, String(item.percentage)])));
+    setSheetPricingDrafts(Object.fromEntries(pricing.filter((item) => item.isSheetPriced).map((item) => [item.productKey, {
+      includedPieces: String(item.sheetIncludedPieces ?? 10),
+      extraPercent: String(item.sheetExtraPercent ?? 0.325),
+      maxSurchargePercent: String(item.sheetMaxSurchargePercent ?? 30),
+    }])));
     setStatus(dashboardStatus(payload.sectionErrors));
   };
 
@@ -105,8 +112,9 @@ export default function AdminPage() {
   const signOut = async () => {
     await fetch('/api/admin/logout', { method: 'POST' });
     setAuthenticated(false);
-    setData({ users: [], orders: [], files: [], promos: [], pricing: [], pricingConfigured: false });
+    setData({ users: [], orders: [], files: [], promos: [], pricing: [], pricingConfigured: false, sheetPricingConfigured: false });
     setPricingDrafts({});
+    setSheetPricingDrafts({});
     setStatus('Signed out.');
   };
 
@@ -133,10 +141,15 @@ export default function AdminPage() {
     }
     setSavingPricingKey(item.productKey);
     setStatus(`Saving ${item.displayName} pricing...`);
+    const sheetDraft = sheetPricingDrafts[item.productKey];
     const response = await fetch('/api/admin/pricing', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productKey: item.productKey, percentage, active: true }),
+      body: JSON.stringify({ productKey: item.productKey, percentage, active: true, ...(item.isSheetPriced ? {
+        sheetIncludedPieces: Number(sheetDraft?.includedPieces),
+        sheetExtraPercent: Number(sheetDraft?.extraPercent),
+        sheetMaxSurchargePercent: Number(sheetDraft?.maxSurchargePercent),
+      } : {}) }),
     });
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) setStatus(payload.error || `${item.displayName} pricing could not be saved.`);
@@ -145,7 +158,14 @@ export default function AdminPage() {
   };
 
   const saveAllPricingAdjustments = async () => {
-    const adjustments = data.pricing.map((item) => ({ productKey: item.productKey, percentage: Number(pricingDrafts[item.productKey]), active: true }));
+    const adjustments = data.pricing.map((item) => {
+      const sheetDraft = sheetPricingDrafts[item.productKey];
+      return { productKey: item.productKey, percentage: Number(pricingDrafts[item.productKey]), active: true, ...(item.isSheetPriced ? {
+        sheetIncludedPieces: Number(sheetDraft?.includedPieces),
+        sheetExtraPercent: Number(sheetDraft?.extraPercent),
+        sheetMaxSurchargePercent: Number(sheetDraft?.maxSurchargePercent),
+      } : {}) };
+    });
     const invalid = adjustments.find((item) => !Number.isFinite(item.percentage) || item.percentage < 0 || item.percentage > 200);
     if (invalid) {
       const product = data.pricing.find((item) => item.productKey === invalid.productKey);
@@ -249,7 +269,7 @@ export default function AdminPage() {
           if (query && !groupText.includes(query)) return null;
           return <CustomerFiles key={group.user.id || group.user.email} user={group.user} orders={group.orders} files={group.files} onPreview={setPreviewFile} />;
         })}{unassignedFiles.length ? <CustomerFiles user={{ email: 'Unassigned / legacy storage' }} orders={[]} files={query ? unassignedFiles.filter((file) => `${file.path || ''} ${file.name || ''}`.toLowerCase().includes(query)) : unassignedFiles} onPreview={setPreviewFile} /> : null}</div> : null}
-        {tab === 'pricing' ? <PricingPanel items={data.pricing} categories={pricingCategories} configured={data.pricingConfigured} drafts={pricingDrafts} savingKey={savingPricingKey} onDraftChange={(productKey, value) => setPricingDrafts((current) => ({ ...current, [productKey]: value }))} onSave={savePricingAdjustment} onSaveAll={saveAllPricingAdjustments} /> : null}
+        {tab === 'pricing' ? <PricingPanel items={data.pricing} categories={pricingCategories} configured={data.pricingConfigured} sheetPricingConfigured={data.sheetPricingConfigured} drafts={pricingDrafts} sheetDrafts={sheetPricingDrafts} savingKey={savingPricingKey} onDraftChange={(productKey, value) => setPricingDrafts((current) => ({ ...current, [productKey]: value }))} onSheetDraftChange={(productKey, field, value) => setSheetPricingDrafts((current) => ({ ...current, [productKey]: { ...(current[productKey] || { includedPieces: '10', extraPercent: '0.325', maxSurchargePercent: '30' }), [field]: value } }))} onSave={savePricingAdjustment} onSaveAll={saveAllPricingAdjustments} /> : null}
         {tab === 'promos' ? <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]"><form onSubmit={savePromo} className="h-fit rounded-2xl border border-[#38bdf8]/20 bg-[#071522] p-5"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Create or update</p><h2 className="mt-1 text-xl font-black">Promo code</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><AdminInput label="Code" value={promo.code} onChange={(value) => setPromo((current) => ({ ...current, code: value.toUpperCase() }))} /><AdminInput label="Description" value={promo.description} onChange={(value) => setPromo((current) => ({ ...current, description: value }))} /><label className="text-xs font-bold text-slate-400">Discount type<select value={promo.discount_type} onChange={(event) => setPromo((current) => ({ ...current, discount_type: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white"><option value="percent">Percent off</option><option value="fixed">Fixed amount</option></select></label><AdminInput label="Discount value" type="number" value={String(promo.discount_value)} onChange={(value) => setPromo((current) => ({ ...current, discount_value: Number(value) }))} /><AdminInput label="Minimum order" type="number" value={promo.minimum_order} onChange={(value) => setPromo((current) => ({ ...current, minimum_order: value }))} /><AdminInput label="Maximum discount" type="number" value={promo.maximum_discount} onChange={(value) => setPromo((current) => ({ ...current, maximum_discount: value }))} /><AdminInput label="Expires" type="date" value={promo.expires_at} onChange={(value) => setPromo((current) => ({ ...current, expires_at: value }))} /><AdminInput label="Maximum uses" type="number" value={promo.max_uses} onChange={(value) => setPromo((current) => ({ ...current, max_uses: value }))} /></div><button disabled={savingPromo} className="mt-5 h-12 w-full rounded-xl bg-[#1686c9] text-sm font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingPromo ? 'Saving...' : 'Save promo code'}</button></form><AdminList title="Promo codes">{data.promos.map((item) => <Row key={item.id || item.code} title={item.code || 'Code'} detail={`${item.description || 'No description'} · Used ${item.uses_count || 0}${item.max_uses ? ` of ${item.max_uses}` : ''} · ${item.expires_at ? `Expires ${date(item.expires_at)}` : 'No expiration'}`} value={`${item.discount_value || 0}${item.discount_type === 'percent' ? '%' : ' USD'} off${item.active === false ? ' · Inactive' : ''}`} />)}</AdminList></div> : null}
       </section>
     </div>
@@ -262,22 +282,30 @@ export default function AdminPage() {
   </main>;
 }
 
-function PricingPanel({ items, categories, configured, drafts, savingKey, onDraftChange, onSave, onSaveAll }: { items: AdminPricing[]; categories: string[]; configured: boolean; drafts: Record<string, string>; savingKey: string; onDraftChange: (productKey: string, value: string) => void; onSave: (item: AdminPricing, percentage?: number) => Promise<void>; onSaveAll: () => Promise<void> }) {
+function PricingPanel({ items, categories, configured, sheetPricingConfigured, drafts, sheetDrafts, savingKey, onDraftChange, onSheetDraftChange, onSave, onSaveAll }: { items: AdminPricing[]; categories: string[]; configured: boolean; sheetPricingConfigured: boolean; drafts: Record<string, string>; sheetDrafts: Record<string, SheetPricingDraft>; savingKey: string; onDraftChange: (productKey: string, value: string) => void; onSheetDraftChange: (productKey: string, field: keyof SheetPricingDraft, value: string) => void; onSave: (item: AdminPricing, percentage?: number) => Promise<void>; onSaveAll: () => Promise<void> }) {
   return <div className="space-y-5">
     <section className="rounded-2xl border border-[#38bdf8]/20 bg-[linear-gradient(135deg,#071522,#082238)] p-5">
       <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Studio pricing controls</p>
       <div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-2xl font-black">Price from the master Hue API</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Set the percentage of the current master retail price charged in Hue Studio. Use <strong className="text-white">100%</strong> for standard pricing or <strong className="text-white">80%</strong> for 20% off. Future master API price changes still flow through automatically.</p></div><div className="flex flex-col items-end gap-3"><PricingLegend /><button type="button" disabled={!configured || Boolean(savingKey)} onClick={() => void onSaveAll()} className="h-11 rounded-xl bg-[#22c55e] px-5 text-xs font-black uppercase text-white shadow-[0_0_22px_rgba(34,197,94,0.18)] hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-40">{savingKey === '__all__' ? 'Saving all...' : 'Apply all changes'}</button></div></div>
     </section>
     {!configured ? <section className="rounded-2xl border border-amber-300/25 bg-amber-300/[0.07] p-5 text-sm leading-6 text-amber-100">Run <strong>supabase/hue-studio-pricing-adjustments.sql</strong> in the Supabase SQL Editor, then refresh. Until then, the storefront safely uses 100% of every master price.</section> : null}
+    {configured && !sheetPricingConfigured ? <section className="rounded-2xl border border-amber-300/25 bg-amber-300/[0.07] p-5 text-sm leading-6 text-amber-100">Run <strong>supabase/hue-studio-sheet-density-pricing.sql</strong> in the Supabase SQL Editor, then refresh to enable the full-sheet controls. Until then, Hue Studio uses the safe built-in defaults.</section> : null}
     {categories.map((category) => <section key={category} className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><header className="border-b border-white/10 px-5 py-4"><h3 className="text-lg font-black">{category}</h3></header><div className="grid gap-px bg-white/10 lg:grid-cols-2">{items.filter((item) => item.category === category).map((item) => {
       const draft = drafts[item.productKey] ?? String(item.percentage);
       const percentage = Number(draft);
       const validPercentage = Number.isFinite(percentage) ? percentage : item.percentage;
       const effect = validPercentage === 100 ? 'Standard master price' : validPercentage < 100 ? `${Math.round((100 - validPercentage) * 100) / 100}% lower than master` : `${Math.round((validPercentage - 100) * 100) / 100}% above master`;
-      return <div key={item.productKey} className="bg-[#071522] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-white">{item.displayName}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.productKey}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${validPercentage === 100 ? 'bg-slate-400/10 text-slate-300' : validPercentage < 100 ? 'bg-green-400/10 text-green-300' : 'bg-amber-300/10 text-amber-200'}`}>{effect}</span></div><div className="mt-4 flex flex-wrap items-end gap-2"><label className="min-w-44 flex-1 text-xs font-bold text-slate-400">Master price percentage<div className="relative mt-1"><input type="number" min="0" max="200" step="0.01" value={draft} disabled={savingKey === '__all__'} onChange={(event) => onDraftChange(item.productKey, event.target.value)} className="h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 pr-8 text-base font-black text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /><span className="pointer-events-none absolute right-3 top-3 text-sm font-black text-slate-500">%</span></div></label><button type="button" disabled={Boolean(savingKey)} onClick={() => void onSave(item)} className="h-11 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingKey === item.productKey ? 'Saving' : 'Save'}</button><button type="button" disabled={Boolean(savingKey)} onClick={() => { onDraftChange(item.productKey, '100'); void onSave(item, 100); }} className="h-11 rounded-xl border border-white/15 px-3 text-xs font-bold text-slate-300 hover:bg-white/[0.05] disabled:opacity-50">Reset</button></div>{item.updatedAt ? <p className="mt-3 text-[10px] text-slate-600">Last saved {date(item.updatedAt)}</p> : null}</div>;
+      const sheetDraft = sheetDrafts[item.productKey] || { includedPieces: '10', extraPercent: '0.325', maxSurchargePercent: '30' };
+      return <div key={item.productKey} className="bg-[#071522] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-white">{item.displayName}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.sourceLabel || item.productKey}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${validPercentage === 100 ? 'bg-slate-400/10 text-slate-300' : validPercentage < 100 ? 'bg-green-400/10 text-green-300' : 'bg-amber-300/10 text-amber-200'}`}>{effect}</span></div>
+        <div className="mt-4 flex flex-wrap items-end gap-2"><label className="min-w-44 flex-1 text-xs font-bold text-slate-400">Master price percentage<div className="relative mt-1"><input type="number" min="0" max="200" step="0.01" value={draft} disabled={savingKey === '__all__'} onChange={(event) => onDraftChange(item.productKey, event.target.value)} className="h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 pr-8 text-base font-black text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /><span className="pointer-events-none absolute right-3 top-3 text-sm font-black text-slate-500">%</span></div></label><button type="button" disabled={Boolean(savingKey)} onClick={() => void onSave(item)} className="h-11 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingKey === item.productKey ? 'Saving' : 'Save'}</button><button type="button" disabled={Boolean(savingKey)} onClick={() => { onDraftChange(item.productKey, '100'); void onSave(item, 100); }} className="h-11 rounded-xl border border-white/15 px-3 text-xs font-bold text-slate-300 hover:bg-white/[0.05] disabled:opacity-50">Reset</button></div>
+        {item.isSheetPriced ? <div className="mt-4 rounded-xl border border-[#38bdf8]/20 bg-[#04101b] p-4"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#67d8ff]">Full-sheet density pricing</p><p className="mt-1 text-xs leading-5 text-slate-400">The base sheet includes the first pieces. Each additional piece adds a small handling percentage, up to the cap.</p><div className="mt-3 grid gap-3 sm:grid-cols-3"><SheetPricingInput label="Pieces included" value={sheetDraft.includedPieces} min="1" max="10000" step="1" suffix="pcs" disabled={Boolean(savingKey)} onChange={(value) => onSheetDraftChange(item.productKey, 'includedPieces', value)} /><SheetPricingInput label="Extra per piece" value={sheetDraft.extraPercent} min="0" max="100" step="0.001" suffix="%" disabled={Boolean(savingKey)} onChange={(value) => onSheetDraftChange(item.productKey, 'extraPercent', value)} /><SheetPricingInput label="Maximum surcharge" value={sheetDraft.maxSurchargePercent} min="0" max="500" step="0.1" suffix="%" disabled={Boolean(savingKey)} onChange={(value) => onSheetDraftChange(item.productKey, 'maxSurchargePercent', value)} /></div><p className="mt-3 text-[10px] leading-4 text-amber-100/75">Default example: 98 pieces on one $140 sheet adds about $40 in density handling.</p></div> : null}
+        {item.updatedAt ? <p className="mt-3 text-[10px] text-slate-600">Last saved {date(item.updatedAt)}</p> : null}
+      </div>;
     })}</div></section>)}
   </div>;
 }
+function SheetPricingInput({ label, value, min, max, step, suffix, disabled, onChange }: { label: string; value: string; min: string; max: string; step: string; suffix: string; disabled: boolean; onChange: (value: string) => void }) { return <label className="text-[11px] font-bold text-slate-400">{label}<div className="relative mt-1"><input type="number" min={min} max={max} step={step} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-lg border border-white/15 bg-[#02070d] px-3 pr-10 font-black text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /><span className="pointer-events-none absolute right-3 top-3 text-[10px] font-black text-slate-500">{suffix}</span></div></label>; }
 function PricingLegend() { return <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase"><span className="rounded-full bg-slate-400/10 px-3 py-1.5 text-slate-300">100% standard</span><span className="rounded-full bg-green-400/10 px-3 py-1.5 text-green-300">80% = 20% off</span><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">110% = 10% above</span></div>; }
 function AdminList({ title, children }: { title: string; children: ReactNode }) { return <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><div className="border-b border-white/10 px-5 py-4"><h2 className="text-lg font-black">{title}</h2></div><div className="divide-y divide-white/10">{children || <p className="p-5 text-sm text-slate-500">Nothing to show yet.</p>}</div></div>; }
 function Row({ title, detail, value }: { title: string; detail: string; value: string }) { return <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{title}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{detail}</p></div><p className="text-xs font-bold text-[#8be3ff]">{value}</p></div>; }

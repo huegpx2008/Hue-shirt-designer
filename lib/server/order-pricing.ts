@@ -82,7 +82,7 @@ const priceOneItem = async (item: ServerPricedOrderItem) => {
     throw new Error(message);
   }
 
-  const pricedData = await applyStudioPricingAdjustment(masterData, productId) as {
+  const pricedData = await applyStudioPricingAdjustment(masterData, productId, payload) as {
     currency?: string;
     price?: { retail?: unknown; each?: unknown };
   };

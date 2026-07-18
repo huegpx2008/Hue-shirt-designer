@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
 import { getStorageBucket, getStorageSignedUrl, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
-import { STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
+import { DEFAULT_SHEET_PRICING, STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
 import { enforceRateLimit } from '@/lib/server/request-security';
 
 type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string };
@@ -55,9 +55,10 @@ export async function GET(request: NextRequest) {
       listAllOrders(),
       listStorageFiles(),
       supabaseAdminFetch('/rest/v1/hue_promo_codes?select=*&order=created_at.desc') as Promise<unknown[]>,
-      supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=*&order=category.asc,display_name.asc') as Promise<unknown[]>
+      supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=*&order=category.asc,display_name.asc') as Promise<unknown[]>,
+      supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=sheet_included_pieces,sheet_extra_percent,sheet_max_surcharge_percent&limit=1') as Promise<unknown[]>
     ]);
-    const sectionNames = ['users', 'orders', 'files', 'promos', 'pricing'] as const;
+    const sectionNames = ['users', 'orders', 'files', 'promos', 'pricing', 'sheetPricing'] as const;
     const sectionErrors = results.reduce<Record<string, string>>((errors, result, index) => {
       if (result.status === 'rejected') {
         errors[sectionNames[index]] = result.reason instanceof Error ? result.reason.message : 'This section could not be loaded.';
@@ -81,14 +82,20 @@ export async function GET(request: NextRequest) {
     const savedPricing = results[4].status === 'fulfilled' ? results[4].value as Array<Record<string, unknown>> : [];
     const pricing = STUDIO_PRICING_PRODUCTS.map((product) => {
       const saved = savedPricing.find((entry) => entry.product_key === product.key);
+      const isSheetPriced = ['yard-sign', 'pvc', 'foamcore', 'polystyrene'].includes(product.key);
       return {
         productKey: product.key,
+        sourceLabel: 'sourceLabel' in product ? product.sourceLabel : product.key,
         displayName: String(saved?.display_name || product.name),
         category: String(saved?.category || product.category),
         percentage: Number(saved?.percentage ?? 100),
         active: saved?.active !== false,
         notes: saved?.notes ? String(saved.notes) : '',
         updatedAt: saved?.updated_at ? String(saved.updated_at) : null,
+        isSheetPriced,
+        sheetIncludedPieces: Number(saved?.sheet_included_pieces ?? DEFAULT_SHEET_PRICING.includedPieces),
+        sheetExtraPercent: Number(saved?.sheet_extra_percent ?? DEFAULT_SHEET_PRICING.extraPercentPerPiece),
+        sheetMaxSurchargePercent: Number(saved?.sheet_max_surcharge_percent ?? DEFAULT_SHEET_PRICING.maxSurchargePercent),
       };
     });
     return NextResponse.json({
@@ -98,6 +105,7 @@ export async function GET(request: NextRequest) {
       promos,
       pricing,
       pricingConfigured: results[4].status === 'fulfilled',
+      sheetPricingConfigured: results[5].status === 'fulfilled',
       sectionErrors,
     });
   } catch (error) {

@@ -70,7 +70,7 @@ export async function POST(
           },
         };
 
-    const studioData = response.ok ? await applyStudioPricingAdjustment(data, product) : data;
+    const studioData = response.ok ? await applyStudioPricingAdjustment(data, product, payload) : data;
     return NextResponse.json(studioData, { status: response.status });
   } catch (error) {
     const message =
