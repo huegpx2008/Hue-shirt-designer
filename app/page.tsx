@@ -43,7 +43,7 @@ type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number;
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
-type BannerOrderItem = { id: string; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState };
+type BannerOrderItem = { id: string; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState; backArtwork?: ImageZoneItem | null; sides?: string; estimate?: SignEstimate | null; localOptionTotal?: number };
 type CoroArtworkQuantityMap = Record<string, number>;
 type CoroArtworkSide = 'front' | 'back';
 type CoroPlacementTarget = { itemId: string | null; side: CoroArtworkSide };
@@ -2369,6 +2369,25 @@ export default function Home() {
   const signLocalOptionTotal = bannerLocalOptionTotal + roundedCornerLocalOptionTotal;
   const signRetailTotal = signRetailBase !== null ? signRetailBase + signLocalOptionTotal : null;
   const signEachTotal = signEachBase !== null ? signEachBase + (signLocalOptionTotal / Math.max(1, designerQuantity)) : null;
+  const savedArtworkSetPricing = bannerOrderItems.map((item) => {
+    const retail = numericPrice(item.estimate?.price?.retail);
+    const localOptions = Number(item.localOptionTotal || 0);
+    return {
+      ...item,
+      retailTotal: retail !== null ? retail + localOptions : null,
+      eachTotal: retail !== null ? (retail + localOptions) / Math.max(1, item.quantity) : null
+    };
+  });
+  const hasMultipleArtworkSets = isBannerBuilder && !isCoroBuilder && bannerOrderItems.length > 0;
+  const savedArtworkSetsPriced = savedArtworkSetPricing.every((item) => item.retailTotal !== null);
+  const signOrderRetailTotal = hasMultipleArtworkSets
+    ? signRetailTotal !== null && savedArtworkSetsPriced
+      ? signRetailTotal + savedArtworkSetPricing.reduce((total, item) => total + Number(item.retailTotal || 0), 0)
+      : null
+    : signRetailTotal;
+  const signOrderQuantity = hasMultipleArtworkSets
+    ? designerQuantity + bannerOrderItems.reduce((total, item) => total + Math.max(1, item.quantity), 0)
+    : designerQuantity;
   const signPricePerSheet = signRetailTotal !== null ? signRetailTotal / coroSheetLayout.sheetCount : null;
   const coroPricePerSign = signEachTotal ?? (signRetailTotal !== null ? signRetailTotal / Math.max(1, effectiveCoroQuantity) : null);
   const coroPricePerFullSheet = coroPricePerSign !== null ? coroPricePerSign * coroSheetLayout.signsPerSheet : null;
@@ -2392,7 +2411,7 @@ export default function Home() {
     const orderEmail = order.customer.email.trim().toLowerCase();
     return Boolean((sessionUserId && order.customer.userId === sessionUserId) || (sessionEmail && orderEmail === sessionEmail));
   });
-  const canAddCurrentDesignToCart = productMode === 'signage' && Boolean(signEstimate) && signRetailTotal !== null && signArtworkStatusOk;
+  const canAddCurrentDesignToCart = productMode === 'signage' && Boolean(signEstimate) && signOrderRetailTotal !== null && signArtworkStatusOk;
   const openTestCheckout = () => {
     if (cartItems.length === 0) {
       setCartStatus('Add at least one print-ready item before starting test checkout.');
@@ -3275,7 +3294,7 @@ export default function Home() {
     const canvas = fabricCanvasRef.current;
     const selected = canvas?.getActiveObject();
     if (!canvas || !selected) {
-      if (isBannerBuilder && signArtworkPreviewUrl && (mode === 'contain' || mode === 'stretch')) {
+      if (productMode === 'signage' && signArtworkPreviewUrl && (mode === 'contain' || mode === 'stretch')) {
         setBannerArtworkFitState(mode === 'stretch' ? 'stretch' : 'fit');
       }
       return;
@@ -3286,7 +3305,7 @@ export default function Home() {
         ? calculateContainedSignArtworkSize(selected.width || 1, selected.height || 1)
         : { width: signWidth, height: signHeight };
       setSignArtworkSize(nextSize);
-      if (isBannerBuilder && (mode === 'contain' || mode === 'stretch')) {
+      if (mode === 'contain' || mode === 'stretch') {
         setBannerArtworkFitState(mode === 'stretch' ? 'stretch' : 'fit');
       }
     }
@@ -3576,7 +3595,11 @@ export default function Home() {
     height: signHeight,
     quantity: designerQuantity,
     artworkSize: signArtworkSize,
-    fitState: bannerArtworkFitState
+    fitState: bannerArtworkFitState,
+    backArtwork: rigidBackArtwork,
+    sides: String(signValues.sides || 'single'),
+    estimate: signEstimate,
+    localOptionTotal: signLocalOptionTotal
   });
 
   const startAddBannerItem = () => {
@@ -3589,13 +3612,27 @@ export default function Home() {
     setImageLibraryStatus('Choose artwork for the next banner.');
   };
 
-  const loadBannerOrderItem = async (item: BannerOrderItem) => {
-    setBannerOrderItems((prev) => prev.filter((entry) => entry.id !== item.id));
-    setSignValues((prev) => ({ ...prev, width: String(item.width), height: String(item.height), quantity: String(item.quantity) }));
+  const loadBannerOrderItem = async (item: BannerOrderItem, preserveCurrent = true) => {
+    const hasCurrentItem = Boolean(signArtworkPreviewUrl || signArtworkSize);
+    const currentItem = preserveCurrent && hasCurrentItem ? makeCurrentBannerOrderItem() : null;
+    setBannerOrderItems((prev) => {
+      const selectedIndex = prev.findIndex((entry) => entry.id === item.id);
+      if (selectedIndex < 0) return prev;
+      const next = [...prev];
+      if (currentItem) next.splice(selectedIndex, 1, currentItem);
+      else next.splice(selectedIndex, 1);
+      return next;
+    });
+    setSignValues((prev) => ({ ...prev, width: String(item.width), height: String(item.height), quantity: String(item.quantity), sides: item.sides || 'single' }));
     setSignArtworkSize(item.artworkSize);
     setSignArtworkPreviewUrl(item.dataUrl);
+    setSignArtworkDisplayUrl(item.dataUrl);
+    setRigidBackArtwork(item.backArtwork || null);
+    setRigidArtworkTarget('front');
+    setRigidPreviewSide('front');
     setBannerArtworkName(item.name);
     setBannerArtworkFitState(item.fitState);
+    setSignEstimate(item.estimate || null);
     setActiveCoroOptionPanel('images');
     if (item.dataUrl) {
       await placeImageOnDesign(item.dataUrl, item.name);
@@ -3608,7 +3645,7 @@ export default function Home() {
   const deleteCurrentBannerArtworkSet = async () => {
     const previousItem = bannerOrderItems[bannerOrderItems.length - 1];
     if (previousItem) {
-      await loadBannerOrderItem(previousItem);
+      await loadBannerOrderItem(previousItem, false);
       setImageLibraryStatus('Removed the extra artwork set.');
       return;
     }
@@ -6040,8 +6077,13 @@ export default function Home() {
       setShowCart(true);
       return;
     }
-    if (!signEstimate || signRetailTotal === null) {
+    if (!signEstimate || signOrderRetailTotal === null || (hasMultipleArtworkSets && !savedArtworkSetsPriced)) {
       setCartStatus('Run pricing before adding this item to the cart.');
+      setShowCart(true);
+      return;
+    }
+    if (hasMultipleArtworkSets && bannerOrderItems.some((item) => !item.dataUrl || (String(item.sides || 'single') === 'double' && !item.backArtwork))) {
+      setCartStatus('Every artwork set needs its required front and back artwork before the order can be added to the cart.');
       setShowCart(true);
       return;
     }
@@ -6079,10 +6121,11 @@ export default function Home() {
       } else if (isBannerBuilder) {
         for (let index = 0; index < bannerOrderItems.length; index += 1) {
           const item = bannerOrderItems[index];
-          if (item.dataUrl) await attachFinalProductionFile({ role: `Artwork set ${index + 1}`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState });
+          if (item.dataUrl) await attachFinalProductionFile({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState });
+          if (item.backArtwork) await attachFinalProductionFile({ role: `Artwork set ${index + 1} back`, name: item.backArtwork.name, dataUrl: item.backArtwork.dataUrl, width: item.width, height: item.height, fitState: item.backArtwork.backFitState || item.fitState });
         }
-        if (signArtworkPreviewUrl) await attachFinalProductionFile({ role: isAutoSidedRigidBuilder ? 'Front artwork' : `Artwork set ${bannerOrderItems.length + 1}`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
-        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachFinalProductionFile({ role: 'Back artwork', name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+        if (signArtworkPreviewUrl) await attachFinalProductionFile({ role: `Artwork set ${bannerOrderItems.length + 1} front`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachFinalProductionFile({ role: `Artwork set ${bannerOrderItems.length + 1} back`, name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: rigidBackArtwork.backFitState || bannerArtworkFitState });
       } else if (signArtworkPreviewUrl) {
         await attachFinalProductionFile({ role: 'Artwork', name: bannerArtworkName || `${selectedSignProduct.name}-artwork`, dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
       }
@@ -6118,19 +6161,27 @@ export default function Home() {
       bannerOrderItems.forEach((item, index) => {
         const source = findArtworkSource(item.name, item.dataUrl);
         artworkFiles.push({
-          role: `Banner set ${index + 1}`,
+          role: `Artwork set ${index + 1} original front`,
           name: item.name,
           storagePath: source?.storagePath,
           storageUrl: source?.storageUrl,
           source: source?.source,
           previewUrl: item.dataUrl || undefined
         });
+        if (item.backArtwork) artworkFiles.push({
+          role: `Artwork set ${index + 1} original back`,
+          name: item.backArtwork.name,
+          storagePath: item.backArtwork.storagePath,
+          storageUrl: item.backArtwork.storageUrl,
+          source: item.backArtwork.source,
+          previewUrl: item.backArtwork.dataUrl
+        });
       });
       if (signArtworkPreviewUrl) {
         const source = findArtworkSource(bannerArtworkName, signArtworkPreviewUrl);
         const alreadyIncluded = artworkFiles.some((file) => file.previewUrl === signArtworkPreviewUrl && file.name === (bannerArtworkName || source?.name));
         if (!alreadyIncluded) artworkFiles.push({
-          role: isAutoSidedRigidBuilder ? 'Front artwork' : `Banner set ${bannerOrderItems.length + 1}`,
+          role: `Artwork set ${bannerOrderItems.length + 1} original front`,
           name: bannerArtworkName || source?.name || 'Banner artwork',
           storagePath: source?.storagePath,
           storageUrl: source?.storageUrl,
@@ -6139,7 +6190,7 @@ export default function Home() {
         });
       }
       if (isAutoSidedRigidBuilder && rigidBackArtwork) artworkFiles.push({
-        role: 'Back artwork',
+        role: `Artwork set ${bannerOrderItems.length + 1} original back`,
         name: rigidBackArtwork.name,
         storagePath: rigidBackArtwork.storagePath,
         storageUrl: rigidBackArtwork.storageUrl,
@@ -6158,7 +6209,7 @@ export default function Home() {
       });
     }
 
-    const productionBreakdown: CartProductionArtwork[] = isCoroBuilder
+    let productionBreakdown: CartProductionArtwork[] = isCoroBuilder
       ? (() => {
           let runningQuantity = 0;
           return coroSheetArtworkItems.map((item, index) => {
@@ -6197,6 +6248,42 @@ export default function Home() {
             backStoragePath: artworkFiles.find((file) => file.role === 'FINAL PRODUCTION — Back artwork')?.storagePath || rigidBackArtwork?.storagePath
           }]
         : [];
+    if (isBannerBuilder && !isCoroBuilder) {
+      productionBreakdown = [...bannerOrderItems.map((item, index) => {
+        const setNumber = index + 1;
+        const finalFront = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} front`) && file.role.includes('FINAL PRODUCTION'));
+        const finalBack = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} back`) && file.role.includes('FINAL PRODUCTION'));
+        return {
+          id: `${item.id}-${index}`,
+          label: `Artwork set ${setNumber}`,
+          quantity: Math.max(1, item.quantity),
+          sizeLabel: `${item.width}" x ${item.height}"`,
+          frontName: finalFront?.name || item.name,
+          frontPreviewUrl: finalFront?.storageUrl || item.dataUrl || undefined,
+          frontStoragePath: finalFront?.storagePath,
+          backName: item.backArtwork ? finalBack?.name || item.backArtwork.name : undefined,
+          backPreviewUrl: item.backArtwork ? finalBack?.storageUrl || item.backArtwork.dataUrl : undefined,
+          backStoragePath: item.backArtwork ? finalBack?.storagePath || item.backArtwork.storagePath : undefined
+        };
+      })];
+      if (signArtworkPreviewUrl) {
+        const setNumber = bannerOrderItems.length + 1;
+        const finalFront = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} front`) && file.role.includes('FINAL PRODUCTION'));
+        const finalBack = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} back`) && file.role.includes('FINAL PRODUCTION'));
+        productionBreakdown.push({
+          id: `${selectedSignProduct.id}-artwork-${setNumber}`,
+          label: `Artwork set ${setNumber}`,
+          quantity: designerQuantity,
+          sizeLabel: `${signWidth}" x ${signHeight}"`,
+          frontName: finalFront?.name || bannerArtworkName || `${selectedSignProduct.name} artwork`,
+          frontPreviewUrl: finalFront?.storageUrl || signArtworkPreviewUrl,
+          frontStoragePath: finalFront?.storagePath,
+          backName: rigidBackArtwork ? finalBack?.name || rigidBackArtwork.name : undefined,
+          backPreviewUrl: rigidBackArtwork ? finalBack?.storageUrl || rigidBackArtwork.dataUrl : undefined,
+          backStoragePath: rigidBackArtwork ? finalBack?.storagePath || rigidBackArtwork.storagePath : undefined
+        });
+      }
+    }
     const pricePerSheet = isCoroBuilder ? signPricePerSheet : null;
     const cartPricingApiSlug = selectedSignProduct.id === 'yard-sign' ? 'custom-cut-coroplast' : selectedSignProduct.apiSlug;
     const cartPricingPayload = toSignPricingPayload(selectedSignProduct, signValues);
@@ -6244,8 +6331,57 @@ export default function Home() {
         checkoutMode: customerSession?.user?.id ? 'account' : 'quick'
       }
     };
-    setCartItems((prev) => [cartItem, ...prev]);
-    setCartStatus(`${cartItem.productName} added to cart with ${artworkFiles.length} artwork file${artworkFiles.length === 1 ? '' : 's'} attached.`);
+    const cartItemsToAdd = hasMultipleArtworkSets
+      ? [...savedArtworkSetPricing.map((item) => ({
+          width: item.width,
+          height: item.height,
+          quantity: Math.max(1, item.quantity),
+          sides: item.sides || 'single',
+          estimate: item.estimate,
+          total: item.retailTotal,
+          each: item.eachTotal
+        })), {
+          width: signWidth,
+          height: signHeight,
+          quantity: designerQuantity,
+          sides: String(signValues.sides || 'single'),
+          estimate: signEstimate,
+          total: signRetailTotal,
+          each: signEachTotal
+        }].map((set, index) => {
+          const setNumber = index + 1;
+          const setValues = {
+            ...signValues,
+            width: String(set.width),
+            height: String(set.height),
+            quantity: String(set.quantity),
+            sides: set.sides
+          };
+          const setPayload = toSignPricingPayload(selectedSignProduct, setValues);
+          setPayload.quantity = set.quantity;
+          return {
+            ...cartItem,
+            id: `cart-${Date.now()}-${setNumber}-${Math.random().toString(36).slice(2, 8)}`,
+            quantity: set.quantity,
+            sizeLabel: `${set.width}" x ${set.height}"`,
+            optionSummary: [
+              getSignConfigurationText(selectedSignProduct, setValues),
+              `Artwork set ${setNumber} of ${productionBreakdown.length}`
+            ],
+            price: {
+              total: set.total,
+              each: set.each,
+              currency: set.estimate?.currency || signEstimate.currency || 'USD'
+            },
+            pricingRequest: { apiSlug: cartPricingApiSlug, payload: setPayload },
+            artworkFiles: artworkFiles.filter((file) => file.role.includes(`Artwork set ${setNumber} `)),
+            productionBreakdown: productionBreakdown.filter((item) => item.label === `Artwork set ${setNumber}`),
+            productionSummary: [...cartItem.productionSummary, `Artwork set ${setNumber} of ${productionBreakdown.length}`]
+          } satisfies CartItem;
+        })
+      : [cartItem];
+    setCartItems((prev) => [...cartItemsToAdd, ...prev]);
+    setCartStatus(`${cartItemsToAdd.length} artwork set${cartItemsToAdd.length === 1 ? '' : 's'} added to cart with ${artworkFiles.length} artwork file${artworkFiles.length === 1 ? '' : 's'} attached.`);
     setIsPreparingCartArtwork(false);
     setShowCart(true);
   };
@@ -7007,7 +7143,7 @@ export default function Home() {
                       <span className="font-bold text-slate-100">Order Price</span>
                       <span className="font-bold text-slate-100">Price Per Each</span>
                       <span>{summaryMaterialLabel} · {summarySidesLabel}</span>
-                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signOrderRetailTotal !== null ? `${formatSignPrice(signOrderRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signWidth || 0}&quot; × {signHeight || 0}&quot;</span>
                       <span>{summaryMaterialLabel}</span>
@@ -7017,7 +7153,7 @@ export default function Home() {
                       <span className="font-bold text-slate-100">Order Price</span>
                       <span className="font-bold text-slate-100">Per Card</span>
                       <span>{String(signValues.orientation || 'Landscape')}</span>
-                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signOrderRetailTotal !== null ? `${formatSignPrice(signOrderRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{String(signValues.coating || 'No Coating')}</span>
                       <span>{designerQuantity} cards</span>
@@ -7027,7 +7163,7 @@ export default function Home() {
                       <span className="font-bold text-slate-100">Order Price</span>
                       <span className="font-bold text-slate-100">Per Poster</span>
                       <span>{selectedBannerMaterial?.label || 'Poster Paper'}</span>
-                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signOrderRetailTotal !== null ? `${formatSignPrice(signOrderRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signWidth || 0}&quot; &times; {signHeight || 0}&quot;</span>
                       <span>Poster paper</span>
@@ -7037,7 +7173,7 @@ export default function Home() {
                       <span className="font-bold text-slate-100">Order Price</span>
                       <span className="font-bold text-slate-100">Price Per Each</span>
                       <span>{summaryMaterialLabel} · {summarySidesLabel}</span>
-                      <span>{signRetailTotal !== null ? `${formatSignPrice(signRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
+                      <span>{signOrderRetailTotal !== null ? `${formatSignPrice(signOrderRetailTotal, signEstimate?.currency)} total` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{signEachTotal !== null ? `${formatSignPrice(signEachTotal, signEstimate?.currency)} each` : isSignEstimateLoading ? 'Loading...' : 'Run pricing'}</span>
                       <span>{bannerSquareFeet.toFixed(1)} sqft</span>
                       <span>{summaryMaterialLabel}</span>
@@ -7047,6 +7183,17 @@ export default function Home() {
                       <span>{isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : `${String(signValues.material || '4mm')} CORO`}</span><span>{selectedSignProduct.id === 'yard-sign' ? 'Priced per sheet' : String(signValues.sides || 'single') === 'double' ? 'Enabled' : 'Optional'}</span>
                     </>}
                   </div>
+                  {hasMultipleArtworkSets ? <div className="mt-3 space-y-1 border-t border-white/10 pt-2 text-left text-[10px]">
+                    {savedArtworkSetPricing.map((item, index) => <div key={item.id} className="grid grid-cols-[1fr_auto] gap-3 rounded bg-white/[0.04] px-2 py-1">
+                      <span className="min-w-0 truncate text-slate-300">Set {index + 1} · {item.width}&quot; × {item.height}&quot; · Qty {item.quantity}</span>
+                      <span className="font-bold text-slate-100">{item.retailTotal !== null ? formatSignPrice(item.retailTotal, item.estimate?.currency) : 'Pricing...'}</span>
+                    </div>)}
+                    <div className="grid grid-cols-[1fr_auto] gap-3 rounded bg-white/[0.04] px-2 py-1">
+                      <span className="min-w-0 truncate text-slate-300">Set {bannerOrderItems.length + 1} · {signWidth}&quot; × {signHeight}&quot; · Qty {designerQuantity}</span>
+                      <span className="font-bold text-slate-100">{signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : 'Pricing...'}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-white/10 px-2 pt-1 font-black text-[#9be6ff]"><span>{signOrderQuantity} pieces total</span><span>{signOrderRetailTotal !== null ? formatSignPrice(signOrderRetailTotal, signEstimate?.currency) : 'Pricing...'}</span></div>
+                  </div> : null}
                   {isProductionBuilder ? <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">Hue API pricing</span>
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">{hueOrderPathLabel}</span>
@@ -7054,10 +7201,10 @@ export default function Home() {
                 </div>
                 <div className={`text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
-                  <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isCoroBuilder && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signRetailTotal !== null ? formatSignPrice(signRetailTotal, signEstimate?.currency) : '$0.00'}</p>
+                  <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isCoroBuilder && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signOrderRetailTotal !== null ? formatSignPrice(signOrderRetailTotal, signEstimate?.currency) : '$0.00'}</p>
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : isBusinessCardBuilder ? `${designerQuantity} business cards` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${summaryMaterialLabel}`}</p>
                   {isCoroBuilder && coroPricePerSign !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(coroPricePerSign, coroPricingCurrency)} each / {formatSignPrice(signRetailTotal ?? undefined, coroPricingCurrency)} total</p> : null}
-                  {isBannerBuilder && !isCoroBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{formatSignPrice(signEachTotal, signEstimate?.currency)} each / {formatSignPrice(signRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
+                  {isBannerBuilder && !isCoroBuilder && signEachTotal !== null ? <p className="mt-1 text-xs text-slate-300">{hasMultipleArtworkSets ? `${signOrderQuantity} pieces across ${bannerOrderItems.length + 1} artwork sets` : `${formatSignPrice(signEachTotal, signEstimate?.currency)} each`} / {formatSignPrice(signOrderRetailTotal ?? undefined, signEstimate?.currency)} total</p> : null}
                   {isProductionBuilder && signEstimateStatus ? <p className={`mt-2 max-w-[240px] text-xs leading-4 ${signEstimate ? 'text-emerald-300' : isSignEstimateLoading ? 'text-[#8be3ff]' : 'text-amber-300'}`}>{signEstimateStatus}</p> : null}
                   {hasCoroSheetWarning ? <button type="button" onClick={() => setShowCoroSheetWarning(true)} className="mt-3 rounded bg-red-600 px-3 py-1.5 text-xs font-black text-white shadow-[0_10px_24px_rgba(220,38,38,0.24)] hover:bg-red-500">{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0)} warning{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0) === 1 ? '' : 's'}</button> : null}
                   {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading || isPreparingCartArtwork} className="mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isPreparingCartArtwork ? 'Preparing Final Artwork...' : isSignEstimateLoading ? 'Pricing...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
@@ -7126,10 +7273,10 @@ export default function Home() {
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.min(coroSheetPreviews.length - 1, current + 1))} disabled={activeCoroSheetIndex >= coroSheetPreviews.length - 1} className="absolute right-8 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35">›</button> : null}
                     {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="hue-sheet-upload group absolute z-10 flex w-44 flex-col items-center rounded-2xl border border-white/25 bg-[#1686c9] px-4 py-4 text-center text-white shadow-[0_18px_44px_rgba(3,105,161,0.42),0_0_32px_rgba(56,189,248,0.28)] hover:-translate-y-0.5 hover:bg-[#0e74b4]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xl transition group-hover:scale-105">+</span><span className="mt-2 text-xs font-black uppercase tracking-[0.08em]">Add your artwork</span><span className="mt-1 text-[9px] font-medium text-[#c8f2ff]">Upload or choose from library</span></button> : null}
                   </div> : <div className={`relative flex items-center justify-center ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''}`} style={signPreviewBoxStyle}>
-                    <div className={`absolute -top-8 left-0 right-0 border-t text-center text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={isBannerBuilder ? 'bg-[#07111f]/90 px-2' : 'bg-white/80 px-2'}>{signWidth || 0}&quot;</span></div>
+                    <div className="hue-dimension hue-dimension--width" aria-hidden="true"><span className="hue-dimension__label"><span>Width</span><strong>{signWidth || 0}&quot;</strong></span></div>
                     <div className={`absolute -bottom-9 left-0 right-0 text-center text-xs ${isBannerBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? 'Back Side' : 'Front Side'}</div>
-                    <div className={`absolute -left-9 bottom-0 top-0 border-l text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute left-[-12px] top-1/2 -translate-y-1/2 -rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
-                    <div className={`absolute -right-9 bottom-0 top-0 border-r text-xs ${isBannerBuilder ? 'border-slate-500 text-slate-300' : 'border-slate-300 text-slate-500'}`}><span className={`absolute right-[-12px] top-1/2 -translate-y-1/2 rotate-90 px-2 ${isBannerBuilder ? 'bg-[#07111f]/90' : 'bg-white/80'}`}>{signHeight || 0}&quot;</span></div>
+                    <div className="hue-dimension hue-dimension--height hue-dimension--left" aria-hidden="true"><span className="hue-dimension__label"><span>Height</span><strong>{signHeight || 0}&quot;</strong></span></div>
+                    <div className="hue-dimension hue-dimension--height hue-dimension--right" aria-hidden="true"><span className="hue-dimension__label"><span>Height</span><strong>{signHeight || 0}&quot;</strong></span></div>
                     <div className={`absolute inset-0 ${isRigidSignBuilder ? 'rigid-sign-preview overflow-hidden border border-slate-300 transition-[border-radius] duration-300' : `overflow-hidden rounded-sm border bg-white ${signSurfacePreviewUrl ? 'border-[#38bdf8]/60' : 'border-slate-300'} shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]`}`} style={supportsSizedRoundedCorners ? { borderRadius: roundedCornerPreviewRadius || '3px' } : undefined}>
                       {!isRigidSignBuilder ? <div className="absolute inset-3 border border-dashed border-slate-300 transition-[border-radius] duration-300" style={supportsSizedRoundedCorners ? { borderRadius: roundedSafeZonePreviewRadius } : undefined} /> : null}
                       {isRigidSignBuilder && !hasPlacedSignArtwork ? <div className="absolute inset-0 flex items-end justify-center pb-5"><span className="rounded-full border border-slate-300/80 bg-white/75 px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 shadow-sm backdrop-blur">Rigid panel</span></div> : null}
@@ -7252,9 +7399,9 @@ export default function Home() {
                   {signArtworkPreviewUrl ? <button type="button" onClick={() => { void openCurrentOrderArtworkEditor(); }} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-[#38bdf8]/35 bg-[#08243a] px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.08em] text-[#9be8ff] shadow-[0_8px_20px_rgba(14,165,233,0.12)] transition hover:border-[#67d8ff]/70 hover:bg-[#0c304c] hover:text-white"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 fill-none stroke-current stroke-2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>Edit {isAutoSidedRigidBuilder && rigidPreviewSide === 'back' && rigidBackArtwork ? 'back' : 'front'} in Hue Designer</button> : null}
                   {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve the artwork or Stretch to fill {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <button type="button" onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject && !signArtworkPreviewUrl} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Fit</button>
+                    <button type="button" aria-pressed={bannerArtworkFitState === 'fit'} onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject && !signArtworkPreviewUrl} className={`rounded border px-2 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-40 ${bannerArtworkFitState === 'fit' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Fit</button>
                     <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
-                    <button type="button" onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject && !signArtworkPreviewUrl} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40">Stretch</button>
+                    <button type="button" aria-pressed={bannerArtworkFitState === 'stretch'} onClick={() => fitSelectedArtwork('stretch')} disabled={!activeObject && !signArtworkPreviewUrl} className={`rounded border px-2 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-40 ${bannerArtworkFitState === 'stretch' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Stretch</button>
                     <button type="button" onClick={openArtworkLibrary} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                   </div>
                 </div>
@@ -7346,9 +7493,9 @@ export default function Home() {
                         <button type="button" className="w-full rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <button type="button" onClick={() => resolveCoroArtworkFit(item.id, 'fit')} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white hover:bg-[#0f5f94]">Fit</button>
+                        <button type="button" aria-pressed={item.frontFitState === 'fit'} onClick={() => resolveCoroArtworkFit(item.id, 'fit')} className={`rounded border px-2 py-2 font-bold ${item.frontFitState === 'fit' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Fit</button>
                         <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
-                        <button type="button" onClick={() => resolveCoroArtworkFit(item.id, 'stretch')} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Stretch</button>
+                        <button type="button" aria-pressed={item.frontFitState === 'stretch'} onClick={() => resolveCoroArtworkFit(item.id, 'stretch')} className={`rounded border px-2 py-2 font-bold ${item.frontFitState === 'stretch' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Stretch</button>
                         <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                       </div>
                     </div>;
@@ -7422,7 +7569,7 @@ export default function Home() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-[#1678b8]">{activeCoroOptionPanel === 'sides' ? 'Print Sides' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : activeCoroOptionPanel}</p>
-                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? 'Custom Magnet Size' : 'Vehicle Magnet Size' : isCoroBuilder ? selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? 'Custom CORO Size' : 'Select CORO Size' : `${selectedSignProduct.name} Size` : isBusinessCardBuilder ? 'Business Card Size' : isBannerBuilder ? 'Banner Size' : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'orientation' ? 'Select Card Orientation' : activeCoroOptionPanel === 'coating' ? 'Select Card Coating' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : activeCoroOptionPanel === 'webbing' ? 'Mesh Webbing' : activeCoroOptionPanel === 'standoffs' ? 'Acrylic Standoffs' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : 'Options'}</h3>
+                    <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? 'Custom Magnet Size' : 'Vehicle Magnet Size' : isCoroBuilder ? selectedSignProduct.id === 'yard-sign' ? isCustomCoro ? 'Custom CORO Size' : 'Select CORO Size' : `${selectedSignProduct.name} Size` : isBusinessCardBuilder ? 'Business Card Size' : isBannerBuilder ? `${selectedSignProduct.name} Size` : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'orientation' ? 'Select Card Orientation' : activeCoroOptionPanel === 'coating' ? 'Select Card Coating' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : activeCoroOptionPanel === 'webbing' ? 'Mesh Webbing' : activeCoroOptionPanel === 'standoffs' ? 'Acrylic Standoffs' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : 'Options'}</h3>
                   </div>
                   <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
                 </div>
@@ -7444,7 +7591,7 @@ export default function Home() {
                   <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Height inches<input type="number" min={1} step="0.25" value={String(signValues.height ?? signHeight)} onChange={(event) => updateSignOption('height', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
                   <label className="text-xs font-bold uppercase tracking-wide text-slate-600">Quantity<input type="number" min={1} step={1} value={String(signValues.quantity ?? designerQuantity)} onChange={(event) => updateSignOption('quantity', event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950" /></label>
                   <button type="button" role="switch" aria-checked={lockSignProportions} onClick={() => setLockSignProportions((locked) => !locked)} className={`flex items-center justify-between rounded border px-3 py-2 text-xs font-bold sm:col-span-3 ${lockSignProportions ? 'border-[#38bdf8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-300 bg-white text-slate-600'}`}><span>Lock artwork proportions</span><span className="uppercase">{lockSignProportions ? 'On' : 'Off'}</span></button>
-                  <p className="rounded bg-[#eaf5fb] px-3 py-2 text-xs leading-5 text-[#0f5f94] sm:col-span-3">Uploading artwork will auto-fill a starting banner size from the file pixels. You can override it here, then use Fit or Stretch in the Images panel.</p>
+                  <p className="rounded bg-[#eaf5fb] px-3 py-2 text-xs leading-5 text-[#0f5f94] sm:col-span-3">Uploading artwork can auto-fill a starting size for this {selectedSignProduct.name} from the file&apos;s print dimensions. You can override it here, then use Fit or Stretch in the Artwork panel.</p>
                 </div> : null}
                 {activeCoroOptionPanel === 'size' && isCoroBuilder && selectedSignProduct.id === 'yard-sign' ? <div className="mt-4 grid gap-4 lg:grid-cols-[240px_1fr]">
                   <div className="rounded border border-slate-200 bg-white p-3 text-center">
@@ -7641,10 +7788,10 @@ export default function Home() {
                 <button className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-slate-400">Contour Cut</button>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <button type="button" onClick={() => fitSelectedArtwork('contain')} className="rounded bg-[#1678b8] px-2 py-2 font-bold text-white disabled:opacity-40" disabled={!activeObject}>Fit Art</button>
+                <button type="button" aria-pressed={bannerArtworkFitState === 'fit'} onClick={() => fitSelectedArtwork('contain')} className={`rounded border px-2 py-2 font-bold disabled:opacity-40 ${bannerArtworkFitState === 'fit' ? 'border-[#1678b8] bg-[#1678b8] text-white' : 'border-slate-300 bg-white text-slate-700'}`} disabled={!activeObject}>Fit Art</button>
                 <button type="button" onClick={centerSelectedArtwork} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] disabled:opacity-40" disabled={!activeObject}>Center</button>
                 <button type="button" onClick={() => fitSelectedArtwork('cover')} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:opacity-40" disabled={!activeObject}>Fill Sign</button>
-                <button type="button" onClick={() => fitSelectedArtwork('stretch')} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium disabled:opacity-40" disabled={!activeObject}>Stretch</button>
+                <button type="button" aria-pressed={bannerArtworkFitState === 'stretch'} onClick={() => fitSelectedArtwork('stretch')} className={`rounded border px-2 py-2 font-bold disabled:opacity-40 ${bannerArtworkFitState === 'stretch' ? 'border-[#1678b8] bg-[#1678b8] text-white' : 'border-slate-300 bg-white text-slate-700'}`} disabled={!activeObject}>Stretch</button>
               </div>
             </div>
             <button type="button" className="mt-3 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50">+ Add Sign</button>
