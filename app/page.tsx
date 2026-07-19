@@ -58,7 +58,7 @@ type SignFieldOption = { label: string; value: string };
 type SignField = { name: string; label: string; type: SignFieldType; defaultValue: string | boolean; step?: string; options?: SignFieldOption[] };
 type SignProductConfig = { id: SignProductId; name: string; apiSlug: string; description: string; preview: 'banner' | 'yard-sign'; fields: SignField[] };
 type StoreProductCard = { id: string; category: StoreCategoryId; title: string; subtitle: string; description: string; mode: ProductMode; signProductId?: SignProductId; badge?: string; image?: string; imageSprite?: { column: number; row: number }; disabled?: boolean; initialSignValues?: Partial<Record<string, string | boolean>> };
-type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
+type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; studioPricing?: { sheetPricing?: { filledSheetTotal?: number | string } }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
 type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; previewUrl?: string };
@@ -2390,7 +2390,10 @@ export default function Home() {
     : designerQuantity;
   const signPricePerSheet = signRetailTotal !== null ? signRetailTotal / coroSheetLayout.sheetCount : null;
   const coroPricePerSign = signEachTotal ?? (signRetailTotal !== null ? signRetailTotal / Math.max(1, effectiveCoroQuantity) : null);
-  const coroPricePerFullSheet = coroPricePerSign !== null ? coroPricePerSign * coroSheetLayout.signsPerSheet : null;
+  const serverFilledSheetPrice = numericPrice(signEstimate?.studioPricing?.sheetPricing?.filledSheetTotal);
+  // A filled-sheet preview is a single sheet plus its density surcharge. It is
+  // not the current per-piece price multiplied by every available position.
+  const coroPricePerFullSheet = serverFilledSheetPrice ?? signPricePerSheet;
   const coroPricingCurrency = signEstimate?.currency || 'USD';
   const coroPricingIsLoaded = isCoroBuilder && signEstimate && signRetailTotal !== null;
   const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);

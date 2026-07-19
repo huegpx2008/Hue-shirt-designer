@@ -131,6 +131,11 @@ const applySheetDensityPricing = async (
   const includedPieces = Math.round(safeSheetSetting(adjustment.sheet_included_pieces, DEFAULT_SHEET_PRICING.includedPieces, 1, 10000));
   const extraPercentPerPiece = safeSheetSetting(adjustment.sheet_extra_percent, DEFAULT_SHEET_PRICING.extraPercentPerPiece, 0, 100);
   const maxSurchargePercent = safeSheetSetting(adjustment.sheet_max_surcharge_percent, DEFAULT_SHEET_PRICING.maxSurchargePercent, 0, 500);
+  const filledSheetSurchargePercent = Math.min(
+    maxSurchargePercent,
+    Math.max(0, layout.piecesPerSheet - includedPieces) * extraPercentPerPiece,
+  );
+  const filledSheetPreAdjustmentTotal = Number((referencePerSheet * (1 + filledSheetSurchargePercent / 100)).toFixed(2));
   let remaining = layout.quantity;
   let surchargeTotal = 0;
   for (let sheet = 0; sheet < layout.sheetCount; sheet += 1) {
@@ -159,6 +164,8 @@ const applySheetDensityPricing = async (
       extraPercentPerPiece,
       maxSurchargePercent,
       masterReferencePerSheet: referencePerSheet,
+      filledSheetSurchargePercent,
+      filledSheetPreAdjustmentTotal,
       surchargeTotal: Number(surchargeTotal.toFixed(2)),
       preAdjustmentTotal: densityTotal,
     },
@@ -186,6 +193,10 @@ export const applyStudioPricingAdjustment = async (data: unknown, productKey: st
     retail: adjustedNumber(sourcePrice.retail, multiplier, 2),
     each: adjustedNumber(sourcePrice.each, multiplier, 4),
   } : source.price;
+  const sheetPricing = densityResult.sheetPricing ? {
+    ...densityResult.sheetPricing,
+    filledSheetTotal: adjustedNumber(densityResult.sheetPricing.filledSheetPreAdjustmentTotal, multiplier, 2),
+  } : null;
 
   return {
     ...source,
@@ -196,7 +207,7 @@ export const applyStudioPricingAdjustment = async (data: unknown, productKey: st
       multiplier,
       masterPricingPercentage: 100,
       adjusted: percentage !== 100,
-      ...(densityResult.sheetPricing ? { sheetPricing: densityResult.sheetPricing } : {}),
+      ...(sheetPricing ? { sheetPricing } : {}),
     },
   };
 };
