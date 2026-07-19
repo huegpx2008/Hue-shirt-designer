@@ -3,6 +3,7 @@
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, IText, Line, Object as FabricObject, Path, Point, Rect, Shadow, Triangle, filters } from 'fabric';
 import QRCode from 'qrcode';
+import PayPalCheckoutButton from '@/components/paypal-checkout-button';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
@@ -86,7 +87,8 @@ type TestOrder = {
   orderNumber: string;
   createdAt: string;
   status: 'test_submitted';
-  paymentMode: 'test_no_payment';
+  paymentMode: 'test_no_payment' | 'paypal';
+  payment?: { provider: 'paypal'; status: 'completed'; paypalOrderId: string; captureId: string; paidAt?: string };
   customer: { name: string; organization?: string; email: string; phone: string; notes?: string; taxExempt: boolean; userId?: string; checkoutMode: 'account' | 'quick' };
   fulfillment: {
     method: CheckoutFulfillment;
@@ -1864,6 +1866,7 @@ export default function Home() {
   const [checkoutPromo, setCheckoutPromo] = useState<AppliedPromo | null>(null);
   const [isCheckoutPromoLoading, setIsCheckoutPromoLoading] = useState(false);
   const [isSubmittingTestOrder, setIsSubmittingTestOrder] = useState(false);
+  const [paypalCheckoutAvailable, setPaypalCheckoutAvailable] = useState<boolean | null>(null);
   const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
   const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
   const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
@@ -1898,6 +1901,7 @@ export default function Home() {
   const artworkEditorSideSnapshotsRef = useRef<Record<CoroArtworkSide, string | null>>({ front: null, back: null });
   const artworkEditorClipboardRef = useRef<FabricObject | null>(null);
   const pendingCheckoutSubmissionRef = useRef<{ id: string; fingerprint: string } | null>(null);
+  const pendingPayPalCheckoutRef = useRef<{ order: TestOrder; checkoutToken: string; paypalOrderId: string } | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
 
@@ -2484,6 +2488,8 @@ export default function Home() {
     setCheckoutStatus('');
     setCheckoutPromoInput('');
     setCheckoutPromo(null);
+    setPaypalCheckoutAvailable(null);
+    pendingPayPalCheckoutRef.current = null;
     setShowTestCheckout(true);
   };
   const applyCheckoutPromo = async () => {
@@ -2508,7 +2514,7 @@ export default function Home() {
       setIsCheckoutPromoLoading(false);
     }
   };
-  const sendTestOrderEmail = async (order: TestOrder) => {
+  const sendTestOrderEmail = async (order: TestOrder, paymentToken?: string) => {
     let submittedOrder = order;
     try {
       setCheckoutStatus('Securely submitting your order and sending confirmations...');
@@ -2519,7 +2525,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : {}),
         },
-        body: JSON.stringify({ order: orderForEmail, guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() })
+        body: JSON.stringify({ order: orderForEmail, paymentToken, guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() })
       });
       const payload = await response.json().catch(() => ({})) as { error?: string; order?: TestOrder };
       if (payload.order) {
@@ -2534,6 +2540,143 @@ export default function Home() {
       const message = error instanceof Error ? error.message : 'The order email could not be sent.';
       setCheckoutStatus(`Checkout stopped: ${message}`);
       throw error instanceof Error ? error : new Error(message);
+    }
+  };
+
+  const preparePayPalCheckoutOrder = () => {
+    const contactName = checkoutContact.name.trim();
+    const contactEmail = checkoutContact.email.trim();
+    if (!contactName || !contactEmail) {
+      setCheckoutStatus('Enter a customer name and email before opening PayPal Checkout.');
+      setCheckoutStep('contact');
+      return null;
+    }
+    if (checkoutFulfillment === 'direct_ship') {
+      const hasAddress = checkoutAddress.line1.trim() && checkoutAddress.city.trim() && checkoutAddress.state.trim() && checkoutAddress.postalCode.trim();
+      if (!hasAddress) {
+        setCheckoutStatus('Direct shipping needs a street address, city, state, and ZIP code.');
+        setCheckoutStep('fulfillment');
+        return null;
+      }
+    }
+    const timestamp = Date.now();
+    const submissionFingerprint = JSON.stringify({
+      email: contactEmail.toLowerCase(),
+      items: cartItems.map((item) => ({ id: item.id, quantity: item.quantity })),
+    });
+    let checkoutSubmissionId = `checkout-${timestamp}-${Math.random().toString(36).slice(2, 12)}`;
+    if (pendingCheckoutSubmissionRef.current?.fingerprint === submissionFingerprint) checkoutSubmissionId = pendingCheckoutSubmissionRef.current.id;
+    try {
+      const storedSubmission = JSON.parse(window.sessionStorage.getItem(CHECKOUT_SUBMISSION_STORAGE_KEY) || 'null') as { id?: string; fingerprint?: string } | null;
+      if (storedSubmission?.id && storedSubmission.fingerprint === submissionFingerprint) checkoutSubmissionId = storedSubmission.id;
+      else window.sessionStorage.setItem(CHECKOUT_SUBMISSION_STORAGE_KEY, JSON.stringify({ id: checkoutSubmissionId, fingerprint: submissionFingerprint }));
+    } catch {
+      // The in-memory submission key still prevents duplicate clicks for this page lifetime.
+    }
+    pendingCheckoutSubmissionRef.current = { id: checkoutSubmissionId, fingerprint: submissionFingerprint };
+    return {
+      id: checkoutSubmissionId,
+      orderNumber: createTestOrderNumber(timestamp),
+      createdAt: new Date(timestamp).toISOString(),
+      status: 'test_submitted',
+      paymentMode: 'paypal',
+      customer: {
+        name: contactName,
+        organization: checkoutContact.organization.trim() || undefined,
+        email: contactEmail,
+        phone: checkoutContact.phone.trim(),
+        notes: checkoutContact.notes.trim() || undefined,
+        taxExempt: checkoutTaxExempt,
+        userId: customerSession?.user?.id,
+        checkoutMode: customerSession?.user?.id ? 'account' : 'quick',
+      },
+      fulfillment: {
+        method: checkoutFulfillment,
+        address: checkoutFulfillment === 'direct_ship' ? {
+          line1: checkoutAddress.line1.trim(), line2: checkoutAddress.line2.trim(), city: checkoutAddress.city.trim(),
+          state: checkoutAddress.state.trim(), postalCode: checkoutAddress.postalCode.trim(),
+        } : undefined,
+      },
+      items: cartItems,
+      subtotal: cartSubtotal,
+      promotion: checkoutPromo ? { code: checkoutPromo.code, description: checkoutPromo.description, discountAmount: checkoutDiscountAmount } : undefined,
+      shipping: { amount: checkoutShippingAmount, label: checkoutShippingLabel },
+      tax: { rate: checkoutTaxRate, amount: checkoutTaxAmount, label: checkoutTaxLabel },
+      total: checkoutOrderTotal,
+      currency: 'USD',
+    } satisfies TestOrder;
+  };
+
+  const completeSubmittedOrder = (organizedOrder: TestOrder) => {
+    setTestOrders((current) => [organizedOrder, ...current.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)]);
+    setLastTestOrder(organizedOrder);
+    setCartItems([]);
+    setShowCart(false);
+    try {
+      const updatedHistory = [organizedOrder, ...testOrders.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)];
+      window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(getPersistableTestOrders(updatedHistory)));
+      window.sessionStorage.setItem(ORDER_CONFIRMATION_STORAGE_KEY, JSON.stringify(getPersistableTestOrders([organizedOrder])[0]));
+      window.sessionStorage.removeItem(CHECKOUT_SUBMISSION_STORAGE_KEY);
+      pendingCheckoutSubmissionRef.current = null;
+      pendingPayPalCheckoutRef.current = null;
+    } catch {
+      // The confirmation route can still use the order number if browser storage is unavailable.
+    }
+    setShowTestCheckout(false);
+    window.location.assign(`/order-confirmation?order=${encodeURIComponent(organizedOrder.orderNumber)}`);
+  };
+
+  const createPayPalCheckoutOrder = async () => {
+    if (isSubmittingTestOrder) throw new Error('Checkout is already processing.');
+    const order = preparePayPalCheckoutOrder();
+    if (!order) throw new Error('Complete the highlighted checkout information first.');
+    setIsSubmittingTestOrder(true);
+    setCheckoutStatus('Verifying current pricing and opening secure PayPal Checkout...');
+    try {
+      const response = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : {}) },
+        body: JSON.stringify({ order: getPersistableTestOrders([order])[0], guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; id?: string; checkoutToken?: string; order?: TestOrder };
+      if (!response.ok || !payload.id || !payload.checkoutToken) throw new Error(payload.error || 'PayPal Checkout could not be started.');
+      const pricedOrder = { ...order, ...(payload.order || {}), paymentMode: 'paypal' } as TestOrder;
+      pendingPayPalCheckoutRef.current = { order: pricedOrder, checkoutToken: payload.checkoutToken, paypalOrderId: payload.id };
+      setCheckoutStatus('Secure PayPal Checkout is ready.');
+      return payload.id;
+    } catch (error) {
+      setCheckoutStatus(`Checkout stopped: ${error instanceof Error ? error.message : 'PayPal Checkout could not be started.'}`);
+      throw error;
+    } finally {
+      setIsSubmittingTestOrder(false);
+    }
+  };
+
+  const approvePayPalCheckoutOrder = async (paypalOrderId: string) => {
+    if (isSubmittingTestOrder) return;
+    const pending = pendingPayPalCheckoutRef.current;
+    if (!pending || pending.paypalOrderId !== paypalOrderId) throw new Error('This PayPal approval does not match the current Hue order.');
+    setIsSubmittingTestOrder(true);
+    setCheckoutStatus('Capturing payment and securely submitting your order...');
+    try {
+      const response = await fetch('/api/paypal/capture-order', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paypalOrderId, checkoutToken: pending.checkoutToken }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; paymentToken?: string; captureId?: string; paidAt?: string };
+      if (!response.ok || !payload.paymentToken || !payload.captureId) throw new Error(payload.error || 'PayPal could not complete the payment.');
+      const paidOrder: TestOrder = {
+        ...pending.order,
+        paymentMode: 'paypal',
+        payment: { provider: 'paypal', status: 'completed', paypalOrderId, captureId: payload.captureId, paidAt: payload.paidAt },
+      };
+      completeSubmittedOrder(await sendTestOrderEmail(paidOrder, payload.paymentToken));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The paid order could not be finalized.';
+      setCheckoutStatus(`Payment requires attention: ${message} Please do not pay again; retry finalizing or contact Hue Graphics.`);
+      throw error;
+    } finally {
+      setIsSubmittingTestOrder(false);
     }
   };
 
@@ -8249,8 +8392,8 @@ export default function Home() {
 
             {checkoutStep === 'review' ? <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-black text-white">Review test order</h3>
-                <p className="mt-1 text-sm text-slate-400">This snapshot includes products, pricing, options, and artwork references.</p>
+                <h3 className="text-lg font-black text-white">Review order</h3>
+                <p className="mt-1 text-sm text-slate-400">Confirm the products, pricing, options, fulfillment, and artwork before payment.</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -8302,12 +8445,25 @@ export default function Home() {
                     <span>{formatSignPrice(checkoutTaxAmount, 'USD')}</span>
                   </div>
                   <div className="flex items-center justify-between pt-2 text-lg font-black text-white">
-                    <span>Test total</span>
+                    <span>Order total</span>
                     <span className="text-green-400">{formatSignPrice(checkoutOrderTotal, 'USD')}</span>
                   </div>
                 </div>
               </div>
-              <p className="rounded border border-[#62d4ff]/25 bg-[#0ea5e9]/10 px-4 py-3 text-sm text-[#c8f2ff]">Test checkout only. No card is charged and no production order is sent yet.</p>
+              <div className="rounded-xl border border-[#62d4ff]/25 bg-[#071827] p-4">
+                <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-[#62d4ff]">Secure payment</p>
+                <PayPalCheckoutButton
+                  createOrder={createPayPalCheckoutOrder}
+                  onApprove={approvePayPalCheckoutOrder}
+                  onAvailabilityChange={setPaypalCheckoutAvailable}
+                  onCancel={() => setCheckoutStatus('PayPal Checkout was canceled. No payment was taken.')}
+                  onError={(message) => setCheckoutStatus(`PayPal Checkout: ${message}`)}
+                  disabled={isSubmittingTestOrder}
+                />
+                {paypalCheckoutAvailable === true ? <p className="mt-3 text-xs leading-5 text-slate-300">Hue verifies the current product pricing and exact order total on the server before PayPal opens. Payment is captured only after you approve it.</p> : null}
+                {paypalCheckoutAvailable === null ? <p className="mt-3 text-xs text-slate-400">Checking secure payment availability...</p> : null}
+                {paypalCheckoutAvailable === false ? <p className="mt-3 rounded border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">PayPal is not enabled in this environment. The testing-only submit button is available below.</p> : null}
+              </div>
             </div> : null}
 
             {checkoutStep === 'complete' ? <div className="space-y-4 text-center">
@@ -8315,7 +8471,7 @@ export default function Home() {
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-[#62d4ff]">Test order number</p>
                 <h3 className="mt-2 text-4xl font-black text-white">{lastTestOrder?.orderNumber || 'TEST SAVED'}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-300">No payment was collected. The cart was cleared and the test order was saved in this browser for workflow testing.</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{lastTestOrder?.paymentMode === 'paypal' ? 'Payment was received through PayPal and the order was securely submitted to Hue Graphics.' : 'No payment was collected. The cart was cleared and the test order was saved for workflow testing.'}</p>
               </div>
               {lastTestOrder ? <div className="mx-auto grid max-w-xl gap-3 text-left sm:grid-cols-3">
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -8374,12 +8530,12 @@ export default function Home() {
             </div> : null}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050b12] p-4">
-            <p className="text-xs leading-5 text-slate-400">Team testing mode. Real payment and final order automation can plug into this same order shape later.</p>
+            <p className="text-xs leading-5 text-slate-400">{checkoutStep === 'review' && paypalCheckoutAvailable === true ? 'Checkout is secured by PayPal. Hue verifies the exact price before accepting payment.' : 'Complete each step to submit the order.'}</p>
             <div className="flex gap-2">
               {checkoutStep !== 'contact' && checkoutStep !== 'complete' ? <button type="button" onClick={() => setCheckoutStep(checkoutStep === 'review' ? 'fulfillment' : 'contact')} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Back</button> : null}
               {checkoutStep === 'contact' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('fulfillment'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Continue</button> : null}
               {checkoutStep === 'fulfillment' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('review'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Review Order</button> : null}
-              {checkoutStep === 'review' ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : 'Submit Test Order'}</button> : null}
+              {checkoutStep === 'review' && paypalCheckoutAvailable === false ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : 'Submit Test Order'}</button> : null}
               {checkoutStep === 'complete' ? <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Done</button> : null}
             </div>
           </div>

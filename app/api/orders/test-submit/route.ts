@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
+import { getPayPalConfig, verifyPayPalToken, type PayPalPaymentToken } from "@/lib/server/paypal";
 import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
@@ -43,6 +44,7 @@ type OrderItem = {
 
 type TestOrderEmailPayload = {
   guestSessionId?: string;
+  paymentToken?: string;
   order?: {
     id?: string;
     orderNumber?: string;
@@ -68,6 +70,14 @@ type TestOrderEmailPayload = {
     shipping?: { amount?: number; label?: string };
     tax?: { rate?: number; amount?: number; label?: string };
     total?: number;
+    paymentMode?: 'test_no_payment' | 'paypal';
+    payment?: {
+      provider?: 'paypal';
+      status?: 'completed';
+      paypalOrderId?: string;
+      captureId?: string;
+      paidAt?: string;
+    };
   };
 };
 
@@ -118,6 +128,24 @@ type StoredOrderRecord = {
   admin_email_sent_at?: string | null;
   customer_email_sent_at?: string | null;
   updated_at?: string;
+  payment_provider?: string | null;
+  payment_status?: string | null;
+  paypal_order_id?: string | null;
+  paypal_capture_id?: string | null;
+  paid_at?: string | null;
+};
+
+type StoredPaymentAttempt = {
+  submission_key: string;
+  paypal_order_id: string;
+  paypal_capture_id?: string | null;
+  status: string;
+  customer_user_id?: string | null;
+  customer_email: string;
+  amount: number | string;
+  currency: string;
+  paid_at?: string | null;
+  priced_order?: NonNullable<TestOrderEmailPayload['order']> | null;
 };
 
 const renderArtworkPreview = (url: string | undefined, side: string) => url
@@ -174,6 +202,70 @@ const getSubmissionKey = (value: unknown) => {
   const key = String(value || '').trim();
   if (!/^[A-Za-z0-9_-]{20,120}$/.test(key)) return null;
   return key;
+};
+
+const normalizePaymentAmount = (value: unknown) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('The verified order total is invalid.');
+  return amount.toFixed(2);
+};
+
+const verifyCompletedPayPalPayment = async (input: {
+  paymentToken?: string;
+  submissionKey: string;
+  order: NonNullable<TestOrderEmailPayload['order']>;
+  userId?: string;
+}) => {
+  const config = getPayPalConfig();
+  if (!config.enabled) return null;
+  const email = String(input.order.customer?.email || '').trim().toLowerCase();
+  const amount = normalizePaymentAmount(input.order.total);
+  const currency = String(input.order.currency || 'USD').toUpperCase();
+  const rows = await supabaseAdminFetch(`/rest/v1/hue_payment_attempts?submission_key=eq.${encodeURIComponent(input.submissionKey)}&select=*&limit=1`) as StoredPaymentAttempt[];
+  const attempt = rows[0];
+  if (!attempt || attempt.status !== 'completed' || !attempt.paypal_capture_id) {
+    throw new Error('PayPal has not confirmed a completed payment for this order.');
+  }
+  if (String(attempt.customer_email || '').toLowerCase() !== email
+    || (attempt.customer_user_id || null) !== (input.userId || null)
+    || normalizePaymentAmount(attempt.amount) !== amount
+    || String(attempt.currency || '').toUpperCase() !== currency) {
+    throw new Error('The completed PayPal payment does not match this Hue order.');
+  }
+  if (input.paymentToken) {
+    const token = verifyPayPalToken<PayPalPaymentToken>(input.paymentToken, 'paypal_payment');
+    if (token.submissionKey !== input.submissionKey
+      || token.paypalOrderId !== attempt.paypal_order_id
+      || token.captureId !== attempt.paypal_capture_id
+      || token.customerEmail.toLowerCase() !== email
+      || normalizePaymentAmount(token.amount) !== amount
+      || token.currency.toUpperCase() !== currency) {
+      throw new Error('The PayPal confirmation token does not match this order.');
+    }
+  }
+  const duplicateRows = await supabaseAdminFetch(`/rest/v1/hue_orders?paypal_capture_id=eq.${encodeURIComponent(attempt.paypal_capture_id)}&submission_key=neq.${encodeURIComponent(input.submissionKey)}&select=id&limit=1`) as Array<{ id: string }>;
+  if (duplicateRows.length) throw new Error('This PayPal payment is already attached to another order.');
+  return attempt;
+};
+
+const applyVerifiedPaymentSnapshot = (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  attempt: StoredPaymentAttempt,
+) => {
+  const pricedOrder = attempt.priced_order;
+  if (!pricedOrder?.items?.length) {
+    throw new Error('The verified PayPal pricing snapshot is missing. Checkout has been stopped for safety.');
+  }
+  return {
+    ...order,
+    items: pricedOrder.items,
+    subtotal: pricedOrder.subtotal,
+    promotion: pricedOrder.promotion,
+    shipping: pricedOrder.shipping,
+    tax: pricedOrder.tax,
+    total: pricedOrder.total,
+    currency: pricedOrder.currency || 'USD',
+  };
 };
 
 const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPayload['order']>) => {
@@ -304,6 +396,7 @@ export async function POST(request: Request) {
   if (!submissionKey) return NextResponse.json({ error: 'This checkout session is invalid. Please reopen checkout and try again.' }, { status: 400 });
 
   let storedRecord: StoredOrderRecord | null = null;
+  let verifiedPayment: StoredPaymentAttempt | null = null;
   let validatedPromo: Awaited<ReturnType<typeof getPromoCode>> = null;
   let isNewOrder = false;
   try {
@@ -316,32 +409,54 @@ export async function POST(request: Request) {
       if (String(existing.customer_email || '').toLowerCase() !== order.customer.email.toLowerCase()) {
         return NextResponse.json({ error: 'This checkout submission does not match the original customer.' }, { status: 409 });
       }
-      if (existing.status === 'received' && existing.admin_email_sent_at && existing.customer_email_sent_at && existing.order_data) {
-        return NextResponse.json({ ok: true, duplicate: true, order: existing.order_data });
+      if (!existing.order_data?.customer || !existing.order_data.items?.length) throw new Error('The stored order data is incomplete.');
+      storedRecord = existing;
+      order = existing.order_data;
+      verifiedPayment = await verifyCompletedPayPalPayment({ paymentToken: payload.paymentToken, submissionKey, order, userId: verifiedUser?.id });
+      if (verifiedPayment) {
+        order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
+        order.paymentMode = 'paypal';
+        order.payment = { provider: 'paypal', status: 'completed', paypalOrderId: verifiedPayment.paypal_order_id, captureId: verifiedPayment.paypal_capture_id || undefined, paidAt: verifiedPayment.paid_at || undefined };
+      }
+      if (existing.status === 'received' && existing.admin_email_sent_at && existing.customer_email_sent_at) {
+        return NextResponse.json({ ok: true, duplicate: true, order });
       }
       const updatedAt = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
       if (existing.status === 'processing' && Date.now() - updatedAt < 120000) {
         return NextResponse.json({ error: 'This order is already being processed. Please wait a moment before trying again.' }, { status: 409 });
       }
-      if (!existing.order_data?.customer || !existing.order_data.items?.length) throw new Error('The stored order data is incomplete.');
-      storedRecord = existing;
-      order = existing.order_data;
       validateOrderArtworkOwnership(order, { existingOrderNumber: existing.order_number });
       await supabaseAdminFetch(`/rest/v1/hue_orders?id=eq.${encodeURIComponent(existing.id)}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ status: 'processing', last_email_error: null, updated_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          status: 'processing',
+          last_email_error: null,
+          ...(verifiedPayment ? {
+            payment_provider: 'paypal', payment_status: 'completed', paypal_order_id: verifiedPayment.paypal_order_id,
+            paypal_capture_id: verifiedPayment.paypal_capture_id, paid_at: verifiedPayment.paid_at,
+          } : {}),
+          updated_at: new Date().toISOString(),
+        }),
       });
     } else {
       validateOrderArtworkOwnership(order, { userId: verifiedUser?.id, guestSessionId: verifiedUser ? undefined : guestSessionId });
       order = await applyAuthoritativeOrderPricing(order);
       if (!order.customer || !order.items?.length) throw new Error('Customer details and at least one item are required.');
+      verifiedPayment = await verifyCompletedPayPalPayment({ paymentToken: payload.paymentToken, submissionKey, order, userId: verifiedUser?.id });
+      if (verifiedPayment) {
+        order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
+        order.paymentMode = 'paypal';
+        order.payment = { provider: 'paypal', status: 'completed', paypalOrderId: verifiedPayment.paypal_order_id, captureId: verifiedPayment.paypal_capture_id || undefined, paidAt: verifiedPayment.paid_at || undefined };
+      }
       order.orderNumber = createServerOrderNumber();
       order.createdAt = new Date().toISOString();
       const organizationWarnings = await organizeOrderProductionFiles(order);
       if (organizationWarnings.length) throw new Error(organizationWarnings.join(' '));
       const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
       attachDurableArtworkLinks(order, configuredOrigin || new URL(request.url).origin);
+      const customer = order.customer;
+      if (!customer) throw new Error('Customer details are required.');
       const insertedRows = await supabaseAdminFetch('/rest/v1/hue_orders', {
         method: 'POST',
         headers: { Prefer: 'return=representation' },
@@ -349,9 +464,9 @@ export async function POST(request: Request) {
           order_number: order.orderNumber,
           submission_key: submissionKey,
           status: 'processing',
-          customer_user_id: order.customer.userId || null,
-          customer_email: order.customer.email,
-          customer_name: order.customer.name || null,
+          customer_user_id: customer.userId || null,
+          customer_email: customer.email,
+          customer_name: customer.name || null,
           subtotal: Number(order.subtotal || 0),
           discount: Number(order.promotion?.discountAmount || 0),
           promo_code: order.promotion?.code || null,
@@ -359,6 +474,12 @@ export async function POST(request: Request) {
           tax: Number(order.tax?.amount || 0),
           total: Number(order.total || 0),
           currency: order.currency || 'USD',
+          payment_provider: verifiedPayment ? 'paypal' : null,
+          payment_status: verifiedPayment ? 'completed' : null,
+          paypal_order_id: verifiedPayment?.paypal_order_id || null,
+          paypal_capture_id: verifiedPayment?.paypal_capture_id || null,
+          paid_at: verifiedPayment?.paid_at || null,
+          payment_data: verifiedPayment || null,
           order_data: order,
           created_at: order.createdAt || new Date().toISOString()
         })
@@ -401,6 +522,7 @@ export async function POST(request: Request) {
   }
 
   const currency = order.currency || "USD";
+  const isTestOrder = !verifiedPayment || getPayPalConfig().environment === 'sandbox';
   const fulfillmentLabel = order.fulfillment?.method === "direct_ship" ? "Direct ship" : "Local pickup";
   const shippingAddress = order.fulfillment?.address
     ? [order.fulfillment.address.line1, order.fulfillment.address.line2, `${order.fulfillment.address.city || ""}, ${order.fulfillment.address.state || ""} ${order.fulfillment.address.postalCode || ""}`.trim()].filter(Boolean).join("\n")
@@ -433,7 +555,7 @@ export async function POST(request: Request) {
         <div style="background:#07111f;padding:24px;">
           <p style="margin:0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.18em;">Hue Studio Order</p>
           <h1 style="margin:8px 0 0;color:#ffffff;font-size:30px;line-height:1.1;">${escapeHtml(order.orderNumber)}</h1>
-          <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">Test checkout submitted ${escapeHtml(order.createdAt ? new Date(order.createdAt).toLocaleString() : "today")}.</p>
+          <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">${isTestOrder ? 'Test checkout submitted' : 'Payment received'} ${escapeHtml(order.createdAt ? new Date(order.createdAt).toLocaleString() : "today")}.</p>
         </div>
         <div style="padding:24px;">
           <table style="width:100%;border-collapse:collapse;">
@@ -462,22 +584,22 @@ export async function POST(request: Request) {
     </div>
   `;
 
-  // Temporary launch-testing notice for customer confirmations only.
-  // Keep the internal Hue order notification unchanged.
-  const customerHtml = html
-    .replace(
-      '<div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">',
-      `<div style="max-width:820px;margin:0 auto;">
-        <div style="margin:0 0 16px;background:#b91c1c;border:4px solid #7f1d1d;border-radius:16px;padding:22px;text-align:center;color:#ffffff;box-shadow:0 8px 24px rgba(127,29,29,.25);">
-          <p style="margin:0;font-size:28px;line-height:1.1;font-weight:900;text-transform:uppercase;letter-spacing:.05em;">Test Only — Not an Actual Order</p>
-          <p style="margin:10px 0 0;font-size:15px;line-height:1.5;font-weight:700;">Hue Studio is currently being tested. This confirmation is for testing purposes only and is not a real production order.</p>
-        </div>
-        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">`,
-    )
+  const customerBaseHtml = html
     .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
-    .replace("Test checkout submitted", "Test order submitted")
-    .replaceAll("Supabase", "Hue secure storage")
-    .replace(/\s*<\/div>\s*$/, '</div></div>');
+    .replaceAll("Supabase", "Hue secure storage");
+  const customerHtml = isTestOrder
+    ? customerBaseHtml
+      .replace(
+        '<div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">',
+        `<div style="max-width:820px;margin:0 auto;">
+          <div style="margin:0 0 16px;background:#b91c1c;border:4px solid #7f1d1d;border-radius:16px;padding:22px;text-align:center;color:#ffffff;box-shadow:0 8px 24px rgba(127,29,29,.25);">
+            <p style="margin:0;font-size:28px;line-height:1.1;font-weight:900;text-transform:uppercase;letter-spacing:.05em;">Test Only — Not an Actual Order</p>
+            <p style="margin:10px 0 0;font-size:15px;line-height:1.5;font-weight:700;">Hue Studio is currently being tested. This confirmation is for testing purposes only and is not a real production order.</p>
+          </div>
+          <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">`,
+      )
+      .replace(/\s*<\/div>\s*$/, '</div></div>')
+    : customerBaseHtml;
 
   const text = [
     `Hue Studio Order ${order.orderNumber}`,
@@ -547,8 +669,12 @@ export async function POST(request: Request) {
         from: orderFromEmail,
         html: customerHtml,
         reply_to: orderToEmail,
-        subject: `TEST ONLY — Hue Studio Confirmation ${order.orderNumber}`,
-        text: `TEST ONLY — NOT AN ACTUAL ORDER\nHue Studio is currently being tested. This is not a real production order.\n\n${text.replaceAll("Supabase", "Hue secure storage")}`,
+        subject: isTestOrder
+          ? `TEST ONLY — Hue Studio Confirmation ${order.orderNumber}`
+          : `Hue Studio Order Confirmation ${order.orderNumber}`,
+        text: isTestOrder
+          ? `TEST ONLY — NOT AN ACTUAL ORDER\nHue Studio is currently being tested. This is not a real production order.\n\n${text.replaceAll("Supabase", "Hue secure storage")}`
+          : text.replaceAll("Supabase", "Hue secure storage"),
         to: order.customer.email,
       }),
     });

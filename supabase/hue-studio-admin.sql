@@ -17,6 +17,12 @@ create table if not exists public.hue_orders (
   tax numeric(12,2) not null default 0,
   total numeric(12,2) not null default 0,
   currency text not null default 'USD',
+  payment_provider text null,
+  payment_status text null,
+  paypal_order_id text null,
+  paypal_capture_id text null,
+  paid_at timestamptz null,
+  payment_data jsonb null,
   printavo_status text not null default 'not_added' check (printavo_status in ('not_added', 'added')),
   printavo_order_number text null,
   printavo_added_at timestamptz null,
@@ -36,6 +42,12 @@ alter table public.hue_orders add column if not exists submission_key text null;
 alter table public.hue_orders add column if not exists admin_email_sent_at timestamptz null;
 alter table public.hue_orders add column if not exists customer_email_sent_at timestamptz null;
 alter table public.hue_orders add column if not exists last_email_error text null;
+alter table public.hue_orders add column if not exists payment_provider text null;
+alter table public.hue_orders add column if not exists payment_status text null;
+alter table public.hue_orders add column if not exists paypal_order_id text null;
+alter table public.hue_orders add column if not exists paypal_capture_id text null;
+alter table public.hue_orders add column if not exists paid_at timestamptz null;
+alter table public.hue_orders add column if not exists payment_data jsonb null;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'hue_orders_printavo_status_check') then
     alter table public.hue_orders add constraint hue_orders_printavo_status_check check (printavo_status in ('not_added', 'added'));
@@ -50,6 +62,8 @@ create index if not exists hue_orders_created_at_idx on public.hue_orders (creat
 create index if not exists hue_orders_printavo_status_idx on public.hue_orders (printavo_status, created_at desc);
 create unique index if not exists hue_orders_submission_key_uidx on public.hue_orders (submission_key) where submission_key is not null;
 create index if not exists hue_orders_status_updated_idx on public.hue_orders (status, updated_at desc);
+create unique index if not exists hue_orders_paypal_order_id_uidx on public.hue_orders (paypal_order_id) where paypal_order_id is not null;
+create unique index if not exists hue_orders_paypal_capture_id_uidx on public.hue_orders (paypal_capture_id) where paypal_capture_id is not null;
 
 create table if not exists public.hue_promo_codes (
   id uuid primary key default gen_random_uuid(),
