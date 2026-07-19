@@ -834,11 +834,63 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
     const drawHeight = image.naturalHeight * scale;
     context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
   }
-  const blob = await writePngResolution(await canvasToBlob(canvas, 'image/png'), BANNER_PREVIEW_DPI * outputScale);
+  const createScaledCanvas = (scale: number) => {
+    if (scale === 1) return canvas;
+    const scaledCanvas = document.createElement('canvas');
+    scaledCanvas.width = Math.max(1, Math.round(canvas.width * scale));
+    scaledCanvas.height = Math.max(1, Math.round(canvas.height * scale));
+    const scaledContext = scaledCanvas.getContext('2d');
+    if (!scaledContext) throw new Error('The final production artwork could not be resized for storage.');
+    scaledContext.imageSmoothingEnabled = true;
+    scaledContext.imageSmoothingQuality = 'high';
+    if (!options.transparentBackground) {
+      scaledContext.fillStyle = '#ffffff';
+      scaledContext.fillRect(0, 0, scaledCanvas.width, scaledCanvas.height);
+    }
+    scaledContext.drawImage(canvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+    return scaledCanvas;
+  };
+
+  let storageScale = 1;
+  let outputCanvas = canvas;
+  let mimeType = 'image/png';
+  let extension = 'png';
+  let blob: Blob;
+  const shouldPreferJpeg = !options.transparentBackground && canvas.width * canvas.height >= 24_000_000;
+
+  if (shouldPreferJpeg) {
+    mimeType = 'image/jpeg';
+    extension = 'jpg';
+    blob = await canvasToBlob(outputCanvas, mimeType, 0.95);
+  } else {
+    blob = await writePngResolution(await canvasToBlob(outputCanvas, mimeType), BANNER_PREVIEW_DPI * outputScale);
+  }
+
+  if (blob.size > GENERATED_ARTWORK_MAX_BYTES && !options.transparentBackground) {
+    mimeType = 'image/jpeg';
+    extension = 'jpg';
+    for (const quality of [0.95, 0.92, 0.88, 0.84]) {
+      blob = await canvasToBlob(outputCanvas, mimeType, quality);
+      if (blob.size <= GENERATED_ARTWORK_MAX_BYTES) break;
+    }
+  }
+
+  for (const scale of [0.9, 0.8, 0.7, 0.6, 0.5]) {
+    if (blob.size <= GENERATED_ARTWORK_MAX_BYTES) break;
+    storageScale = scale;
+    outputCanvas = createScaledCanvas(scale);
+    blob = options.transparentBackground
+      ? await writePngResolution(await canvasToBlob(outputCanvas, 'image/png'), BANNER_PREVIEW_DPI * outputScale * storageScale)
+      : await canvasToBlob(outputCanvas, 'image/jpeg', 0.9);
+  }
+
+  if (blob.size > GENERATED_ARTWORK_MAX_BYTES) {
+    throw new Error('The finished artwork is still too large to save safely. Try a smaller source file or contact Hue Graphics for help.');
+  }
   const baseName = options.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'artwork';
   const mode = options.fitState === 'stretch' ? 'STRETCHED' : isFullBleedMatch ? 'FULL-BLEED' : 'FIT';
-  const fileName = `FINAL-PRODUCTION-${baseName}-${options.width}x${options.height}-${mode}.png`;
-  return { file: new File([blob], fileName, { type: 'image/png' }), dataUrl: await blobToDataUrl(blob), width: canvas.width, height: canvas.height, name: fileName };
+  const fileName = `FINAL-PRODUCTION-${baseName}-${options.width}x${options.height}-${mode}.${extension}`;
+  return { file: new File([blob], fileName, { type: mimeType }), width: outputCanvas.width, height: outputCanvas.height, name: fileName };
 };
 
 const normalizeGeneratedArtworkForStorage = async (dataUrl: string, fileName: string, printSize: { width: number; height: number }) => {
@@ -6133,8 +6185,10 @@ export default function Home() {
         await attachFinalProductionFile({ role: 'Artwork', name: bannerArtworkName || `${selectedSignProduct.name}-artwork`, dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
       }
     } catch (error) {
-      setCartStatus(`The item was not added because its final production artwork could not be saved: ${error instanceof Error ? error.message : 'unknown rendering error'}.`);
-      setShowCart(true);
+      const message = `The item was not added because its final production artwork could not be saved: ${error instanceof Error ? error.message : 'unknown rendering error'}.`;
+      setCartStatus(message);
+      setSignEstimateStatus(message);
+      setShowCart(false);
       setIsPreparingCartArtwork(false);
       return;
     }
