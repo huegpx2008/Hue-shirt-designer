@@ -3642,6 +3642,48 @@ export default function Home() {
     setImageLibraryStatus('Back artwork removed. Single-sided pricing is now active.');
   };
 
+  const copyRigidFrontToBack = async () => {
+    if (!signArtworkPreviewUrl) {
+      setImageLibraryStatus('Add front artwork before using it for the back side.');
+      return;
+    }
+    try {
+      const librarySource = imageZoneItems.find((item) => item.dataUrl === signArtworkPreviewUrl || item.storageUrl === signArtworkPreviewUrl);
+      const naturalSize = librarySource?.width && librarySource?.height
+        ? { width: librarySource.width, height: librarySource.height }
+        : await getImageNaturalSize(signArtworkPreviewUrl);
+      const copiedBack: ImageZoneItem = {
+        ...(librarySource || {}),
+        id: `front-copy-${Date.now()}`,
+        name: `${bannerArtworkName || librarySource?.name || 'Front artwork'} - back`,
+        dataUrl: signArtworkPreviewUrl,
+        width: naturalSize.width,
+        height: naturalSize.height,
+        dpi: librarySource?.dpi || BANNER_PREVIEW_DPI,
+        uploadedAt: new Date().toLocaleString(),
+        source: librarySource?.source || 'local',
+        mimeType: librarySource?.mimeType || 'image/png',
+        signWidth,
+        signHeight,
+        backDataUrl: undefined,
+        backName: undefined,
+        backStoragePath: undefined,
+        backWidth: undefined,
+        backHeight: undefined,
+        backCopiedFromFront: true,
+        backFitState: bannerArtworkFitState
+      };
+      setRigidBackArtwork(copiedBack);
+      setRigidArtworkTarget('front');
+      setRigidPreviewSide('back');
+      setSignValues((prev) => ({ ...prev, sides: 'double' }));
+      setSignEstimate(null);
+      setImageLibraryStatus('Front artwork is now being used for the back side.');
+    } catch (error) {
+      setImageLibraryStatus(`Could not use the front artwork for the back: ${error instanceof Error ? error.message : 'image failed to load'}.`);
+    }
+  };
+
   const makeCurrentBannerOrderItem = (): BannerOrderItem => ({
     id: `banner-${Date.now()}-${Math.round(Math.random() * 10000)}`,
     name: bannerArtworkName || 'Banner artwork',
@@ -7170,7 +7212,7 @@ export default function Home() {
                 </div>
               </div> : null}
               {productMode === 'signage' ? <div className={`hue-builder-summary absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[6vw] top-7 lg:grid-cols-[minmax(220px,1fr)_minmax(360px,520px)_minmax(190px,250px)]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
-                <div className={`flex items-start gap-3 ${isProductionBuilder ? 'max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-3 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur' : ''}`}>
+                <div className={`hue-builder-product-card flex items-start gap-3 ${isProductionBuilder ? 'max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-3 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur' : ''}`}>
                   <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
                     <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-[#1678b8]'}`}>Order Builder</p>
@@ -7179,7 +7221,7 @@ export default function Home() {
                     {isCoroBuilder ? <p className="mt-3 max-w-sm rounded border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 text-[10px] font-bold leading-4 text-amber-100">One 48&quot; × 96&quot; sheet is the minimum. Add more pieces to fill the available sheet space and lower the price per piece.</p> : null}
                   </div>
                 </div>
-                <div className={`text-xs ${isProductionBuilder ? 'rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-6 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur lg:col-start-2 lg:row-start-1' : ''}`}>
+                <div className={`hue-builder-production-card text-xs ${isProductionBuilder ? 'rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-6 py-4 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur lg:col-start-2 lg:row-start-1' : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className={`font-black uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-slate-500'}`}>Hue Production Summary</p>
                     {isProductionBuilder ? <span className="rounded-full border border-[#0ea5e9]/35 bg-[#0b263d] px-2.5 py-1 text-[10px] font-black uppercase text-[#9be6ff]">{hueQualityStatus}</span> : null}
@@ -7256,7 +7298,7 @@ export default function Home() {
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">{hueOrderPathLabel}</span>
                   </div> : null}
                 </div>
-                <div className={`text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
+                <div className={`hue-builder-total-card text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-6 py-4 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
                   <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isCoroBuilder && signPricePerSheet !== null ? formatSignPrice(signPricePerSheet, coroPricingCurrency) : isSignEstimateLoading ? '...' : signOrderRetailTotal !== null ? formatSignPrice(signOrderRetailTotal, signEstimate?.currency) : '$0.00'}</p>
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${coroSheetLayout.signsPerSheet} per sheet` : isBusinessCardBuilder ? `${designerQuantity} business cards` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${summaryMaterialLabel}`}</p>
@@ -7450,6 +7492,7 @@ export default function Home() {
                     <button type="button" onClick={() => { setRigidArtworkTarget('back'); setShowImageZone(true); setImageLibraryStatus(`Choose back artwork for this ${selectedSignProduct.name}.`); }} className={`hue-artwork-dropzone flex min-h-28 w-full items-center justify-center rounded-lg border border-dashed p-3 text-center text-[10px] uppercase ${rigidBackArtwork ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[#38bdf8]/45 bg-slate-50 text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]'}`}>
                       {rigidBackArtwork ? <span className="w-full"><img src={rigidBackArtwork.dataUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" /><span className="mt-2 block font-bold">Back image</span><span className="mt-1 block normal-case text-slate-500">Double-sided pricing active</span></span> : <span><span className="block text-sm font-black text-[#1678b8]">+ Add back artwork</span><span className="mt-1 block normal-case text-slate-500">Adding a back automatically switches pricing to double-sided.</span></span>}
                     </button>
+                    {signArtworkPreviewUrl && String(signValues.sides || 'single') === 'double' ? <button type="button" onClick={() => { void copyRigidFrontToBack(); }} className="mt-2 w-full rounded-lg border border-[#1678b8]/30 bg-[#eaf7ff] px-3 py-2 text-[10px] font-black uppercase tracking-[0.04em] text-[#0f5f94] hover:border-[#1678b8] hover:bg-[#dff2ff]">Use front artwork for back</button> : null}
                     {rigidBackArtwork ? <button type="button" onClick={removeRigidBackArtwork} className="mt-2 w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase text-red-600 hover:bg-red-100">Remove back artwork</button> : null}
                   </div> : null}
                   </div>
@@ -7543,7 +7586,7 @@ export default function Home() {
                           </span>
                         </button> : null}
                       </div>
-                      {hasCoroDoubleSided ? <button type="button" onClick={() => copyCoroFrontToBack(item.id)} className="mt-2 w-full rounded border border-[#1678b8]/30 bg-white px-2 py-2 text-xs font-bold text-[#1678b8] hover:bg-[#eaf5fb]">Copy Front Image To Back</button> : null}
+                      {hasCoroDoubleSided ? <button type="button" onClick={() => copyCoroFrontToBack(item.id)} className="mt-2 w-full rounded border border-[#1678b8]/30 bg-white px-2 py-2 text-xs font-bold text-[#1678b8] hover:bg-[#eaf5fb]">Use Front Artwork for Back</button> : null}
                       <p className="mt-2 text-center text-[10px] font-bold text-slate-600">Starts on sheet #{itemSheetIndex + 1}</p>
                       {frontMismatch || backMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Aspect ratio mismatch. Use Fit to preserve proportion or Stretch to force {itemSignWidth}&quot; x {itemSignHeight}&quot;.</p> : null}
                       <div className="mt-3 text-xs">

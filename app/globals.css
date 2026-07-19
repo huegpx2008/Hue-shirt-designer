@@ -561,7 +561,7 @@ body {
   }
 
   .hue-mobile-builder-stage {
-    min-height: 790px;
+    min-height: 1000px;
     height: auto !important;
   }
 
@@ -569,24 +569,86 @@ body {
     left: 12px !important;
     right: 12px !important;
     top: 14px !important;
-    display: flex !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) !important;
     align-items: stretch !important;
-    overflow-x: auto;
-    padding-bottom: 8px;
-    scrollbar-width: none;
-  }
-
-  .hue-builder-summary::-webkit-scrollbar {
-    display: none;
+    gap: 8px !important;
+    overflow: visible;
+    padding-bottom: 0;
   }
 
   .hue-builder-summary > * {
-    width: min(78vw, 292px);
-    min-width: min(78vw, 292px);
+    width: auto;
+    min-width: 0;
+  }
+
+  .hue-builder-product-card {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 12px !important;
+  }
+
+  .hue-builder-product-card > div:last-child {
+    min-width: 0;
+  }
+
+  .hue-builder-product-card p:nth-child(2) {
+    font-size: 18px !important;
+    line-height: 1.05 !important;
+  }
+
+  .hue-builder-product-card p:nth-child(3) {
+    display: none;
+  }
+
+  .hue-builder-product-card p:nth-child(4) {
+    display: none;
+  }
+
+  .hue-builder-total-card {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 12px !important;
+    text-align: center !important;
+  }
+
+  .hue-builder-total-card > p:nth-child(2) {
+    font-size: 28px !important;
+    line-height: 1 !important;
+  }
+
+  .hue-builder-total-card > p:nth-child(3),
+  .hue-builder-total-card > p:nth-child(4),
+  .hue-builder-total-card > p:nth-child(5) {
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+  }
+
+  .hue-builder-total-card button {
+    min-height: 44px;
+    margin-top: 8px !important;
+    font-size: 11px !important;
+  }
+
+  .hue-builder-production-card {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding: 12px 14px !important;
+  }
+
+  .hue-builder-production-card > div:nth-child(2) {
+    margin-top: 8px !important;
+  }
+
+  .hue-builder-production-card > div:last-child {
+    margin-top: 8px !important;
   }
 
   .hue-builder-canvas {
-    top: 205px !important;
+    top: 355px !important;
     bottom: 76px !important;
   }
 
