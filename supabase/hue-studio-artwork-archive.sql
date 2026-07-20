@@ -47,3 +47,5 @@ alter table public.hue_artwork_archive enable row level security;
 
 -- Deliberately no browser policies. Archive records are accessed only through
 -- Hue Studio server routes using the Supabase service role.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on table public.hue_artwork_archive to service_role;
