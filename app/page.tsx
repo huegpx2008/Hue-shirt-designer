@@ -39,7 +39,7 @@ type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -61,7 +61,7 @@ type StoreProductCard = { id: string; category: StoreCategoryId; title: string; 
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; studioPricing?: { sheetPricing?: { filledSheetTotal?: number | string } }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
-type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase'; previewUrl?: string };
+type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; previewUrl?: string };
 type CartProductionArtwork = { id: string; label: string; quantity: number; sizeLabel: string; sheetLabel?: string; frontName: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
 type CartItem = {
   id: string;
@@ -1976,7 +1976,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!customerSession?.access_token || !customerSession.user?.id) {
-      setImageZoneItems((prev) => prev.filter((item) => item.source !== 'supabase'));
+      setImageZoneItems((prev) => prev.filter((item) => item.source === 'local'));
       setSelectedImageZoneId(null);
       setIsImageLibraryLoading(false);
       setImageLibraryStatus('Guest session: artwork stays in this browser until you sign in. Create an account or sign in to save a private cloud library.');
@@ -2079,11 +2079,39 @@ export default function Home() {
           const back = pairedSides.get(pairMatch[1])?.back;
           return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
         });
+        let archivedItems: ImageZoneItem[] = [];
+        try {
+          const archiveResponse = await fetch('/api/artwork/archive', {
+            headers: { Authorization: `Bearer ${customerSession.access_token}` },
+          });
+          if (archiveResponse.ok) {
+            const archivePayload = await archiveResponse.json() as { items?: Array<{ id: string; originalName: string; mimeType?: string; storagePath?: string; previewUrl?: string; archivedAt?: string }> };
+            archivedItems = (archivePayload.items || []).filter((entry) => Boolean(entry.previewUrl)).map((entry) => ({
+              id: `archive-${entry.id}`,
+              archiveId: entry.id,
+              archived: true,
+              name: entry.originalName,
+              dataUrl: entry.previewUrl || '',
+              storageUrl: entry.previewUrl,
+              storagePath: entry.storagePath,
+              width: 0,
+              height: 0,
+              dpi: BANNER_PREVIEW_DPI,
+              uploadedAt: entry.archivedAt || 'Drive archive',
+              source: 'archive' as const,
+              mimeType: entry.mimeType,
+            }));
+          }
+        } catch {
+          // Current cloud files remain usable even if the archive list is temporarily unavailable.
+        }
+        if (!mounted) return;
         setImageZoneItems((prev) => {
-          const localItems = prev.filter((item) => item.source !== 'supabase');
-          return [...remoteItems, ...localItems];
+          const localItems = prev.filter((item) => item.source === 'local');
+          return [...remoteItems, ...archivedItems, ...localItems];
         });
-        setImageLibraryStatus(`Signed in as ${customerSession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.`);
+        const archivedMessage = archivedItems.length ? ` ${archivedItems.length} archived preview${archivedItems.length === 1 ? '' : 's'} available.` : '';
+        setImageLibraryStatus(`Signed in as ${customerSession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.${archivedMessage}`);
       } catch (error) {
         if (!mounted) return;
         setImageLibraryStatus(`Supabase library not readable yet: ${error instanceof Error ? error.message : 'unknown error'}. Local previews still work.`);
@@ -3527,6 +3555,10 @@ export default function Home() {
   };
 
   const deleteImageZoneItem = async (item: ImageZoneItem) => {
+    if (item.source === 'archive') {
+      setImageLibraryStatus(`${item.name} is safely archived in Hue Drive storage. Restore it to use it again.`);
+      return;
+    }
     const relatedFileCount = 1 + (item.backDataUrl ? 1 : 0) + (item.editorProject ? 1 : 0);
     const confirmed = window.confirm(relatedFileCount > 1
       ? `Permanently delete ${item.name} and its related back/editable files from Image Zone? This cannot be undone.`
@@ -3575,6 +3607,7 @@ export default function Home() {
   };
 
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
+    if (item.source === 'archive') throw new Error('Restore this archived artwork before using it.');
     const refreshedUrl = item.source === 'supabase' && item.storagePath
       ? await getSignedImageZoneUrl(item.storagePath)
       : item.dataUrl;
@@ -5686,13 +5719,44 @@ export default function Home() {
 
   const useImageZoneItem = async (item: ImageZoneItem) => {
     setSelectedImageZoneId(item.id);
-    if (!canPlaceImageZoneItem(item)) {
-      setImageLibraryStatus(`${item.name} is selected for production. PDF placement preview is coming next.`);
-      return;
-    }
     let imageItem: ImageZoneItem;
     try {
-      imageItem = await hydrateImageZoneItemSize(item);
+      let requestedItem = item;
+      if (item.source === 'archive') {
+        if (!customerSession?.access_token || !item.archiveId) throw new Error('Sign in again to restore this archived artwork.');
+        setImageLibraryStatus(`Restoring ${item.name} from the Hue archive...`);
+        const response = await fetch('/api/artwork/archive', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${customerSession.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ archiveId: item.archiveId }),
+        });
+        const payload = await response.json() as { item?: { originalName?: string; mimeType?: string; storagePath?: string; storageUrl?: string }; error?: string };
+        if (!response.ok || !payload.item?.storageUrl || !payload.item.storagePath) throw new Error(payload.error || 'Could not restore archived artwork.');
+        requestedItem = {
+          ...item,
+          id: `restored-${item.archiveId}`,
+          name: payload.item.originalName || item.name,
+          dataUrl: payload.item.storageUrl,
+          storageUrl: payload.item.storageUrl,
+          storagePath: payload.item.storagePath,
+          // Restores are short-lived working copies. Treat them like local artwork so
+          // Image Zone uses the signed restore URL instead of customer-library RLS.
+          source: 'local',
+          archived: false,
+          mimeType: payload.item.mimeType || item.mimeType,
+          uploadedAt: new Date().toISOString(),
+        };
+        setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? requestedItem : entry));
+        setSelectedImageZoneId(requestedItem.id);
+      }
+      if (!canPlaceImageZoneItem(requestedItem)) {
+        setImageLibraryStatus(`${requestedItem.name} is selected for production. PDF placement preview is coming next.`);
+        return;
+      }
+      imageItem = await hydrateImageZoneItemSize(requestedItem);
     } catch (error) {
       setImageLibraryStatus(error instanceof Error ? error.message : `Could not load ${item.name}. Please sign in again and retry.`);
       return;
@@ -7656,9 +7720,9 @@ export default function Home() {
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
 <span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span>
-                          <span className="mt-1 block text-slate-400">{item.source === 'supabase' ? 'Stored in Supabase' : 'Browser preview'}</span>
+                          <span className="mt-1 block text-slate-400">{item.source === 'archive' ? 'Drive archived - restores when used' : item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</span>
                         </span>
-                        <span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span>
+                        <span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">{item.source === 'archive' ? 'Restore' : 'Use'}</span>
                       </button>;
                     })}
                   </div>
@@ -8852,9 +8916,9 @@ export default function Home() {
                     <p className={`truncate text-sm font-black ${selected ? 'text-slate-950' : 'text-white'}`}>{item.name}</p>
                     <p className={`mt-2 text-xs font-bold ${selected ? 'text-slate-600' : 'text-slate-300'}`}>{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</p>
                     <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
-                    <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</p>
+                    <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'archive' ? 'Drive archived' : item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</p>
                     <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
-                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await useImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">Use</button><button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button></div>
+                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await useImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">{item.source === 'archive' ? 'Restore & Use' : 'Use'}</button>{item.source !== 'archive' ? <button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button> : null}</div>
                   </div>
                 </article>;
               })}

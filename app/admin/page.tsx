@@ -15,6 +15,7 @@ type SheetPricingDraft = { includedPieces: string; extraPercent: string; maxSurc
 type DashboardData = { users: AdminUser[]; orders: AdminOrder[]; files: AdminFile[]; promos: AdminPromo[]; pricing: AdminPricing[]; pricingConfigured: boolean; sheetPricingConfigured: boolean };
 type AdminTab = 'overview' | 'orders' | 'users' | 'guests' | 'files' | 'pricing' | 'promos';
 type GuestGroupData = { key: string; label: string; detail: string; orders: AdminOrder[]; files: AdminFile[] };
+type ArchiveStats = { trackedFiles: number; activeOriginals: number; eligibleFiles: number; activeBytes: number; eligibleBytes: number; cleanedFiles: number };
 
 const money = (value: unknown, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0));
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
@@ -66,6 +67,9 @@ export default function AdminPage() {
   const [sheetPricingDrafts, setSheetPricingDrafts] = useState<Record<string, SheetPricingDraft>>({});
   const [savingPricingKey, setSavingPricingKey] = useState('');
   const [previewFile, setPreviewFile] = useState<AdminFile | null>(null);
+  const [archiveStats, setArchiveStats] = useState<ArchiveStats | null>(null);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState('');
 
   const loadDashboard = async () => {
     setStatus('Loading Hue Studio data...');
@@ -94,6 +98,49 @@ export default function AdminPage() {
   };
 
   useEffect(() => { void loadDashboard(); }, []);
+
+  const loadArchiveStats = async () => {
+    const response = await fetch('/api/admin/storage-cleanup', { cache: 'no-store' });
+    const payload = await response.json().catch(() => ({})) as { stats?: ArchiveStats; error?: string };
+    if (!response.ok) {
+      setCleanupMessage(payload.error || 'Storage status could not be loaded.');
+      return;
+    }
+    setArchiveStats(payload.stats || null);
+  };
+
+  useEffect(() => {
+    if (authenticated && tab === 'files') void loadArchiveStats();
+  }, [authenticated, tab]);
+
+  const runStorageCleanup = async (emergency: boolean) => {
+    if (emergency && !window.confirm('Archive and clean verified originals now, even if their normal retention period has not ended? Drive and preview verification will still be required.')) return;
+    setCleanupBusy(true);
+    setCleanupMessage(emergency ? 'Verifying Drive copies and cleaning Supabase now...' : 'Archiving recent orders and cleaning eligible files...');
+    const response = await fetch('/api/admin/storage-cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emergency }),
+    });
+    const payload = await response.json().catch(() => ({})) as {
+      error?: string;
+      cleanup?: { cleanedFiles?: number; reclaimedBytes?: number; skipped?: string[] };
+      guestCleanup?: { deletedFiles?: number; reclaimedBytes?: number; skipped?: string[] };
+      after?: ArchiveStats;
+    };
+    if (!response.ok) setCleanupMessage(payload.error || 'Storage cleanup failed.');
+    else {
+      setArchiveStats(payload.after || null);
+      const cleaned = payload.cleanup?.cleanedFiles || 0;
+      const guestFiles = payload.guestCleanup?.deletedFiles || 0;
+      const reclaimed = fileSize((payload.cleanup?.reclaimedBytes || 0) + (payload.guestCleanup?.reclaimedBytes || 0));
+      const skipped = (payload.cleanup?.skipped?.length || 0) + (payload.guestCleanup?.skipped?.length || 0);
+      setCleanupMessage(`Cleanup finished: ${cleaned} verified order original${cleaned === 1 ? '' : 's'} archived, ${guestFiles} expired guest upload${guestFiles === 1 ? '' : 's'} removed, ${reclaimed} reclaimed${skipped ? `, ${skipped} safely skipped` : ''}.`);
+      await loadDashboard();
+      setTab('files');
+    }
+    setCleanupBusy(false);
+  };
 
   const signIn = async (event: FormEvent) => {
     event.preventDefault();
@@ -264,7 +311,7 @@ export default function AdminPage() {
           if (query && !groupText.includes(query)) return null;
           return <GuestFiles key={group.key} group={group} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />;
         })}{guestGroups.length === 0 ? <p className="rounded-2xl border border-white/10 bg-[#071522] p-5 text-sm text-slate-500">No guest uploads or guest orders found.</p> : null}</div> : null}
-        {tab === 'files' ? <div className="space-y-4"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Customer artwork</p><h2 className="mt-1 text-2xl font-black">Files organized by customer</h2><p className="mt-1 text-sm text-slate-400">Open a customer to see library uploads and final-production order files together.</p></div>{customerGroups.map((group) => {
+        {tab === 'files' ? <div className="space-y-4"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Customer artwork</p><h2 className="mt-1 text-2xl font-black">Files organized by customer</h2><p className="mt-1 text-sm text-slate-400">Open a customer to see library uploads and final-production order files together.</p></div><section className="rounded-2xl border border-[#38bdf8]/25 bg-[#071522] p-5"><div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Storage safety</p><h3 className="mt-1 text-xl font-black">Supabase archive cleanup</h3><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">Full ordered originals are removed only after the Google Drive copy and Hue preview are both reverified. Abandoned guest uploads are removed after 72 hours. Signed-in customer libraries remain protected. Regular cleanup respects the seven-day order retention period; emergency cleanup skips only that waiting period.</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={cleanupBusy} onClick={() => void runStorageCleanup(false)} className="rounded-xl border border-[#38bdf8]/40 bg-[#0b2537] px-4 py-3 text-xs font-black uppercase text-[#8be2ff] hover:bg-[#10334a] disabled:opacity-50">{cleanupBusy ? 'Working...' : 'Archive & clean eligible'}</button><button type="button" disabled={cleanupBusy} onClick={() => void runStorageCleanup(true)} className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-xs font-black uppercase text-amber-200 hover:bg-amber-400/15 disabled:opacity-50">Emergency cleanup now</button></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><StorageStat label="Tracked originals" value={String(archiveStats?.trackedFiles ?? 0)} /><StorageStat label="Still in Supabase" value={String(archiveStats?.activeOriginals ?? 0)} detail={fileSize(archiveStats?.activeBytes)} /><StorageStat label="Eligible now" value={String(archiveStats?.eligibleFiles ?? 0)} detail={fileSize(archiveStats?.eligibleBytes)} /><StorageStat label="Already cleaned" value={String(archiveStats?.cleanedFiles ?? 0)} /></div>{cleanupMessage ? <p className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">{cleanupMessage}</p> : null}</section>{customerGroups.map((group) => {
           const groupText = `${group.user.email || ''} ${group.user.user_metadata?.full_name || group.user.user_metadata?.name || ''} ${group.orders.map((order) => order.order_number).join(' ')} ${group.files.map((file) => `${file.name || ''} ${file.path || ''}`).join(' ')}`.toLowerCase();
           if (query && !groupText.includes(query)) return null;
           return <CustomerFiles key={group.user.id || group.user.email} user={group.user} orders={group.orders} files={group.files} onPreview={setPreviewFile} />;
@@ -307,6 +354,7 @@ function PricingPanel({ items, categories, configured, sheetPricingConfigured, d
 }
 function SheetPricingInput({ label, value, min, max, step, suffix, disabled, onChange }: { label: string; value: string; min: string; max: string; step: string; suffix: string; disabled: boolean; onChange: (value: string) => void }) { return <label className="text-[11px] font-bold text-slate-400">{label}<div className="relative mt-1"><input type="number" min={min} max={max} step={step} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-lg border border-white/15 bg-[#02070d] px-3 pr-10 font-black text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /><span className="pointer-events-none absolute right-3 top-3 text-[10px] font-black text-slate-500">{suffix}</span></div></label>; }
 function PricingLegend() { return <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase"><span className="rounded-full bg-slate-400/10 px-3 py-1.5 text-slate-300">100% standard</span><span className="rounded-full bg-green-400/10 px-3 py-1.5 text-green-300">80% = 20% off</span><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">110% = 10% above</span></div>; }
+function StorageStat({ label, value, detail }: { label: string; value: string; detail?: string }) { return <div className="rounded-xl border border-white/10 bg-black/20 p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</p><p className="mt-1 text-2xl font-black text-white">{value}</p>{detail ? <p className="mt-1 text-xs font-bold text-[#67d8ff]">{detail}</p> : null}</div>; }
 function AdminList({ title, children }: { title: string; children: ReactNode }) { return <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><div className="border-b border-white/10 px-5 py-4"><h2 className="text-lg font-black">{title}</h2></div><div className="divide-y divide-white/10">{children || <p className="p-5 text-sm text-slate-500">Nothing to show yet.</p>}</div></div>; }
 function Row({ title, detail, value }: { title: string; detail: string; value: string }) { return <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{title}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{detail}</p></div><p className="text-xs font-bold text-[#8be3ff]">{value}</p></div>; }
 function CustomerRow({ user, orders, files, onPreview, onOrderUpdated }: { user: AdminUser; orders: AdminOrder[]; files: AdminFile[]; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void }) {

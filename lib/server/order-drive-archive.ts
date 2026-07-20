@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { recordVerifiedDriveArchive } from '@/lib/server/artwork-archive';
 import { driveFolderUrl, ensureDriveFolder, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, sanitizeDriveName, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
 import { getStorageSignedUrl, supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
@@ -7,6 +8,7 @@ export type DriveArchiveOrder = {
   id: string;
   order_number: string;
   customer_email?: string | null;
+  customer_user_id?: string | null;
   customer_name?: string | null;
   total?: number | null;
   currency?: string | null;
@@ -79,14 +81,35 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
     const productionFolder = await ensureDriveFolder(orderFolder.id, 'FINAL-PRODUCTION');
     const archiveFiles = collectArchiveFiles(order);
 
+    const registryWarnings: string[] = [];
     for (const file of archiveFiles) {
       const downloaded = await downloadStorageFile(file.path);
-      await uploadDriveFileIfMissing({
-        parentId: file.kind === 'final' ? productionFolder.id : originalsFolder.id,
+      const parentId = file.kind === 'final' ? productionFolder.id : originalsFolder.id;
+      const driveFile = await uploadDriveFileIfMissing({
+        parentId,
         name: file.name,
         mimeType: downloaded.mimeType,
         bytes: downloaded.bytes,
       });
+      try {
+        await recordVerifiedDriveArchive({
+          storagePath: file.path,
+          originalName: file.name,
+          kind: file.kind,
+          bytes: downloaded.bytes,
+          mimeType: downloaded.mimeType,
+          driveFileId: driveFile.id,
+          driveFolderId: parentId,
+          driveWebViewLink: driveFile.webViewLink,
+          orderId: order.id,
+          orderNumber: order.order_number,
+          customerId: order.customer_user_id,
+          customerEmail: order.customer_email,
+        });
+      } catch (registryError) {
+        const message = registryError instanceof Error ? registryError.message : 'Archive registry update failed.';
+        registryWarnings.push(`${file.name}: ${message}`);
+      }
     }
 
     const manifest = {
@@ -96,8 +119,9 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
       total: order.total || null,
       currency: order.currency || 'USD',
       archivedAt: new Date().toISOString(),
-      source: 'Hue Studio / Supabase',
+      source: 'Hue Studio secure storage',
       files: archiveFiles.map(({ path, name, kind }) => ({ storagePath: path, name, kind })),
+      registryWarnings,
       order: order.order_data || {},
     };
     const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
@@ -111,7 +135,7 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
       drive_archived_at: new Date().toISOString(),
       drive_archive_error: null,
     });
-    return { ok: true, folderUrl };
+    return { ok: true, folderUrl, registryWarnings };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown Google Drive archive error.';
     await patchOrder(order.id, { drive_archive_status: 'failed', drive_archive_error: message.slice(0, 1000) }).catch(() => undefined);

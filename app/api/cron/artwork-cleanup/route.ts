@@ -1,0 +1,35 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+import { archiveStaleCustomerArtwork, cleanupExpiredGuestUploads, cleanupVerifiedSupabaseArtwork, getArtworkArchiveStats } from '@/lib/server/artwork-archive';
+import { isGoogleDriveArchiveConfigured } from '@/lib/server/google-drive';
+import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/order-drive-archive';
+import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
+
+const authorized = (request: NextRequest) => {
+  const secret = process.env.CRON_SECRET || '';
+  return Boolean(secret) && request.headers.get('authorization') === `Bearer ${secret}`;
+};
+
+export async function GET(request: NextRequest) {
+  if (!authorized(request)) return NextResponse.json({ error: 'Cron authorization required.' }, { status: 401 });
+  try {
+    const archiveResults: Array<{ orderNumber: string; ok: boolean }> = [];
+    if (isGoogleDriveArchiveConfigured()) {
+      const orders = await supabaseAdminFetch(
+        '/rest/v1/hue_orders?select=*&order=created_at.asc&limit=100',
+      ) as DriveArchiveOrder[];
+      const pendingOrders = orders.filter((order) => order.drive_archive_status !== 'archived').slice(0, 25);
+      for (const order of pendingOrders) {
+        const result = await archiveOrderToDriveBestEffort(order, { force: true });
+        archiveResults.push({ orderNumber: order.order_number, ok: result.ok });
+      }
+    }
+    const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: 30, limit: 25 });
+    const cleanup = await cleanupVerifiedSupabaseArtwork({ limit: 100 });
+    const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: 72, limit: 100 });
+    return NextResponse.json({ ok: true, staleArchive, cleanup, guestCleanup, archiveResults, stats: await getArtworkArchiveStats() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Scheduled artwork cleanup failed.';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

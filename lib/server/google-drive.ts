@@ -1,6 +1,14 @@
 import 'server-only';
 
-type DriveFile = { id: string; name?: string; webViewLink?: string };
+export type DriveFile = {
+  id: string;
+  name?: string;
+  mimeType?: string;
+  size?: string;
+  webViewLink?: string;
+  trashed?: boolean;
+  parents?: string[];
+};
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
@@ -113,6 +121,25 @@ export const uploadDriveFileIfMissing = async (args: {
     body: bytes as BodyInit,
   });
   return finish.json() as Promise<DriveFile>;
+};
+
+export const getDriveFileMetadata = async (fileId: string): Promise<DriveFile> => {
+  if (!fileId) throw new Error('A Google Drive file id is required.');
+  const params = new URLSearchParams({
+    fields: 'id,name,mimeType,size,webViewLink,trashed,parents',
+    supportsAllDrives: 'true',
+  });
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params}`);
+  return response.json() as Promise<DriveFile>;
+};
+
+export const downloadDriveFile = async (fileId: string) => {
+  if (!fileId) throw new Error('A Google Drive file id is required.');
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`);
+  return {
+    bytes: await response.arrayBuffer(),
+    mimeType: response.headers.get('content-type') || 'application/octet-stream',
+  };
 };
 
 export const driveFolderUrl = (folderId: string) => `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`;
