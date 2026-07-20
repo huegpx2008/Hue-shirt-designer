@@ -1856,6 +1856,9 @@ export default function Home() {
   const [cartStatus, setCartStatus] = useState('');
   const [showTestCheckout, setShowTestCheckout] = useState(false);
   const [testOrders, setTestOrders] = useState<TestOrder[]>([]);
+  const [accountOrders, setAccountOrders] = useState<TestOrder[]>([]);
+  const [accountOrdersLoading, setAccountOrdersLoading] = useState(false);
+  const [accountOrdersError, setAccountOrdersError] = useState('');
   const [checkoutStep, setCheckoutStep] = useState<'contact' | 'fulfillment' | 'review' | 'complete'>('contact');
   const [checkoutStatus, setCheckoutStatus] = useState('');
   const [checkoutContact, setCheckoutContact] = useState({ name: '', organization: '', email: '', phone: '', notes: '' });
@@ -1973,6 +1976,41 @@ export default function Home() {
       setCheckoutStatus('Test order history is too large for browser storage. The current submitted order is still shown.');
     }
   }, [testOrders]);
+
+  useEffect(() => {
+    const accessToken = customerSession?.access_token;
+    if (!accessToken) {
+      setAccountOrders([]);
+      setAccountOrdersLoading(false);
+      setAccountOrdersError('');
+      return;
+    }
+
+    const controller = new AbortController();
+    const loadAccountOrders = async () => {
+      setAccountOrdersLoading(true);
+      setAccountOrdersError('');
+      try {
+        const response = await fetch('/api/account/orders', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: controller.signal
+        });
+        const payload = await response.json() as { orders?: TestOrder[]; error?: string };
+        if (!response.ok) throw new Error(payload.error || 'Unable to load order history.');
+        if (!controller.signal.aborted) setAccountOrders(Array.isArray(payload.orders) ? payload.orders : []);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setAccountOrdersError(error instanceof Error ? error.message : 'Unable to load order history.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setAccountOrdersLoading(false);
+      }
+    };
+
+    void loadAccountOrders();
+    return () => controller.abort();
+  }, [customerSession?.access_token]);
 
   useEffect(() => {
     if (!customerSession?.access_token || !customerSession.user?.id) {
@@ -2106,11 +2144,13 @@ export default function Home() {
           // Current cloud files remain usable even if the archive list is temporarily unavailable.
         }
         if (!mounted) return;
+        const liveStoragePaths = new Set(remoteItems.map((item) => item.storagePath).filter(Boolean));
+        const visibleArchivedItems = archivedItems.filter((item) => !item.storagePath || !liveStoragePaths.has(item.storagePath));
         setImageZoneItems((prev) => {
           const localItems = prev.filter((item) => item.source === 'local');
-          return [...remoteItems, ...archivedItems, ...localItems];
+          return [...remoteItems, ...visibleArchivedItems, ...localItems];
         });
-        const archivedMessage = archivedItems.length ? ` ${archivedItems.length} archived preview${archivedItems.length === 1 ? '' : 's'} available.` : '';
+        const archivedMessage = visibleArchivedItems.length ? ` ${visibleArchivedItems.length} archived preview${visibleArchivedItems.length === 1 ? '' : 's'} available.` : '';
         setImageLibraryStatus(`Signed in as ${customerSession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.${archivedMessage}`);
       } catch (error) {
         if (!mounted) return;
@@ -2488,12 +2528,20 @@ export default function Home() {
   const checkoutTaxAmount = Number((checkoutTaxableAmount * checkoutTaxRate).toFixed(2));
   const checkoutOrderTotal = Number((checkoutDiscountedSubtotal + checkoutShippingAmount + checkoutTaxAmount).toFixed(2));
   const checkoutTaxLabel = checkoutTaxExempt ? 'Tax exempt' : checkoutIsGeorgiaOrder ? `${GEORGIA_SALES_TAX_LABEL} (${(GEORGIA_SALES_TAX_RATE * 100).toFixed(2)}%)` : 'No GA tax for out-of-state shipping';
-  const customerOrderHistory = testOrders.filter((order) => {
+  const customerOrderHistory = useMemo(() => {
     const sessionUserId = customerSession?.user?.id;
     const sessionEmail = customerSession?.user?.email?.trim().toLowerCase();
-    const orderEmail = order.customer.email.trim().toLowerCase();
-    return Boolean((sessionUserId && order.customer.userId === sessionUserId) || (sessionEmail && orderEmail === sessionEmail));
-  });
+    const localOrders = testOrders.filter((order) => {
+      const orderEmail = order.customer.email.trim().toLowerCase();
+      return Boolean((sessionUserId && order.customer.userId === sessionUserId) || (sessionEmail && orderEmail === sessionEmail));
+    });
+    const mergedOrders = new Map<string, TestOrder>();
+    [...accountOrders, ...localOrders].forEach((order) => {
+      const key = order.id || order.orderNumber;
+      if (key && !mergedOrders.has(key)) mergedOrders.set(key, order);
+    });
+    return Array.from(mergedOrders.values()).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [accountOrders, customerSession?.user?.email, customerSession?.user?.id, testOrders]);
   const canAddCurrentDesignToCart = productMode === 'signage' && Boolean(signEstimate) && signOrderRetailTotal !== null && signArtworkStatusOk;
   const openTestCheckout = () => {
     if (cartItems.length === 0) {
@@ -8108,10 +8156,11 @@ export default function Home() {
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Past Orders</span>
-                  <span className="rounded-full bg-[#0ea5e9]/20 px-2 py-0.5 text-xs font-bold text-[#9be6ff]">{customerOrderHistory.length}</span>
+                  <span className="rounded-full bg-[#0ea5e9]/20 px-2 py-0.5 text-xs font-bold text-[#9be6ff]">{accountOrdersLoading && !customerOrderHistory.length ? '...' : customerOrderHistory.length}</span>
                 </div>
+                {accountOrdersError ? <p className="mt-2 rounded border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">{accountOrdersError} Showing any orders saved in this browser.</p> : null}
                 {customerOrderHistory.length ? <div className="mt-3 space-y-2">
-                  {customerOrderHistory.slice(0, 4).map((order) => <button type="button" key={`account-order-${order.id}`} onClick={() => {
+                  {customerOrderHistory.map((order) => <button type="button" key={`account-order-${order.id}`} onClick={() => {
                     try {
                       window.sessionStorage.setItem(ORDER_CONFIRMATION_STORAGE_KEY, JSON.stringify(getPersistableTestOrders([order])[0]));
                     } catch {
@@ -8127,7 +8176,7 @@ export default function Home() {
                     <p className="mt-1 text-slate-400">{new Date(order.createdAt).toLocaleDateString()} / {order.items.length} item{order.items.length === 1 ? '' : 's'} / {order.items.reduce((total, item) => total + item.artworkFiles.length, 0)} artwork file{order.items.reduce((total, item) => total + item.artworkFiles.length, 0) === 1 ? '' : 's'}</p>
                     <span className="mt-1 block font-bold text-[#8be3ff]">View order details →</span>
                   </button>)}
-                </div> : <p className="mt-2 text-xs leading-5 text-slate-400">Completed test orders for this account will appear here while we build the production order dashboard.</p>}
+                </div> : <p className="mt-2 text-xs leading-5 text-slate-400">{accountOrdersLoading ? 'Loading your complete order history...' : 'Orders placed with this signed-in email will appear here.'}</p>}
               </div>
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
               <label className="block text-sm font-bold text-slate-200">Email

@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   const user = await requireUser(request);
   if (!user) return NextResponse.json({ error: 'Sign in to view archived artwork.' }, { status: 401 });
   try {
-    const rows = await listArchivedArtworkForUser(user.id);
+    const rows = await listArchivedArtworkForUser({ userId: user.id, email: user.email });
     return NextResponse.json({
       items: rows.map((row) => ({
         id: row.id,

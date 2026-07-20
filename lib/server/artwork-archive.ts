@@ -194,6 +194,20 @@ export const recordVerifiedDriveArchive = async (args: {
   const client = getSupabaseAdminClient();
   const bucket = getStorageBucket();
   const owner = inferOwner(args.storagePath);
+  const { data: existingRaw } = await client.from('hue_artwork_archive')
+    .select('*')
+    .eq('storage_path', args.storagePath)
+    .maybeSingle();
+  const existing = existingRaw as ArtworkArchiveRecord | null;
+  // An order can reference the same customer-library object that was uploaded earlier.
+  // Never let that later "final" archive pass erase its library ownership/classification.
+  const preservedKind = existing?.kind === 'library' || existing?.kind === 'original'
+    ? existing.kind
+    : args.kind;
+  // The storage path is the authoritative owner for customer-library files. Checkout
+  // email/customer data must not be allowed to reassign an existing library object.
+  const ownerUserId = owner.ownerUserId || existing?.owner_user_id || args.customerId || null;
+  const ownerEmail = existing?.owner_email || owner.ownerEmail || args.customerEmail || null;
   const preview = await createPreview(args.bytes, args.mimeType);
   const pathHash = createHash('sha256').update(args.storagePath).digest('hex').slice(0, 16);
   const archiveKey = `${args.orderId || args.customerId || 'library'}-${safeSegment(args.kind)}-${pathHash}-${safeSegment(args.originalName)}.webp`;
@@ -211,12 +225,12 @@ export const recordVerifiedDriveArchive = async (args: {
   const { data, error } = await client.from('hue_artwork_archive').upsert({
     storage_path: args.storagePath,
     preview_storage_path: previewPath,
-    owner_user_id: args.customerId || owner.ownerUserId,
-    owner_email: args.customerEmail || owner.ownerEmail,
+    owner_user_id: ownerUserId,
+    owner_email: ownerEmail,
     guest_session_id: owner.guestSessionId || null,
     order_id: args.orderId || null,
     order_number: args.orderNumber || null,
-    kind: args.kind,
+    kind: preservedKind,
     original_name: args.originalName,
     mime_type: args.mimeType,
     file_size: args.bytes.byteLength,
@@ -398,17 +412,45 @@ export const cleanupVerifiedSupabaseArtwork = async (options: { emergency?: bool
   return { cleanedFiles, reclaimedBytes, skipped };
 };
 
-export const listArchivedArtworkForUser = async (userId: string) => {
+export const listArchivedArtworkForUser = async (identity: { userId: string; email?: string | null }) => {
   const client = getSupabaseAdminClient();
-  const { data, error } = await client.from('hue_artwork_archive').select('*')
-    .eq('owner_user_id', userId)
-    .in('kind', ['original', 'library'])
-    .not('supabase_deleted_at', 'is', null)
-    .not('preview_storage_path', 'is', null)
-    .order('created_at', { ascending: false });
-  if (error) throw new Error(error.message);
-  return Promise.all((data || []).map(async (raw) => {
-    const row = raw as ArtworkArchiveRecord;
+  const normalizedEmail = identity.email?.trim().toLowerCase() || null;
+  const queries = [
+    client.from('hue_artwork_archive').select('*').eq('owner_user_id', identity.userId),
+    client.from('hue_artwork_archive').select('*').like('storage_path', `customers/%/${identity.userId}/%`),
+  ];
+  if (normalizedEmail) queries.push(client.from('hue_artwork_archive').select('*').ilike('owner_email', normalizedEmail));
+  const results = await Promise.all(queries);
+  const failed = results.find((result) => result.error);
+  if (failed?.error) throw new Error(failed.error.message);
+
+  const rows = new Map<string, ArtworkArchiveRecord>();
+  for (const result of results) {
+    for (const raw of result.data || []) {
+      const row = raw as ArtworkArchiveRecord;
+      const belongsToCustomerLibrary = new RegExp(`^customers/[^/]+/${identity.userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`, 'i').test(row.storage_path);
+      const ownedByUser = row.owner_user_id === identity.userId;
+      const customerEmailFallback = Boolean(
+        normalizedEmail
+        && row.owner_email?.trim().toLowerCase() === normalizedEmail
+        && row.storage_path.toLowerCase().startsWith('customers/'),
+      );
+      if (!row.preview_storage_path || !row.drive_file_id) continue;
+      if (!ownedByUser && !belongsToCustomerLibrary && !customerEmailFallback) continue;
+      if (!['original', 'library'].includes(row.kind || '') && !belongsToCustomerLibrary) continue;
+      rows.set(row.storage_path, row);
+      if (belongsToCustomerLibrary && (row.owner_user_id !== identity.userId || row.kind === 'final')) {
+        await client.from('hue_artwork_archive').update({
+          owner_user_id: identity.userId,
+          owner_email: normalizedEmail || row.owner_email || null,
+          kind: row.kind === 'final' ? 'library' : row.kind,
+          updated_at: new Date().toISOString(),
+        }).eq('id', row.id);
+      }
+    }
+  }
+  const data = [...rows.values()].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  return Promise.all(data.map(async (row) => {
     return { ...row, previewUrl: row.preview_storage_path ? await getStorageSignedUrl(row.preview_storage_path, 3600) : null };
   }));
 };

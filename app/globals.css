@@ -1045,6 +1045,58 @@ body {
   }
 }
 
+/* Crawlable Hue Studio product pages */
+.seo-shell {
+  min-height: 100vh;
+  color: #e7f6ff;
+  background-color: #050b12;
+  background-image: linear-gradient(30deg, rgba(14, 44, 66, 0.38) 12%, transparent 12.5%, transparent 87%, rgba(14, 44, 66, 0.38) 87.5%), linear-gradient(150deg, rgba(14, 44, 66, 0.38) 12%, transparent 12.5%, transparent 87%, rgba(14, 44, 66, 0.38) 87.5%);
+  background-size: 72px 126px;
+}
+
+.seo-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px clamp(20px, 5vw, 72px); border-bottom: 1px solid rgba(103, 216, 255, 0.2); background: rgba(4, 10, 16, 0.94); }
+.seo-brand { display: flex; align-items: center; gap: 12px; color: white; text-decoration: none; }
+.seo-brand img { width: 48px; height: 48px; border: 1px solid rgba(103, 216, 255, 0.7); border-radius: 8px; object-fit: cover; }
+.seo-brand span { display: grid; }
+.seo-brand small, .seo-kicker, .seo-section-label, .seo-card-category { color: #57c8ff; font-size: 12px; font-weight: 900; letter-spacing: 0.2em; text-transform: uppercase; }
+.seo-brand strong { font-size: 24px; line-height: 1.1; }
+.seo-header-link, .seo-secondary-link { color: #d9f4ff; font-weight: 800; text-decoration: none; }
+.seo-header-link { border: 1px solid rgba(103, 216, 255, 0.35); border-radius: 9px; padding: 11px 16px; }
+.seo-hero { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(270px, 0.65fr); gap: clamp(28px, 6vw, 80px); max-width: 1320px; margin: 0 auto; padding: clamp(64px, 9vw, 128px) clamp(20px, 5vw, 72px); align-items: center; }
+.seo-hero--index { grid-template-columns: minmax(0, 850px); justify-content: center; text-align: center; }
+.seo-hero h1 { max-width: 950px; margin: 14px 0 0; color: white; font-size: clamp(44px, 7vw, 92px); font-weight: 950; line-height: 0.94; letter-spacing: -0.05em; text-transform: uppercase; text-shadow: 0 0 40px rgba(14, 165, 233, 0.18); }
+.seo-hero h2 { margin: 18px 0 0; color: #22b8f0; font-size: clamp(20px, 2.5vw, 32px); }
+.seo-hero > div > p:not(.seo-kicker) { max-width: 800px; margin: 22px auto 0; color: #bed0df; font-size: 17px; line-height: 1.75; }
+.seo-hero-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
+.seo-hero--index .seo-primary-link { margin-top: 30px; }
+.seo-primary-link { display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; padding: 14px 22px; color: white; background: #168fce; box-shadow: 0 12px 36px rgba(14, 165, 233, 0.26); font-weight: 900; text-decoration: none; }
+.seo-secondary-link { display: inline-flex; align-items: center; padding: 14px 12px; }
+.seo-start-card { border: 1px solid rgba(103, 216, 255, 0.28); border-radius: 18px; padding: 26px; background: rgba(7, 20, 32, 0.92); box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28); }
+.seo-start-card p { margin: 0 0 14px; color: white; font-size: 18px; font-weight: 900; }
+.seo-start-card ul, .seo-detail-grid ul { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.seo-start-card li, .seo-detail-grid li { position: relative; padding-left: 25px; color: #c8d8e5; line-height: 1.55; }
+.seo-start-card li::before, .seo-detail-grid li::before { content: '\2713'; position: absolute; left: 0; color: #39e6ad; font-weight: 900; }
+.seo-product-grid, .seo-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 1320px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 72px) 90px; }
+.seo-product-card, .seo-detail-grid > div { border: 1px solid rgba(103, 216, 255, 0.2); border-radius: 16px; padding: 26px; background: rgba(7, 20, 32, 0.9); }
+.seo-product-card h2, .seo-detail-grid h2, .seo-callout h2 { margin: 10px 0; color: white; font-size: clamp(24px, 3vw, 34px); }
+.seo-product-card > p:not(.seo-card-category), .seo-callout > p:not(.seo-kicker) { color: #aebfcd; line-height: 1.65; }
+.seo-product-card a { display: inline-block; margin-top: 16px; color: #59d1ff; font-weight: 900; text-decoration: none; }
+.seo-detail-grid { padding-top: 10px; }
+.seo-detail-grid ul { margin-top: 22px; }
+.seo-callout { max-width: 1176px; margin: 0 auto 90px; border: 1px solid rgba(61, 218, 255, 0.35); border-radius: 20px; padding: clamp(28px, 5vw, 56px); background: linear-gradient(135deg, rgba(8, 38, 58, 0.98), rgba(7, 20, 32, 0.98)); text-align: center; }
+.seo-callout .seo-primary-link { margin-top: 18px; }
+
+@media (max-width: 760px) {
+  .seo-brand small { display: none; }
+  .seo-brand strong { font-size: 20px; }
+  .seo-header-link { padding: 9px 11px; font-size: 13px; }
+  .seo-hero, .seo-product-grid, .seo-detail-grid { grid-template-columns: 1fr; }
+  .seo-hero { padding-top: 58px; }
+  .seo-hero h1 { font-size: clamp(40px, 14vw, 62px); }
+  .seo-product-grid { padding-bottom: 60px; }
+  .seo-callout { margin-inline: 20px; }
+}
+
 .hue-production-atmosphere {
   z-index: 0;
   left: 50%;
