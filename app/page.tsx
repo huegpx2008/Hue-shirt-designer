@@ -5184,30 +5184,32 @@ export default function Home() {
       const projectFile = new File([JSON.stringify(editorProject)], projectFileName, { type: 'application/json' });
       const localId = `${Date.now()}-${normalizedFront.fileName}`;
       const item: ImageZoneItem = { id: localId, name: normalizedFront.fileName, dataUrl: normalizedFront.dataUrl, width: normalizedFront.width, height: normalizedFront.height, dpi: Math.min(source.dpi || 300, GENERATED_ARTWORK_MAX_DPI), uploadedAt: new Date().toLocaleString(), source: 'local', mimeType: normalizedFront.mimeType, signWidth: printSize.width, signHeight: printSize.height, backDataUrl: normalizedBack?.dataUrl, backName: backFileName, backWidth: normalizedBack?.width, backHeight: normalizedBack?.height, backCopiedFromFront: false, editorProject };
-      setImageZoneItems((previous) => [item, ...previous]);
-      setSelectedImageZoneId(localId);
+      let savedItem = item;
       if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
-        setImageZoneItems((previous) => previous.map((entry) => entry.id === localId ? { ...entry, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || entry.backDataUrl, backName: backFileName || entry.backName, backStoragePath: backStorageInfo?.storagePath, projectStoragePath: projectStorageInfo.storagePath } : entry));
+        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, projectStoragePath: projectStorageInfo.storagePath };
+        setImageZoneItems((previous) => [savedItem, ...previous]);
         setSelectedImageZoneId(storageInfo.storagePath);
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
       } else {
+        setImageZoneItems((previous) => [savedItem, ...previous]);
+        setSelectedImageZoneId(localId);
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved in this browser session.${isNewArtwork ? '' : ' Original preserved.'}`);
       }
       if (artworkEditorOrderReturn) {
         const returnContext = artworkEditorOrderReturn;
         if (returnContext.side === 'back' && isAutoSidedRigidBuilder) {
-          setRigidBackArtwork(item);
+          setRigidBackArtwork(savedItem);
           setRigidPreviewSide('back');
           setSignValues((previous) => ({ ...previous, width: String(returnContext.width), height: String(returnContext.height), sides: 'double' }));
         } else {
-          await placeImageOnDesign(item.dataUrl, item.name);
-          setSignArtworkPreviewUrl(item.dataUrl);
-          setBannerArtworkName(item.name);
+          await placeImageOnDesign(savedItem.dataUrl, savedItem.name);
+          setSignArtworkPreviewUrl(savedItem.dataUrl);
+          setBannerArtworkName(savedItem.name);
           setSignValues((previous) => ({ ...previous, width: String(returnContext.width), height: String(returnContext.height) }));
           setBannerArtworkFitState(returnContext.fitState);
         }
-        setImageLibraryStatus(`${item.name} saved to Image Zone and returned to this ${selectedSignProduct.name} order.`);
+        setImageLibraryStatus(`${savedItem.name} saved to Image Zone and returned to this ${selectedSignProduct.name} order.`);
         setActiveCoroOptionPanel('images');
         setArtworkEditorOrderReturn(null);
       }
@@ -7768,7 +7770,7 @@ export default function Home() {
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
 <span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span>
-                          <span className="mt-1 block text-slate-400">{item.source === 'archive' ? 'Drive archived - restores when used' : item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</span>
+                          <span className="mt-1 block text-slate-400">{item.source === 'archive' ? 'Hue Vault saved - restores when used' : item.source === 'supabase' ? 'Hue Library ready' : 'Session preview'}</span>
                         </span>
                         <span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">{item.source === 'archive' ? 'Restore' : 'Use'}</span>
                       </button>;
@@ -8125,14 +8127,14 @@ export default function Home() {
         </section>
       </div> : null}
 
-      {showCustomerLogin ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02070d]/75 p-4 backdrop-blur-md">
-        <section className="w-[min(520px,94vw)] overflow-hidden rounded-xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_30px_90px_rgba(0,0,0,0.68),0_0_54px_rgba(14,165,233,0.20)]">
-          <div className="border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-5">
+      {showCustomerLogin ? <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[#02070d]/75 p-3 backdrop-blur-md sm:p-4">
+        <section className="flex max-h-[calc(100dvh-1.5rem)] w-[min(520px,94vw)] flex-col overflow-hidden rounded-xl border border-[#0ea5e9]/35 bg-[#07111f] text-slate-100 shadow-[0_30px_90px_rgba(0,0,0,0.68),0_0_54px_rgba(14,165,233,0.20)] sm:max-h-[calc(100dvh-2rem)]">
+          <div className="shrink-0 border-b border-[#0ea5e9]/25 bg-[linear-gradient(90deg,#07111f,#0b263d,#07111f)] px-6 py-5">
             <p className="text-xs font-black uppercase tracking-[0.28em] text-[#62d4ff]">Hue Customer Account</p>
             <h3 className="mt-1 text-2xl font-black text-white">{customerSession ? 'My Account' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</h3>
             <p className="mt-2 text-sm leading-6 text-slate-300">{customerSession ? 'Manage your saved artwork and Hue customer session.' : 'Create an account to save your artwork library, or continue as a guest for a one-time order.'}</p>
           </div>
-          <div className="space-y-4 px-6 py-6">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-6">
             {!customerSession ? <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-[#38bdf8]/25 bg-[#0b263d]/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-[#62d4ff]">Create an account</p>
@@ -8188,7 +8190,7 @@ export default function Home() {
               <button type="submit" disabled={isCustomerAuthLoading} className="w-full rounded border border-[#0ea5e9]/60 bg-[#1678b8] px-5 py-3 text-sm font-black uppercase text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-60">{isCustomerAuthLoading ? 'Working...' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</button>
             </form>}
             {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
-            <div className="flex flex-wrap gap-2">
+            <div className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-wrap gap-2 border-t border-white/10 bg-[#07111f]/95 px-6 py-4 shadow-[0_-14px_28px_rgba(2,7,13,0.72)] backdrop-blur-md">
               {!customerSession ? <button type="button" onClick={() => setCustomerAuthMode((current) => current === 'signin' ? 'signup' : 'signin')} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">{customerAuthMode === 'signin' ? 'Create Account' : 'Sign In Instead'}</button> : null}
               {!customerSession ? <button type="button" onClick={handleGuestMode} className="flex-1 rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-sm font-bold text-slate-100 hover:border-[#0ea5e9]/70">Continue as Guest</button> : null}
               {customerSession ? <button type="button" onClick={() => { void handleCustomerSignOut(); }} className="flex-1 rounded border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20">Sign Out</button> : null}
@@ -8296,7 +8298,7 @@ export default function Home() {
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-white">{file.role}</p>
                       <p className="truncate text-slate-300">{file.name}</p>
-                      <p className="truncate text-slate-500">{file.storagePath || 'Browser preview only'}</p>
+                      <p className="truncate text-slate-500">{file.storagePath || 'Session preview only'}</p>
                     </div>
                   </div>)}
                 </div>
@@ -8965,7 +8967,7 @@ export default function Home() {
                     <p className={`truncate text-sm font-black ${selected ? 'text-slate-950' : 'text-white'}`}>{item.name}</p>
                     <p className={`mt-2 text-xs font-bold ${selected ? 'text-slate-600' : 'text-slate-300'}`}>{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</p>
                     <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
-                    <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'archive' ? 'Drive archived' : item.source === 'supabase' ? 'Hue cloud saved' : 'Browser preview'}</p>
+                    <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'archive' ? 'Hue Vault saved' : item.source === 'supabase' ? 'Hue Library ready' : 'Session preview'}</p>
                     <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
                     <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await useImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">{item.source === 'archive' ? 'Restore & Use' : 'Use'}</button>{item.source !== 'archive' ? <button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button> : null}</div>
                   </div>

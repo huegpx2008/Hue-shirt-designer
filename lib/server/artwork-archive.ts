@@ -39,6 +39,7 @@ export type ArtworkArchiveRecord = {
   restored_storage_path?: string | null;
   restore_expires_at?: string | null;
   created_at?: string | null;
+  updated_at?: string | null;
 };
 
 const safeSegment = (value: string) => value.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'artwork';
@@ -166,8 +167,40 @@ const createPreview = async (bytes: ArrayBuffer, mimeType: string) => {
     <rect width="640" height="480" rx="28" fill="#071827"/>
     <rect x="22" y="22" width="596" height="436" rx="22" fill="none" stroke="#26b9f3" stroke-width="4"/>
     <text x="320" y="226" text-anchor="middle" font-family="Arial,sans-serif" font-size="76" font-weight="700" fill="#ffffff">${label}</text>
-    <text x="320" y="286" text-anchor="middle" font-family="Arial,sans-serif" font-size="24" fill="#72d7ff">HUE CLOUD ARCHIVE</text>
+    <text x="320" y="286" text-anchor="middle" font-family="Arial,sans-serif" font-size="24" fill="#72d7ff">HUE ARTWORK VAULT</text>
   </svg>`)).webp({ quality: 78 }).toBuffer();
+};
+
+const ensureArchivePreview = async (row: ArtworkArchiveRecord) => {
+  // Rebuild older archive previews once. The v2 key lets us distinguish the
+  // lightweight customer-library thumbnail from the legacy preview format.
+  if (row.preview_storage_path?.includes('/vault-v2-')) return row.preview_storage_path;
+  if (!row.drive_file_id) return null;
+
+  try {
+    const downloaded = await downloadDriveFile(row.drive_file_id);
+    const mimeType = row.mime_type || downloaded.mimeType || 'application/octet-stream';
+    const preview = await createPreview(downloaded.bytes, mimeType);
+    const pathHash = createHash('sha256').update(row.storage_path || row.id).digest('hex').slice(0, 16);
+    const previewPath = `archive-previews/vault-v2-${row.id}-${pathHash}-${safeSegment(row.original_name || 'artwork')}.webp`;
+    const client = getSupabaseAdminClient();
+    const bucket = getStorageBucket();
+    const { error } = await client.storage.from(bucket).upload(previewPath, preview, {
+      contentType: 'image/webp',
+      cacheControl: '31536000',
+      upsert: true,
+    });
+    if (error) throw new Error(error.message);
+    await client.from('hue_artwork_archive').update({
+      preview_storage_path: previewPath,
+      updated_at: new Date().toISOString(),
+    }).eq('id', row.id);
+    row.preview_storage_path = previewPath;
+    return previewPath;
+  } catch {
+    // The archived original remains restorable even if a thumbnail cannot be generated.
+    return null;
+  }
 };
 
 export const recordVerifiedDriveArchive = async (args: {
@@ -210,7 +243,7 @@ export const recordVerifiedDriveArchive = async (args: {
   const ownerEmail = existing?.owner_email || owner.ownerEmail || args.customerEmail || null;
   const preview = await createPreview(args.bytes, args.mimeType);
   const pathHash = createHash('sha256').update(args.storagePath).digest('hex').slice(0, 16);
-  const archiveKey = `${args.orderId || args.customerId || 'library'}-${safeSegment(args.kind)}-${pathHash}-${safeSegment(args.originalName)}.webp`;
+  const archiveKey = `vault-v2-${args.orderId || args.customerId || 'library'}-${safeSegment(args.kind)}-${pathHash}-${safeSegment(args.originalName)}.webp`;
   const previewPath = preview ? `archive-previews/${archiveKey}` : null;
   if (preview && previewPath) {
     const { error } = await client.storage.from(bucket).upload(previewPath, preview, {
@@ -435,10 +468,9 @@ export const listArchivedArtworkForUser = async (identity: { userId: string; ema
         && row.owner_email?.trim().toLowerCase() === normalizedEmail
         && row.storage_path.toLowerCase().startsWith('customers/'),
       );
-      if (!row.preview_storage_path || !row.drive_file_id) continue;
+      if (!row.drive_file_id) continue;
       if (!ownedByUser && !belongsToCustomerLibrary && !customerEmailFallback) continue;
       if (!['original', 'library'].includes(row.kind || '') && !belongsToCustomerLibrary) continue;
-      rows.set(row.storage_path, row);
       if (belongsToCustomerLibrary && (row.owner_user_id !== identity.userId || row.kind === 'final')) {
         await client.from('hue_artwork_archive').update({
           owner_user_id: identity.userId,
@@ -447,6 +479,8 @@ export const listArchivedArtworkForUser = async (identity: { userId: string; ema
           updated_at: new Date().toISOString(),
         }).eq('id', row.id);
       }
+      await ensureArchivePreview(row);
+      rows.set(row.storage_path, row);
     }
   }
   const data = [...rows.values()].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
