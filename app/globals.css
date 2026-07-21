@@ -911,11 +911,6 @@ body {
     scroll-snap-align: start;
   }
 
-  .hue-image-library-folder,
-  .hue-image-library-setup {
-    display: none !important;
-  }
-
   .hue-image-library-search {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) 108px;
