@@ -3597,8 +3597,8 @@ export default function Home() {
   };
 
   const triggerArtworkUpload = () => {
-    if (requestAcrylicArtworkNotice('upload')) return;
-    requestArtworkUpload();
+    setImageLibraryStatus('Choose saved artwork or upload a new file from Image Zone.');
+    openArtworkLibrary();
   };
 
   const canPlaceImageZoneItem = (item: ImageZoneItem) => Boolean(item.mimeType?.startsWith('image/') || item.dataUrl.startsWith('data:image/') || isLikelyImagePath(item.name) || isLikelyImagePath(item.dataUrl));
@@ -7378,7 +7378,7 @@ export default function Home() {
                   <label className="text-xs font-medium text-slate-600">Print Sides<select value={String(signValues.sides ?? 'single')} onChange={(event) => updatePrintSides(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-950"><option value="single">Single-Sided</option><option value="double">Double-Sided</option></select></label>
                 </div>
               </div>
-              <button type="button" onClick={() => isCoroBuilder ? setShowImageZone(true) : triggerArtworkUpload()} className="w-full rounded-md bg-[#1678b8] px-3 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-[#0f5f94]">{signArtworkPreviewUrl ? 'Replace Artwork' : 'Upload Artwork'}</button>
+              <button type="button" onClick={() => { setImageLibraryStatus(`Choose artwork for ${selectedSignProduct.name}, or upload a new file from Image Zone.`); openArtworkLibrary(); }} className="w-full rounded-md bg-[#1678b8] px-3 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-[#0f5f94]">{signArtworkPreviewUrl ? 'Replace Artwork' : 'Upload Artwork'}</button>
             </div> : <div className="space-y-3">
               <div className="grid gap-2">
                 {SIGN_PRODUCT_CONFIGS.map((product) => <button key={product.id} type="button" onClick={() => selectSignProductForBuilder(product.id)} className={`rounded-md border p-3 text-left ${signProductId === product.id ? 'border-[#1678b8] bg-[#eaf5fb] ring-1 ring-[#1678b8]/15' : 'border-slate-200 bg-white hover:bg-slate-50'}`}><p className="text-sm font-bold">{product.name}</p><p className="mt-1 text-xs text-slate-500">{product.description}</p></button>)}
@@ -7670,7 +7670,7 @@ export default function Home() {
                     </div>
                     <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45">Remove</button>
                   </div>
-                  <button type="button" onClick={() => requestArtworkUpload(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-dropzone group mt-3 flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
+                  <button type="button" onClick={() => { setImageLibraryStatus(`Choose finished artwork for ${selectedSignProduct.name}, or upload a new file from Image Zone.`); openArtworkLibrary(); }} className="hue-artwork-dropzone group mt-3 flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
                     {signArtworkPreviewUrl ? <span className="w-full"><img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" /><span className="mt-2 block text-xs font-black text-slate-800">Current artwork</span><span className="mt-1 block text-[10px] text-slate-400">Click to replace</span></span> : <span><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#e8f7ff] text-[#1678b8] transition group-hover:-translate-y-0.5 group-hover:bg-[#d7f2ff]"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><span className="mt-3 block text-xs font-black text-slate-800">Upload front artwork</span><span className="mt-1 block text-[10px] leading-4 text-slate-400">Choose a file or select from your library</span></span>}
                   </button>
                   <div className="mt-3 text-xs"><button type="button" className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button></div>
@@ -7859,7 +7859,7 @@ export default function Home() {
                     <button type="button" onClick={clearSignArtwork} disabled={!signArtworkPreviewUrl && layers.length === 0} className="hue-artwork-delete rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45">Remove</button>
                   </div>
                   <div className={`mt-3 grid gap-2 ${hasCoroDoubleSided ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                    <button type="button" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); requestArtworkUpload('Choose an image or PDF artwork file for the front side.'); }} className="hue-artwork-dropzone group flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
+                    <button type="button" onClick={() => { setCoroPlacementTarget({ itemId: null, side: 'front' }); setImageLibraryStatus('Choose front artwork, or upload a new file from Image Zone.'); openArtworkLibrary(); }} className="hue-artwork-dropzone group flex min-h-36 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-4 text-center text-slate-500 hover:border-[#0ea5e9] hover:text-[#0f5f94]">
                       <span><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#e8f7ff] text-[#1678b8] transition group-hover:-translate-y-0.5 group-hover:bg-[#d7f2ff]"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><span className="mt-3 block text-xs font-black text-slate-800">Upload front artwork</span><span className="mt-1 block text-[10px] leading-4 text-slate-400">Choose a file or select from your library</span></span>
                     </button>
                     {hasCoroDoubleSided ? <button type="button" onClick={() => setImageLibraryStatus('Add the front image first, then choose or copy the back image.')} className="hue-artwork-dropzone flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-amber-300 bg-white p-3 text-center text-[10px] font-bold uppercase text-amber-600 hover:border-[#1678b8] hover:text-[#1678b8]">Select back artwork</button> : null}
