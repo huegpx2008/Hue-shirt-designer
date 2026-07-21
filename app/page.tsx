@@ -6834,6 +6834,11 @@ export default function Home() {
     setStoreView('store');
   };
 
+  const chooseStoreCategory = (categoryId: StoreCategoryId) => {
+    setStoreCategory(categoryId);
+    window.setTimeout(() => document.getElementById('store-products')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
+  };
+
   const openStoreProduct = (product: StoreProductCard) => {
     if (product.disabled) return;
     if (product.id === 'apparel-dtg') {
@@ -7117,7 +7122,7 @@ export default function Home() {
             <p className="mt-1 text-xs text-slate-400">Quick places to jump if you get turned around.</p>
           </div>
           <div className="p-2">
-            <button type="button" onClick={() => { setShowImageZone(false); setShowCanvaImport(false); setShowCustomerLogin(false); setShowCart(false); setShowNewArtworkDialog(false); setShowArtworkEditor(false); setStoreView('store'); setShowMainMenu(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Product Catalog<span className="mt-0.5 block text-xs font-normal text-slate-500">Browse banners, signs, apparel, and more</span></button>
+            <a href="/products" onClick={() => setShowMainMenu(false)} className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Product Catalog<span className="mt-0.5 block text-xs font-normal text-slate-500">Browse banners, signs, apparel, and more</span></a>
             <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Image Zone<span className="mt-0.5 block text-xs font-normal text-slate-500">Open saved artwork and uploads</span></button>
             <button type="button" onClick={() => { openCanvaImport(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Import Canva<span className="mt-0.5 block text-xs font-normal text-slate-500">Bring a Canva design into Image Zone</span></button>
             <button type="button" onClick={() => { openCustomerAccount(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">My Account<span className="mt-0.5 block text-xs font-normal text-slate-500">Sign in, create an account, or view saved artwork</span></button>
@@ -7203,14 +7208,14 @@ export default function Home() {
           </div>
         </section>
       ) : storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart && !showNewArtworkDialog && !showArtworkEditor ? (
-        <section className="hue-store-shell mx-auto w-full min-w-0 max-w-[1800px] px-4 py-5 md:px-6">
+        <section className="hue-store-shell mx-auto w-full min-w-0 max-w-[1800px] px-4 py-3 md:px-6">
           <div className="hue-store-layout grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-            <aside className={`hue-mobile-product-nav rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
+            <aside className={`hue-mobile-product-nav rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] lg:sticky lg:top-24 ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
               <p className={`text-xs font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Products</p>
               <h2 className={`mt-2 text-2xl font-black tracking-tight ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>Choose a print product</h2>
               <p className={`mt-2 text-sm leading-6 ${isProductionBuilder ? 'text-slate-300' : 'text-slate-600'}`}>Upload finished artwork, make quick changes, create a simple design, or import from Canva—then price and order online.</p>
               <div className="hue-mobile-category-strip mt-5 flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
-                {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => setStoreCategory(category.id)} className={`w-44 shrink-0 rounded-md border p-3 text-left transition lg:w-full ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block truncate text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
+                {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => chooseStoreCategory(category.id)} className={`w-44 shrink-0 rounded-md border p-3 text-left transition lg:w-full ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block truncate text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
               </div>
               <div className="hue-mobile-canva-promo mt-5 overflow-hidden rounded-lg border border-[#38bdf8]/35 bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.28),transparent_40%),linear-gradient(135deg,rgba(14,165,233,0.22),rgba(7,17,31,0.94))] p-4 shadow-[0_0_32px_rgba(14,165,233,0.16)]">
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8be3ff]">New Canva import</p>
@@ -7221,48 +7226,48 @@ export default function Home() {
             </aside>
 
             <section className={`hue-store-content min-w-0 overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/15 bg-[#050b12] shadow-[0_24px_60px_rgba(0,0,0,0.45)]' : 'border border-white/80 bg-white/88'}`}>
-              <div className="hue-store-hero relative min-h-[350px] overflow-hidden">
+              <div className="hue-store-hero relative overflow-hidden">
                 <div aria-hidden="true" className="hue-store-hero-pattern absolute inset-0" />
                 <div aria-hidden="true" className="hue-store-hero-glow absolute inset-0" />
-                <div className="relative grid min-h-[350px] items-center gap-8 px-4 py-7 sm:px-6 sm:py-9 md:grid-cols-[minmax(0,1fr)_360px] lg:px-10">
+                <div className="relative grid items-center gap-6 px-4 py-5 sm:px-6 sm:py-6 md:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.34em] text-[#67d8ff]">Hue Graphics design + ordering</p>
-                    <h2 className="hue-store-hero-title mt-4 max-w-3xl uppercase leading-[0.84] drop-shadow-[0_10px_32px_rgba(0,0,0,0.55)]">
-                      <span className="block text-[clamp(2.8rem,5.8vw,5.8rem)] text-white">Create. Upload.</span>
-                      <span className="mt-2 block text-[clamp(2.4rem,4.9vw,4.9rem)] text-[#16a9f5]">Order Online.</span>
+                    <h2 className="hue-store-hero-title mt-3 max-w-3xl uppercase leading-[0.84] drop-shadow-[0_10px_32px_rgba(0,0,0,0.55)]">
+                      <span className="block text-[clamp(2.3rem,4.9vw,5rem)] text-white">Create. Upload.</span>
+                      <span className="mt-2 block text-[clamp(2rem,4.2vw,4.2rem)] text-[#16a9f5]">Order Online.</span>
                     </h2>
-                    <p className="mt-5 text-[10px] font-black uppercase tracking-[0.34em] text-slate-300">Upload. Edit. Import. Order. We print.</p>
-                    <div className="mt-7 grid max-w-3xl grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                    <p className="mt-4 text-[10px] font-black uppercase tracking-[0.34em] text-slate-300">Upload. Edit. Import. Order. We print.</p>
+                    <div className="mt-5 grid max-w-3xl grid-cols-2 gap-3 text-xs sm:grid-cols-4">
                       {[['↑', 'Upload', 'Ready artwork'], ['✎', 'Hue Designer', 'Create or edit'], ['C', 'Canva', 'Import designs'], ['$', 'Order Online', 'Size and price']].map(([icon, title, note]) => <div key={title} className="flex items-center gap-2 border-l border-[#16a9f5]/45 pl-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#16a9f5]/45 bg-[#071827]/80 font-black text-[#67d8ff] shadow-[0_0_18px_rgba(14,165,233,0.16)]">{icon}</span><span><strong className="block text-white">{title}</strong><span className="block text-slate-400">{note}</span></span></div>)}
                     </div>
-                    <p className="mt-6 max-w-3xl text-xs leading-5 text-slate-300">Start wherever your artwork is. Upload a finished file, make quick changes or create a simple layout in Hue Designer, or import a saved Canva project. Then choose your product, confirm the size, get pricing, and order.</p>
-                    <div className="mt-7 grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center">
+                    <p className="mt-4 max-w-3xl text-xs leading-5 text-slate-300">Start wherever your artwork is. Upload a finished file, make quick changes or create a simple layout in Hue Designer, or import a saved Canva project. Then choose your product, confirm the size, get pricing, and order.</p>
+                    <div className="mt-5 grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center">
                       <button type="button" onClick={openStandaloneImageZone} className="inline-flex items-center gap-2 rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(14,165,233,0.28)] hover:bg-[#0f75b5]">I Have Artwork <span aria-hidden="true">→</span></button>
                       <button type="button" onClick={() => openNewArtworkCreator('home-create')} className="inline-flex items-center gap-2 rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40] px-5 py-3 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Use Hue Designer <span aria-hidden="true">→</span></button>
                       <button type="button" onClick={openCanvaImport} className="inline-flex items-center gap-2 rounded-xl border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_14px_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/15 bg-[#0a1119]/90 p-5 shadow-[0_24px_70px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur">
+                  <div className="rounded-xl border border-white/15 bg-[#0a1119]/90 p-4 shadow-[0_24px_70px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur">
                     <p className="text-sm font-black text-white">Choose your starting point</p>
-                    <div className="mt-4 grid gap-3 text-xs text-slate-300">
+                    <div className="mt-3 grid gap-2 text-xs text-slate-300">
                       {['Upload finished, print-ready artwork', 'Make quick changes in Hue Designer', 'Create a simple design from a blank canvas', 'Import saved projects from Canva', 'Choose a product, size, and options', 'Get pricing and complete checkout online', 'Most orders are ready in 3–4 business days'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
                     </div>
-                    <div className="mt-5 rounded-xl border border-amber-300/25 bg-amber-300/[0.08] p-4 text-[11px] leading-5 text-amber-100/80">
+                    <div className="mt-4 rounded-xl border border-amber-300/25 bg-amber-300/[0.08] p-3 text-[11px] leading-5 text-amber-100/80">
                       <strong className="block text-sm text-amber-200">What you submit is what we print.</strong>
                       <p className="mt-2">Hue Studio is a self-service ordering tool. We perform a basic production check and may contact you if we notice a major issue, but we make minimal—if any—changes to submitted artwork.</p>
                       <p className="mt-2">Please confirm the size, spelling, resolution, bleed, colors, and layout before checkout. The customer is responsible for the accuracy and print readiness of the approved artwork.</p>
                     </div>
-                    <div className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-amber-400">
+                    <div className="mt-4 border-t border-white/10 pt-3 text-[11px] leading-5 text-amber-400">
                       <strong className="block">Need full custom design help?</strong>
                       <span className="text-amber-300/75">For advanced design work, submit a quote request on the main website.</span>
                     </div>
-                    <div className="mt-4 rounded-xl border border-[#8be3ff]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(124,58,237,0.18))] p-4">
+                    <div className="mt-4 rounded-xl border border-[#8be3ff]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(124,58,237,0.18))] p-3">
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8be3ff]">Canva friendly</p>
                       <h3 className="mt-2 text-lg font-black leading-tight text-white">Already made it in Canva?</h3>
                       <p className="mt-2 text-[11px] leading-5 text-slate-300">Import a saved Canva design and place the artwork on banners, signs, magnets, and more.</p>
                       <button type="button" onClick={openCanvaImport} className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-white px-4 py-3 text-xs font-black uppercase text-[#0f5f94] shadow-[0_10px_28px_rgba(14,165,233,0.22)] hover:bg-[#eaf8ff]">Import Canva</button>
                     </div>
-                    <div className="mt-4 overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(7,24,39,0.92))] p-4 shadow-[0_0_28px_rgba(14,165,233,0.10)]">
+                    <div className="mt-4 overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(7,24,39,0.92))] p-3 shadow-[0_0_28px_rgba(14,165,233,0.10)]">
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Designer</p>
                       <h3 className="mt-2 text-lg font-black leading-tight text-white">Have an idea? Give it some Hue.</h3>
                       <p className="mt-2 text-[11px] leading-5 text-slate-300">Build a simple sign or banner, create a quick layout, or make basic artwork changes—all right in your browser.</p>
@@ -7272,7 +7277,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="p-4 md:p-6">
+              <div id="store-products" className="scroll-mt-24 p-4 md:p-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <h3 className={`text-xl font-black ${isProductionBuilder ? 'text-white' : 'text-slate-950'}`}>{STORE_CATEGORIES.find((category) => category.id === storeCategory)?.label || 'Products'}</h3>
