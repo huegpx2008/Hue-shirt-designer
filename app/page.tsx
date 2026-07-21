@@ -790,7 +790,7 @@ const writePngResolution = async (blob: Blob, dpi: number) => {
   return new Blob([output], { type: 'image/png' });
 };
 
-const renderProductionArtwork = async (options: { dataUrl: string; name: string; width: number; height: number; fitState: ArtworkFitState; transparentBackground?: boolean }) => {
+const renderProductionArtwork = async (options: { dataUrl: string; name: string; width: number; height: number; fitState: ArtworkFitState; sourceWidth?: number; sourceHeight?: number; transparentBackground?: boolean }) => {
   const sourceUrl = options.dataUrl.startsWith('data:')
     ? options.dataUrl
     : await fetch(options.dataUrl).then((response) => {
@@ -823,6 +823,10 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
   const isFullBleedMatch = ratioDifference <= 0.005;
   if (options.fitState === 'stretch') {
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  } else if (options.fitState === 'fit' && options.sourceWidth && options.sourceHeight) {
+    const drawWidth = Math.max(1, (options.sourceWidth / Math.max(1, options.width)) * canvas.width);
+    const drawHeight = Math.max(1, (options.sourceHeight / Math.max(1, options.height)) * canvas.height);
+    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
   } else if (isFullBleedMatch) {
     const scale = Math.max(canvas.width / Math.max(1, image.naturalWidth), canvas.height / Math.max(1, image.naturalHeight));
     const drawWidth = image.naturalWidth * scale;
@@ -888,7 +892,7 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
     throw new Error('The finished artwork is still too large to save safely. Try a smaller source file or contact Hue Graphics for help.');
   }
   const baseName = options.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'artwork';
-  const mode = options.fitState === 'stretch' ? 'STRETCHED' : isFullBleedMatch ? 'FULL-BLEED' : 'FIT';
+  const mode = options.fitState === 'stretch' ? 'FIT-STRETCHED' : options.fitState === 'fit' ? 'CENTERED' : isFullBleedMatch ? 'FULL-BLEED' : 'FIT';
   const fileName = `FINAL-PRODUCTION-${baseName}-${options.width}x${options.height}-${mode}.${extension}`;
   return { file: new File([blob], fileName, { type: mimeType }), width: outputCanvas.width, height: outputCanvas.height, name: fileName };
 };
@@ -1436,7 +1440,7 @@ const parsePresetSize = (value: string | boolean | undefined, fallback = { width
   };
 };
 
-const getCoroSheetLayout = (width: number, height: number, quantity: number) => {
+const getCoroSheetLayout = (width: number, height: number, quantity: number, fluteDirection: string = 'auto') => {
   if (width <= 0 || height <= 0) {
     return { columns: 1, rows: 1, rotated: false, signsPerSheet: 1, sheetCount: 1 };
   }
@@ -1452,7 +1456,12 @@ const getCoroSheetLayout = (width: number, height: number, quantity: number) => 
   };
   const normalCount = normal.columns * normal.rows;
   const rotatedCount = rotated.columns * rotated.rows;
-  const best = rotatedCount > normalCount ? rotated : normal;
+  const direction = String(fluteDirection || 'auto').toLowerCase();
+  const best = direction === 'horizontal'
+    ? rotated
+    : direction === 'vertical'
+      ? normal
+      : rotatedCount > normalCount ? rotated : normal;
   const signsPerSheet = Math.max(1, best.columns * best.rows);
   return {
     ...best,
@@ -1461,15 +1470,19 @@ const getCoroSheetLayout = (width: number, height: number, quantity: number) => 
   };
 };
 
-const packCustomCoroSheets = (items: ImageZoneItem[], quantities: CoroArtworkQuantityMap, fallbackWidth: number, fallbackHeight: number) => {
+const packCustomCoroSheets = (items: ImageZoneItem[], quantities: CoroArtworkQuantityMap, fallbackWidth: number, fallbackHeight: number, respectFluteDirection = false) => {
   const sheets: { sheetNumber: number; quantity: number; cells: { item: ImageZoneItem; x: number; y: number; width: number; height: number }[] }[] = [{ sheetNumber: 1, quantity: 0, cells: [] }];
   let x = 0;
   let y = 0;
   let rowHeight = 0;
 
   items.forEach((item) => {
-    const width = Math.min(CORO_SHEET.width, Math.max(1, Number(item.signWidth || fallbackWidth || 1)));
-    const height = Math.min(CORO_SHEET.height, Math.max(1, Number(item.signHeight || fallbackHeight || 1)));
+    const rawWidth = Math.max(1, Number(item.signWidth || fallbackWidth || 1));
+    const rawHeight = Math.max(1, Number(item.signHeight || fallbackHeight || 1));
+    const direction = respectFluteDirection ? String(item.fluteDirection || 'auto').toLowerCase() : 'auto';
+    const shouldRotate = direction === 'horizontal';
+    const width = Math.min(CORO_SHEET.width, shouldRotate ? rawHeight : rawWidth);
+    const height = Math.min(CORO_SHEET.height, shouldRotate ? rawWidth : rawHeight);
     const quantity = Math.max(1, Number(quantities[item.id] || 1));
 
     Array.from({ length: quantity }).forEach(() => {
@@ -1557,6 +1570,35 @@ const artworkPrintSizeMatchesTarget = (
       : null;
   if (!printSize) return false;
   return dimensionMatches(printSize.width, targetWidth) && dimensionMatches(printSize.height, targetHeight);
+};
+
+const getArtworkSourcePrintSize = (
+  imageWidth: number | undefined,
+  imageHeight: number | undefined,
+  dpi?: number,
+  detectedWidth?: number,
+  detectedHeight?: number
+) => detectedWidth && detectedHeight
+  ? { width: Number(detectedWidth), height: Number(detectedHeight) }
+  : imageWidth && imageHeight
+    ? getArtworkPrintSize(imageWidth, imageHeight, isUsableImageDpi(Number(dpi || 0)) ? { dpiX: Number(dpi), dpiY: Number(dpi) } : null)
+    : null;
+
+const getCenteredArtworkStyle = (
+  imageWidth: number | undefined,
+  imageHeight: number | undefined,
+  targetWidth: number,
+  targetHeight: number,
+  dpi?: number,
+  detectedWidth?: number,
+  detectedHeight?: number
+) => {
+  const sourceSize = getArtworkSourcePrintSize(imageWidth, imageHeight, dpi, detectedWidth, detectedHeight);
+  if (!sourceSize || !targetWidth || !targetHeight) return {};
+  return {
+    width: `${Math.max(1, (sourceSize.width / targetWidth) * 100)}%`,
+    height: `${Math.max(1, (sourceSize.height / targetHeight) * 100)}%`
+  };
 };
 
 const getSignOptionLabel = (field: SignField, value: string | boolean) => {
@@ -2400,11 +2442,13 @@ export default function Home() {
   const magnetDisplayName = isCustomMagnet ? 'Custom Magnets' : selectedSignProduct.name;
   const signWidth = isSheetPricedProduct ? isCustomCoro ? Number(signValues.width || firstSizedCustomCoroArtwork?.signWidth || 0) : selectedCoroSize.width : selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? Number(signValues.width || 0) : selectedMagnetSize.width : Number(signValues.width || 0);
   const signHeight = isSheetPricedProduct ? isCustomCoro ? Number(signValues.height || firstSizedCustomCoroArtwork?.signHeight || 0) : selectedCoroSize.height : selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? Number(signValues.height || 0) : selectedMagnetSize.height : Number(signValues.height || 0);
+  const signSizeControlLabel = isSheetPricedProduct && isCustomCoro ? 'Custom' : `${signWidth || 0}" x ${signHeight || 0}"`;
   const designerQuantity = productMode === 'signage' ? getSignQuantity(signValues) : totalQuantity;
   const coroSheetArtworkQuantity = coroSheetArtworkItems.reduce((total, item) => total + Math.max(1, Number(coroArtworkQuantities[item.id] || 1)), 0);
   const effectiveCoroQuantity = isSheetPricedProduct && coroSheetArtworkItems.length > 0 ? coroSheetArtworkQuantity : designerQuantity;
-  const standardCoroSheetLayout = getCoroSheetLayout(signWidth, signHeight, effectiveCoroQuantity);
-  const customCoroSheetPreviews = isCustomCoro && coroSheetArtworkItems.length > 0 ? packCustomCoroSheets(coroSheetArtworkItems, coroArtworkQuantities, signWidth, signHeight) : [];
+  const coroLayoutFluteDirection = selectedSignProduct.id === 'yard-sign' ? String(signValues.fluteDirection || 'auto') : 'auto';
+  const standardCoroSheetLayout = getCoroSheetLayout(signWidth, signHeight, effectiveCoroQuantity, coroLayoutFluteDirection);
+  const customCoroSheetPreviews = isCustomCoro && coroSheetArtworkItems.length > 0 ? packCustomCoroSheets(coroSheetArtworkItems, coroArtworkQuantities, signWidth, signHeight, selectedSignProduct.id === 'yard-sign') : [];
   const coroSheetLayout = isCustomCoro && customCoroSheetPreviews.length > 0
     ? { ...standardCoroSheetLayout, sheetCount: customCoroSheetPreviews.length }
     : standardCoroSheetLayout;
@@ -6410,7 +6454,7 @@ export default function Home() {
     setIsPreparingCartArtwork(true);
     setCartStatus('Rendering the approved artwork exactly as shown and saving final production files...');
     try {
-      const attachFinalProductionFile = async (options: { role: string; name: string; dataUrl: string; width: number; height: number; fitState: ArtworkFitState }) => {
+      const attachFinalProductionFile = async (options: { role: string; name: string; dataUrl: string; width: number; height: number; fitState: ArtworkFitState; sourceWidth?: number; sourceHeight?: number }) => {
         const rendered = await renderProductionArtwork({ ...options, transparentBackground: selectedSignProduct.id === 'acrylic' });
         const storageInfo = await uploadArtworkFileToSupabase(rendered.file, customerSession);
         artworkFiles.push({ role: `FINAL PRODUCTION — ${options.role}`, name: rendered.name, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', previewUrl: storageInfo.storageUrl });
@@ -6421,8 +6465,11 @@ export default function Home() {
           const item = coroSheetArtworkItems[index];
           const itemWidth = Number(item.signWidth || signWidth);
           const itemHeight = Number(item.signHeight || signHeight);
-          await attachFinalProductionFile({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: itemWidth, height: itemHeight, fitState: item.frontFitState || 'unresolved' });
-          if (item.backDataUrl) await attachFinalProductionFile({ role: `Artwork set ${index + 1} back`, name: item.backName || `${item.name}-back`, dataUrl: item.backDataUrl, width: itemWidth, height: itemHeight, fitState: item.backFitState || item.frontFitState || 'unresolved' });
+          await attachFinalProductionFile({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: itemWidth, height: itemHeight, fitState: item.frontFitState || 'unresolved', sourceWidth: item.sourceSignWidth, sourceHeight: item.sourceSignHeight });
+          if (item.backDataUrl) {
+            const backSourceSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, item.dpi);
+            await attachFinalProductionFile({ role: `Artwork set ${index + 1} back`, name: item.backName || `${item.name}-back`, dataUrl: item.backDataUrl, width: itemWidth, height: itemHeight, fitState: item.backFitState || item.frontFitState || 'unresolved', sourceWidth: backSourceSize?.width, sourceHeight: backSourceSize?.height });
+          }
         }
       } else if (isBannerBuilder) {
         for (let index = 0; index < bannerOrderItems.length; index += 1) {
@@ -7625,8 +7672,14 @@ export default function Home() {
                             const cellArtworkMatchesTarget = coroSheetViewSide === 'back'
                               ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, cell.width, cell.height, cell.item.dpi)
                               : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight);
-                            const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellFitState === 'fit' || cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
-                            return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}>{cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellObjectFitClass}`} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div>;
+                            const centeredStyle = cellFitState === 'fit'
+                              ? coroSheetViewSide === 'back'
+                                ? getCenteredArtworkStyle(cell.item.backWidth, cell.item.backHeight, cell.width, cell.height, cell.item.dpi)
+                                : getCenteredArtworkStyle(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight)
+                              : {};
+                            const hasCenteredSize = Object.keys(centeredStyle).length > 0;
+                            const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
+                            return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}>{cellImage ? <img src={cellImage} alt="" className={hasCenteredSize ? 'object-fill' : `h-full w-full ${cellObjectFitClass}`} style={hasCenteredSize ? centeredStyle : undefined} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div>;
                           })}
                         </div> : <div className="grid h-full w-full gap-[2px] p-1" style={{ gridTemplateColumns: `repeat(${coroSheetLayout.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${coroSheetLayout.rows}, minmax(0, 1fr))` }}>
                           {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => {
@@ -7639,8 +7692,14 @@ export default function Home() {
                                 ? artworkPrintSizeMatchesTarget(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
                                 : artworkPrintSizeMatchesTarget(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.sourceSignWidth, sheetItem.sourceSignHeight)
                               : false;
-                            const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellFitState === 'fit' || cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
-                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellObjectFitClass}`} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
+                            const centeredStyle = sheetItem && cellFitState === 'fit'
+                              ? coroSheetViewSide === 'back'
+                                ? getCenteredArtworkStyle(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
+                                : getCenteredArtworkStyle(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.sourceSignWidth, sheetItem.sourceSignHeight)
+                              : {};
+                            const hasCenteredSize = Object.keys(centeredStyle).length > 0;
+                            const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
+                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={hasCenteredSize ? 'object-fill' : `h-full w-full ${cellObjectFitClass}`} style={hasCenteredSize ? centeredStyle : undefined} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
                           })}
                         </div>}
                       </button>
@@ -7759,7 +7818,7 @@ export default function Home() {
                   </div> : null}
                   </div>
                   {signArtworkPreviewUrl ? <button type="button" onClick={() => { void openCurrentOrderArtworkEditor(); }} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-[#38bdf8]/35 bg-[#08243a] px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.08em] text-[#9be8ff] shadow-[0_8px_20px_rgba(14,165,233,0.12)] transition hover:border-[#67d8ff]/70 hover:bg-[#0c304c] hover:text-white"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 fill-none stroke-current stroke-2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>Edit {isAutoSidedRigidBuilder && rigidPreviewSide === 'back' && rigidBackArtwork ? 'back' : 'front'} in Hue Designer</button> : null}
-                  {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Fit to preserve the artwork or Stretch to fill {signWidth}&quot; x {signHeight}&quot;.</p> : null}
+                  {bannerAspectMismatch ? <p className="mt-2 rounded bg-red-600 px-2 py-2 text-center text-[10px] font-bold leading-4 text-white">Custom size differs from the artwork ratio. Use Center to preserve the artwork proportionally, or Fit to fill {signWidth}&quot; x {signHeight}&quot;.</p> : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <button type="button" aria-pressed={bannerArtworkFitState === 'fit'} onClick={() => fitSelectedArtwork('contain')} disabled={!activeObject && !signArtworkPreviewUrl} className={`rounded border px-2 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-40 ${bannerArtworkFitState === 'fit' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Fit</button>
                     <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
@@ -8063,7 +8122,7 @@ export default function Home() {
                 {(selectedSignProduct.id === 'business-card'
                   ? [
                       ['Images', String(activeBannerSetNumber), signArtworkStatusOk],
-                      ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
+                      ['Size', signSizeControlLabel, signWidth > 0 && signHeight > 0],
                       ['Orientation', String(signValues.orientation || 'Landscape'), true],
                       ['Coating', String(signValues.coating || 'No Coating'), true],
                       ['Print Sides', String(signValues.sides || 'single'), true]
@@ -8071,19 +8130,19 @@ export default function Home() {
                   : selectedSignProduct.id === 'acrylic'
                   ? [
                       ['Images', String(activeBannerSetNumber), signArtworkStatusOk],
-                      ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
+                      ['Size', signSizeControlLabel, signWidth > 0 && signHeight > 0],
                       ['Standoffs', signValues.standOffs ? `${String(signValues.standOffQty || '4')} Silver` : 'None', Boolean(signValues.standOffs)],
                       ['Rounded Corners', signValues.roundedCorners ? 'Yes' : 'None', Boolean(signValues.roundedCorners)]
                     ] as [string, string, boolean][]
                   : selectedSignProduct.id === 'vehicle-magnet'
                   ? [
                       ['Images', String(activeBannerSetNumber), signArtworkStatusOk],
-                      ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
+                      ['Size', signSizeControlLabel, signWidth > 0 && signHeight > 0],
                       ['Rounded Corners', selectedRoundedCornerOption.label, String(signValues.roundedCorners || 'none') !== 'none']
                     ] as [string, string, boolean][]
                   : [
                       ['Images', String(isCoroBuilder ? coroSheetArtworkItems.length || layers.length || 1 : isBannerBuilder ? activeBannerSetNumber : layers.length || 1), signArtworkStatusOk],
-                      ['Size', `${signWidth || 0}" x ${signHeight || 0}"`, signWidth > 0 && signHeight > 0],
+                      ['Size', signSizeControlLabel, signWidth > 0 && signHeight > 0],
                       ['Material', isBannerBuilder ? selectedBannerMaterial?.label || String(signValues.material || 'standard') : String(signValues.material || '4mm'), true],
                       ...(supportsDoubleSidedProduct ? [['Print Sides', String(signValues.sides || 'single'), true]] as [string, string, boolean][] : []),
                       ...(selectedSignProduct.id === 'yard-sign'
@@ -8259,7 +8318,7 @@ export default function Home() {
             <p className="mt-5 text-sm text-slate-300">Please review the production checks for this sheet layout.</p>
             <div className="mx-auto mt-5 max-w-xl space-y-3 rounded-lg border border-white/10 bg-white/[0.04] px-5 py-4 text-left text-sm leading-6 text-slate-100">
               {hasCoroUnusedSheetSpace ? <p>There {coroUnusedSheetSpaces === 1 ? 'is' : 'are'} <span className="font-black text-yellow-200">{coroUnusedSheetSpaces}</span> unused sign space{coroUnusedSheetSpaces === 1 ? '' : 's'} available on the existing sheet{coroSheetLayout.sheetCount === 1 ? '' : 's'}. You may be able to add more signs without adding another sheet.</p> : null}
-              {hasCoroAspectMismatch ? <p><span className="font-black text-yellow-200">Aspect ratio mismatch:</span> one or more images will be stretched to fit the selected {signWidth}&quot; x {signHeight}&quot; sign size. Review the preview before ordering.</p> : null}
+              {hasCoroAspectMismatch ? <p><span className="font-black text-yellow-200">Aspect ratio mismatch:</span> choose Fit to fill the selected sign size, or Center to preserve the artwork at its original print size with blank space if needed.</p> : null}
             </div>
             <button type="button" onClick={() => setShowCoroSheetWarning(false)} className="mt-7 rounded border border-[#0ea5e9]/50 bg-[#0b263d] px-6 py-3 text-xs font-black uppercase tracking-wide text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#103656]">Close</button>
           </div>
