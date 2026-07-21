@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
+import { verifyPayPalToken, type PayPalPaymentToken } from "@/lib/server/paypal";
 import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 
@@ -43,6 +44,7 @@ type OrderItem = {
 
 type TestOrderEmailPayload = {
   guestSessionId?: string;
+  paymentToken?: string;
   order?: {
     id?: string;
     orderNumber?: string;
@@ -68,6 +70,8 @@ type TestOrderEmailPayload = {
     shipping?: { amount?: number; label?: string };
     tax?: { rate?: number; amount?: number; label?: string };
     total?: number;
+    paymentMode?: "test_no_payment" | "paypal";
+    payment?: { provider?: "paypal"; status?: "completed"; paypalOrderId?: string; captureId?: string; paidAt?: string };
   };
 };
 
@@ -114,6 +118,12 @@ type StoredOrderRecord = {
   status?: string;
   customer_user_id?: string | null;
   customer_email?: string;
+  payment_provider?: string | null;
+  payment_status?: string | null;
+  paypal_order_id?: string | null;
+  paypal_capture_id?: string | null;
+  paid_at?: string | null;
+  payment_data?: Record<string, unknown> | null;
   order_data?: NonNullable<TestOrderEmailPayload['order']>;
   admin_email_sent_at?: string | null;
   customer_email_sent_at?: string | null;
@@ -176,6 +186,72 @@ const getSubmissionKey = (value: unknown) => {
   const key = String(value || '').trim();
   if (!/^[A-Za-z0-9_-]{20,120}$/.test(key)) return null;
   return key;
+};
+
+type VerifiedPayPalPayment = {
+  provider: 'paypal';
+  status: 'completed';
+  paypalOrderId: string;
+  captureId: string;
+  paidAt?: string;
+  amount: string;
+  currency: string;
+};
+
+const normalizePaymentAmount = (value: unknown) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('The paid amount is invalid.');
+  return amount.toFixed(2);
+};
+
+const verifyCompletedPayPalPayment = async (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  submissionKey: string,
+  paymentToken: string | undefined,
+) => {
+  if (order.paymentMode !== 'paypal' && !paymentToken) return null;
+  if (!paymentToken) throw new Error('PayPal payment verification is missing. Please complete PayPal Checkout again.');
+
+  const payment = verifyPayPalToken<PayPalPaymentToken>(paymentToken, 'paypal_payment');
+  const expectedAmount = normalizePaymentAmount(order.total);
+  const expectedCurrency = order.currency || 'USD';
+  const expectedEmail = String(order.customer?.email || '').trim().toLowerCase();
+  if (payment.submissionKey !== submissionKey) throw new Error('PayPal payment does not match this checkout session.');
+  if (normalizePaymentAmount(payment.amount) !== expectedAmount || payment.currency !== expectedCurrency) throw new Error('PayPal payment does not match this order total.');
+  if (payment.customerEmail.toLowerCase() !== expectedEmail) throw new Error('PayPal payment does not match this customer email.');
+
+  const rows = await supabaseAdminFetch(`/rest/v1/hue_payment_attempts?submission_key=eq.${encodeURIComponent(submissionKey)}&paypal_order_id=eq.${encodeURIComponent(payment.paypalOrderId)}&paypal_capture_id=eq.${encodeURIComponent(payment.captureId)}&status=eq.completed&select=paid_at,amount,currency&limit=1`) as Array<{ paid_at?: string; amount?: string | number; currency?: string }>;
+  const attempt = rows[0];
+  if (!attempt) throw new Error('Hue could not verify the completed PayPal payment record.');
+  if (normalizePaymentAmount(attempt.amount) !== expectedAmount || attempt.currency !== expectedCurrency) throw new Error('The stored PayPal payment amount does not match this order.');
+
+  return {
+    provider: 'paypal',
+    status: 'completed',
+    paypalOrderId: payment.paypalOrderId,
+    captureId: payment.captureId,
+    paidAt: attempt.paid_at || order.payment?.paidAt,
+    amount: expectedAmount,
+    currency: expectedCurrency,
+  } satisfies VerifiedPayPalPayment;
+};
+
+const applyVerifiedPaymentSnapshot = (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  payment: VerifiedPayPalPayment | null,
+) => {
+  if (!payment) return order;
+  return {
+    ...order,
+    paymentMode: 'paypal' as const,
+    payment: {
+      provider: 'paypal' as const,
+      status: 'completed' as const,
+      paypalOrderId: payment.paypalOrderId,
+      captureId: payment.captureId,
+      paidAt: payment.paidAt,
+    },
+  };
 };
 
 const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPayload['order']>) => {
@@ -307,6 +383,7 @@ export async function POST(request: Request) {
 
   let storedRecord: StoredOrderRecord | null = null;
   let validatedPromo: Awaited<ReturnType<typeof getPromoCode>> = null;
+  let verifiedPayment: VerifiedPayPalPayment | null = null;
   let isNewOrder = false;
   try {
     const existingRows = await supabaseAdminFetch(`/rest/v1/hue_orders?submission_key=eq.${encodeURIComponent(submissionKey)}&select=*&limit=1`) as StoredOrderRecord[];
@@ -328,22 +405,41 @@ export async function POST(request: Request) {
       if (!existing.order_data?.customer || !existing.order_data.items?.length) throw new Error('The stored order data is incomplete.');
       storedRecord = existing;
       order = existing.order_data;
+      verifiedPayment = await verifyCompletedPayPalPayment(order, submissionKey, payload.paymentToken);
+      order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
       validateOrderArtworkOwnership(order, { existingOrderNumber: existing.order_number });
       await supabaseAdminFetch(`/rest/v1/hue_orders?id=eq.${encodeURIComponent(existing.id)}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ status: 'processing', last_email_error: null, updated_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          status: 'processing',
+          last_email_error: null,
+          ...(verifiedPayment ? {
+            payment_provider: 'paypal',
+            payment_status: 'completed',
+            paypal_order_id: verifiedPayment.paypalOrderId,
+            paypal_capture_id: verifiedPayment.captureId,
+            paid_at: verifiedPayment.paidAt || null,
+            payment_data: verifiedPayment,
+            order_data: order,
+          } : {}),
+          updated_at: new Date().toISOString(),
+        }),
       });
     } else {
       validateOrderArtworkOwnership(order, { userId: verifiedUser?.id, guestSessionId: verifiedUser ? undefined : guestSessionId });
       order = await applyAuthoritativeOrderPricing(order);
       if (!order.customer || !order.items?.length) throw new Error('Customer details and at least one item are required.');
+      verifiedPayment = await verifyCompletedPayPalPayment(order, submissionKey, payload.paymentToken);
+      order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
       order.orderNumber = createServerOrderNumber();
       order.createdAt = new Date().toISOString();
       const organizationWarnings = await organizeOrderProductionFiles(order);
       if (organizationWarnings.length) throw new Error(organizationWarnings.join(' '));
       const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
       attachDurableArtworkLinks(order, configuredOrigin || new URL(request.url).origin);
+      const orderCustomer = order.customer;
+      if (!orderCustomer) throw new Error('Customer details are missing after payment verification.');
       const insertedRows = await supabaseAdminFetch('/rest/v1/hue_orders', {
         method: 'POST',
         headers: { Prefer: 'return=representation' },
@@ -351,9 +447,9 @@ export async function POST(request: Request) {
           order_number: order.orderNumber,
           submission_key: submissionKey,
           status: 'processing',
-          customer_user_id: order.customer.userId || null,
-          customer_email: order.customer.email,
-          customer_name: order.customer.name || null,
+          customer_user_id: orderCustomer.userId || null,
+          customer_email: orderCustomer.email,
+          customer_name: orderCustomer.name || null,
           subtotal: Number(order.subtotal || 0),
           discount: Number(order.promotion?.discountAmount || 0),
           promo_code: order.promotion?.code || null,
@@ -361,6 +457,12 @@ export async function POST(request: Request) {
           tax: Number(order.tax?.amount || 0),
           total: Number(order.total || 0),
           currency: order.currency || 'USD',
+          payment_provider: verifiedPayment?.provider || null,
+          payment_status: verifiedPayment?.status || null,
+          paypal_order_id: verifiedPayment?.paypalOrderId || null,
+          paypal_capture_id: verifiedPayment?.captureId || null,
+          paid_at: verifiedPayment?.paidAt || null,
+          payment_data: verifiedPayment || null,
           drive_archive_status: 'pending',
           order_data: order,
           created_at: order.createdAt || new Date().toISOString()
@@ -404,6 +506,7 @@ export async function POST(request: Request) {
   }
 
   const currency = order.currency || "USD";
+  const isTestOrder = order.paymentMode !== 'paypal';
   const fulfillmentLabel = order.fulfillment?.method === "direct_ship" ? "Direct ship" : "Local pickup";
   const shippingAddress = order.fulfillment?.address
     ? [order.fulfillment.address.line1, order.fulfillment.address.line2, `${order.fulfillment.address.city || ""}, ${order.fulfillment.address.state || ""} ${order.fulfillment.address.postalCode || ""}`.trim()].filter(Boolean).join("\n")
@@ -436,7 +539,7 @@ export async function POST(request: Request) {
         <div style="background:#07111f;padding:24px;">
           <p style="margin:0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.18em;">Hue Studio Order</p>
           <h1 style="margin:8px 0 0;color:#ffffff;font-size:30px;line-height:1.1;">${escapeHtml(order.orderNumber)}</h1>
-          <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">Test checkout submitted ${escapeHtml(order.createdAt ? new Date(order.createdAt).toLocaleString() : "today")}.</p>
+          <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">${isTestOrder ? 'Test checkout' : 'Paid checkout'} submitted ${escapeHtml(order.createdAt ? new Date(order.createdAt).toLocaleString() : "today")}.</p>
         </div>
         <div style="padding:24px;">
           <table style="width:100%;border-collapse:collapse;">
@@ -465,9 +568,9 @@ export async function POST(request: Request) {
     </div>
   `;
 
-  // Temporary launch-testing notice for customer confirmations only.
+  // Temporary launch-testing notice for no-payment confirmations only.
   // Keep the internal Hue order notification unchanged.
-  const customerHtml = html
+  const customerHtml = (isTestOrder ? html
     .replace(
       '<div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">',
       `<div style="max-width:820px;margin:0 auto;">
@@ -477,10 +580,10 @@ export async function POST(request: Request) {
         </div>
         <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">`,
     )
-    .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
     .replace("Test checkout submitted", "Test order submitted")
-    .replaceAll("Supabase", "Hue secure storage")
-    .replace(/\s*<\/div>\s*$/, '</div></div>');
+    .replace(/\s*<\/div>\s*$/, '</div></div>') : html)
+    .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
+    .replaceAll("Supabase", "Hue secure storage");
 
   const text = [
     `Hue Studio Order ${order.orderNumber}`,
@@ -550,8 +653,8 @@ export async function POST(request: Request) {
         from: orderFromEmail,
         html: customerHtml,
         reply_to: orderToEmail,
-        subject: `TEST ONLY — Hue Studio Confirmation ${order.orderNumber}`,
-        text: `TEST ONLY — NOT AN ACTUAL ORDER\nHue Studio is currently being tested. This is not a real production order.\n\n${text.replaceAll("Supabase", "Hue secure storage")}`,
+        subject: `${isTestOrder ? 'TEST ONLY — ' : ''}Hue Studio Confirmation ${order.orderNumber}`,
+        text: `${isTestOrder ? 'TEST ONLY — NOT AN ACTUAL ORDER\nHue Studio is currently being tested. This is not a real production order.\n\n' : ''}${text.replaceAll("Supabase", "Hue secure storage")}`,
         to: order.customer.email,
       }),
     });

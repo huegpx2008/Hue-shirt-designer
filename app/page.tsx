@@ -3,6 +3,7 @@
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, IText, Line, Object as FabricObject, Path, Point, Rect, Shadow, Triangle, filters } from 'fabric';
 import QRCode from 'qrcode';
+import PayPalCheckoutButton from '@/components/paypal-checkout-button';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
@@ -86,7 +87,8 @@ type TestOrder = {
   orderNumber: string;
   createdAt: string;
   status: 'test_submitted';
-  paymentMode: 'test_no_payment';
+  paymentMode: 'test_no_payment' | 'paypal';
+  payment?: { provider: 'paypal'; status: 'completed'; paypalOrderId: string; captureId: string; paidAt?: string };
   customer: { name: string; organization?: string; email: string; phone: string; notes?: string; taxExempt: boolean; userId?: string; checkoutMode: 'account' | 'quick' };
   fulfillment: {
     method: CheckoutFulfillment;
@@ -1958,6 +1960,8 @@ export default function Home() {
   const [checkoutPromo, setCheckoutPromo] = useState<AppliedPromo | null>(null);
   const [isCheckoutPromoLoading, setIsCheckoutPromoLoading] = useState(false);
   const [isSubmittingTestOrder, setIsSubmittingTestOrder] = useState(false);
+  const [paypalCheckoutAvailable, setPaypalCheckoutAvailable] = useState<boolean | null>(null);
+  const [pendingPayPalFinalization, setPendingPayPalFinalization] = useState(false);
   const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
   const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
   const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
@@ -1992,6 +1996,7 @@ export default function Home() {
   const artworkEditorSideSnapshotsRef = useRef<Record<CoroArtworkSide, string | null>>({ front: null, back: null });
   const artworkEditorClipboardRef = useRef<FabricObject | null>(null);
   const pendingCheckoutSubmissionRef = useRef<{ id: string; fingerprint: string } | null>(null);
+  const pendingPayPalCheckoutRef = useRef<{ order: TestOrder; checkoutToken: string; paypalOrderId: string; paymentToken?: string; captureId?: string; paidAt?: string } | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
 
@@ -2668,6 +2673,9 @@ export default function Home() {
     setCheckoutStatus('');
     setCheckoutPromoInput('');
     setCheckoutPromo(null);
+    setPaypalCheckoutAvailable(null);
+    setPendingPayPalFinalization(false);
+    pendingPayPalCheckoutRef.current = null;
     setShowTestCheckout(true);
   };
   const applyCheckoutPromo = async () => {
@@ -2692,53 +2700,23 @@ export default function Home() {
       setIsCheckoutPromoLoading(false);
     }
   };
-  const sendTestOrderEmail = async (order: TestOrder) => {
-    let submittedOrder = order;
-    try {
-      setCheckoutStatus('Securely submitting your order and sending confirmations...');
-      const orderForEmail = getPersistableTestOrders([order])[0];
-      const response = await fetch('/api/orders/test-submit', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : {}),
-        },
-        body: JSON.stringify({ order: orderForEmail, guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() })
-      });
-      const payload = await response.json().catch(() => ({})) as { error?: string; order?: TestOrder };
-      if (payload.order) {
-        submittedOrder = payload.order;
-        setTestOrders((current) => current.map((entry) => entry.id === submittedOrder.id ? submittedOrder : entry));
-        setLastTestOrder(submittedOrder);
-      }
-      if (!response.ok) throw new Error(payload.error || 'The order email could not be sent.');
-      setCheckoutStatus(`Order ${submittedOrder.orderNumber} was securely submitted and confirmation emails were sent.`);
-      return submittedOrder;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'The order email could not be sent.';
-      setCheckoutStatus(`Checkout stopped: ${message}`);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  };
-
-  const submitTestOrder = async () => {
+  const buildCheckoutOrder = (paymentMode: TestOrder['paymentMode'], payment?: TestOrder['payment']) => {
     const contactName = checkoutContact.name.trim();
     const contactEmail = checkoutContact.email.trim();
     if (!contactName || !contactEmail) {
-      setCheckoutStatus('Enter a customer name and email before submitting the test order.');
+      setCheckoutStatus('Enter a customer name and email before submitting the order.');
       setCheckoutStep('contact');
-      return;
+      return null;
     }
     if (checkoutFulfillment === 'direct_ship') {
       const hasAddress = checkoutAddress.line1.trim() && checkoutAddress.city.trim() && checkoutAddress.state.trim() && checkoutAddress.postalCode.trim();
       if (!hasAddress) {
         setCheckoutStatus('Direct shipping needs a street address, city, state, and ZIP code.');
         setCheckoutStep('fulfillment');
-        return;
+        return null;
       }
     }
-    if (isSubmittingTestOrder) return;
-    setIsSubmittingTestOrder(true);
+
     const timestamp = Date.now();
     const submissionFingerprint = JSON.stringify({
       email: contactEmail.toLowerCase(),
@@ -2756,12 +2734,14 @@ export default function Home() {
       // The in-memory submission key still prevents duplicate clicks for this page lifetime.
     }
     pendingCheckoutSubmissionRef.current = { id: checkoutSubmissionId, fingerprint: submissionFingerprint };
-    const order: TestOrder = {
+
+    return {
       id: checkoutSubmissionId,
       orderNumber: createTestOrderNumber(timestamp),
       createdAt: new Date(timestamp).toISOString(),
       status: 'test_submitted',
-      paymentMode: 'test_no_payment',
+      paymentMode,
+      payment,
       customer: {
         name: contactName,
         organization: checkoutContact.organization.trim() || undefined,
@@ -2789,19 +2769,16 @@ export default function Home() {
       tax: { rate: checkoutTaxRate, amount: checkoutTaxAmount, label: checkoutTaxLabel },
       total: checkoutOrderTotal,
       currency: 'USD'
-    };
-    setCheckoutStatus('Finalizing pricing and organizing production artwork...');
-    let organizedOrder: TestOrder;
-    try {
-      organizedOrder = await sendTestOrderEmail(order);
-    } catch {
-      setIsSubmittingTestOrder(false);
-      return;
-    }
+    } satisfies TestOrder;
+  };
+
+  const completeSubmittedOrder = (organizedOrder: TestOrder) => {
     setTestOrders((current) => [organizedOrder, ...current.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)]);
     setLastTestOrder(organizedOrder);
     setCartItems([]);
     setShowCart(false);
+    setPendingPayPalFinalization(false);
+    pendingPayPalCheckoutRef.current = null;
     try {
       const updatedHistory = [organizedOrder, ...testOrders.filter((entry) => entry.orderNumber !== organizedOrder.orderNumber)];
       window.localStorage.setItem(TEST_ORDER_STORAGE_KEY, JSON.stringify(getPersistableTestOrders(updatedHistory)));
@@ -2813,6 +2790,128 @@ export default function Home() {
     }
     setShowTestCheckout(false);
     window.location.assign(`/order-confirmation?order=${encodeURIComponent(organizedOrder.orderNumber)}`);
+  };
+
+  const sendTestOrderEmail = async (order: TestOrder, paymentToken?: string) => {
+    let submittedOrder = order;
+    try {
+      setCheckoutStatus('Securely submitting your order and sending confirmations...');
+      const orderForEmail = getPersistableTestOrders([order])[0];
+      const response = await fetch('/api/orders/test-submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : {}),
+        },
+        body: JSON.stringify({ order: orderForEmail, paymentToken, guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() })
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; order?: TestOrder };
+      if (payload.order) {
+        submittedOrder = payload.order;
+        setTestOrders((current) => current.map((entry) => entry.id === submittedOrder.id ? submittedOrder : entry));
+        setLastTestOrder(submittedOrder);
+      }
+      if (!response.ok) throw new Error(payload.error || 'The order email could not be sent.');
+      setCheckoutStatus(`Order ${submittedOrder.orderNumber} was securely submitted and confirmation emails were sent.`);
+      return submittedOrder;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The order email could not be sent.';
+      setCheckoutStatus(`Checkout stopped: ${message}`);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  };
+
+  const createPayPalCheckoutOrder = async () => {
+    const order = buildCheckoutOrder('paypal');
+    if (!order) throw new Error('Finish the checkout contact and delivery details before paying.');
+    setCheckoutStatus('Verifying pricing and opening secure PayPal Checkout...');
+    const orderForPayment = getPersistableTestOrders([order])[0];
+    const response = await fetch('/api/paypal/create-order', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(customerSession?.access_token ? { Authorization: `Bearer ${customerSession.access_token}` } : {}),
+      },
+      body: JSON.stringify({ order: orderForPayment, guestSessionId: customerSession?.user?.id ? undefined : getGuestUploadSessionId() })
+    });
+    const payload = await response.json().catch(() => ({})) as { id?: string; checkoutToken?: string; order?: TestOrder; error?: string };
+    if (!response.ok || !payload.id || !payload.checkoutToken) throw new Error(payload.error || 'PayPal could not create a secure checkout.');
+    const pricedOrder = payload.order ? { ...payload.order, paymentMode: 'paypal' as const } : order;
+    pendingPayPalCheckoutRef.current = { order: pricedOrder, checkoutToken: payload.checkoutToken, paypalOrderId: payload.id };
+    setCheckoutStatus('PayPal checkout is ready. Approve payment to submit the order.');
+    return payload.id;
+  };
+
+  const approvePayPalCheckoutOrder = async (paypalOrderId: string) => {
+    if (isSubmittingTestOrder) return;
+    const pending = pendingPayPalCheckoutRef.current;
+    if (!pending?.checkoutToken || pending.paypalOrderId !== paypalOrderId) throw new Error('This PayPal approval does not match the current checkout.');
+    setIsSubmittingTestOrder(true);
+    setCheckoutStatus('Capturing PayPal payment...');
+    try {
+      const captureResponse = await fetch('/api/paypal/capture-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paypalOrderId, checkoutToken: pending.checkoutToken }),
+      });
+      const capturePayload = await captureResponse.json().catch(() => ({})) as { paymentToken?: string; captureId?: string; paidAt?: string; error?: string };
+      if (!captureResponse.ok || !capturePayload.paymentToken || !capturePayload.captureId) throw new Error(capturePayload.error || 'PayPal payment could not be captured.');
+      pendingPayPalCheckoutRef.current = { ...pending, paymentToken: capturePayload.paymentToken, captureId: capturePayload.captureId, paidAt: capturePayload.paidAt };
+      setPendingPayPalFinalization(true);
+      setCheckoutStatus('Payment captured. Finalizing the Hue order...');
+      const paidOrder: TestOrder = {
+        ...pending.order,
+        paymentMode: 'paypal',
+        payment: { provider: 'paypal', status: 'completed', paypalOrderId, captureId: capturePayload.captureId, paidAt: capturePayload.paidAt },
+      };
+      const organizedOrder = await sendTestOrderEmail(paidOrder, capturePayload.paymentToken);
+      completeSubmittedOrder(organizedOrder);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The paid order could not be finalized.';
+      setCheckoutStatus(`Payment needs attention: ${message} If PayPal completed, do not pay again. Use Finalize Paid Order or contact Hue Graphics.`);
+      throw error instanceof Error ? error : new Error(message);
+    } finally {
+      setIsSubmittingTestOrder(false);
+    }
+  };
+
+  const finalizeCapturedPayPalOrder = async () => {
+    if (isSubmittingTestOrder) return;
+    const pending = pendingPayPalCheckoutRef.current;
+    if (!pending?.paymentToken || !pending.captureId) {
+      setCheckoutStatus('No captured PayPal payment is waiting to be finalized.');
+      return;
+    }
+    setIsSubmittingTestOrder(true);
+    setCheckoutStatus('Finalizing the paid PayPal order with Hue...');
+    try {
+      const paidOrder: TestOrder = {
+        ...pending.order,
+        paymentMode: 'paypal',
+        payment: { provider: 'paypal', status: 'completed', paypalOrderId: pending.paypalOrderId, captureId: pending.captureId, paidAt: pending.paidAt },
+      };
+      const organizedOrder = await sendTestOrderEmail(paidOrder, pending.paymentToken);
+      completeSubmittedOrder(organizedOrder);
+    } finally {
+      setIsSubmittingTestOrder(false);
+    }
+  };
+
+  const submitTestOrder = async () => {
+    if (isSubmittingTestOrder) return;
+    const order = buildCheckoutOrder('test_no_payment');
+    if (!order) return;
+    setIsSubmittingTestOrder(true);
+    setCheckoutStatus('Finalizing pricing and organizing production artwork...');
+    let organizedOrder: TestOrder;
+    try {
+      organizedOrder = await sendTestOrderEmail(order);
+    } catch {
+      setIsSubmittingTestOrder(false);
+      return;
+    }
+    setIsSubmittingTestOrder(false);
+    completeSubmittedOrder(organizedOrder);
   };
   const artworkAnalysisSummary = useMemo(() => {
     if (!artworkAnalysis) return 'No uploaded artwork analysis yet.';
@@ -8546,7 +8645,7 @@ export default function Home() {
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#62d4ff]">Cart &amp; Checkout</p>
                 <h2 className="mt-1 text-2xl font-black text-white">{checkoutStep === 'complete' ? 'Order submitted' : 'Review and submit your order'}</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-300">No payment will be collected. This creates a realistic test order for your team to review.</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{paypalCheckoutAvailable === true ? 'Secure PayPal Checkout will collect payment after you approve the exact verified total.' : paypalCheckoutAvailable === false ? 'PayPal is not enabled here yet, so this creates a realistic test order without collecting payment.' : 'Review the order details. Secure payment availability is checked on the review step.'}</p>
               </div>
               <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
             </div>
@@ -8624,8 +8723,8 @@ export default function Home() {
 
             {checkoutStep === 'review' ? <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-black text-white">Review test order</h3>
-                <p className="mt-1 text-sm text-slate-400">This snapshot includes products, pricing, options, and artwork references.</p>
+                <h3 className="text-lg font-black text-white">Review order</h3>
+                <p className="mt-1 text-sm text-slate-400">Confirm products, pricing, options, and artwork references before payment.</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -8677,12 +8776,25 @@ export default function Home() {
                     <span>{formatSignPrice(checkoutTaxAmount, 'USD')}</span>
                   </div>
                   <div className="flex items-center justify-between pt-2 text-lg font-black text-white">
-                    <span>Test total</span>
+                    <span>Order total</span>
                     <span className="text-green-400">{formatSignPrice(checkoutOrderTotal, 'USD')}</span>
                   </div>
                 </div>
               </div>
-              <p className="rounded border border-[#62d4ff]/25 bg-[#0ea5e9]/10 px-4 py-3 text-sm text-[#c8f2ff]">Test checkout only. No card is charged and no production order is sent yet.</p>
+              <div className="rounded-xl border border-[#62d4ff]/25 bg-[#0ea5e9]/10 p-4">
+                {paypalCheckoutAvailable === false ? <p className="text-sm text-[#c8f2ff]">PayPal Checkout is currently disabled or not configured. You can still submit this as a no-payment test order.</p> : <div className="space-y-3">
+                  <p className="text-sm font-bold text-[#c8f2ff]">Pay securely with PayPal to submit this order.</p>
+                  <PayPalCheckoutButton
+                    disabled={isSubmittingTestOrder}
+                    createOrder={createPayPalCheckoutOrder}
+                    onApprove={approvePayPalCheckoutOrder}
+                    onCancel={() => setCheckoutStatus('PayPal checkout was cancelled. Your cart is still here.')}
+                    onError={(message) => setCheckoutStatus(message)}
+                    onAvailabilityChange={(enabled) => setPaypalCheckoutAvailable(enabled)}
+                  />
+                  {pendingPayPalFinalization ? <p className="rounded border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">PayPal captured this payment, but Hue still needs to finish saving the order. Use Finalize Paid Order below if it does not continue automatically.</p> : null}
+                </div>}
+              </div>
             </div> : null}
 
             {checkoutStep === 'complete' ? <div className="space-y-4 text-center">
@@ -8690,7 +8802,7 @@ export default function Home() {
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-[#62d4ff]">Test order number</p>
                 <h3 className="mt-2 text-4xl font-black text-white">{lastTestOrder?.orderNumber || 'TEST SAVED'}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-300">No payment was collected. The cart was cleared and the test order was saved in this browser for workflow testing.</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{lastTestOrder?.paymentMode === 'paypal' ? 'Payment was captured through PayPal and the cart was cleared.' : 'No payment was collected. The cart was cleared and the test order was saved in this browser for workflow testing.'}</p>
               </div>
               {lastTestOrder ? <div className="mx-auto grid max-w-xl gap-3 text-left sm:grid-cols-3">
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -8749,12 +8861,13 @@ export default function Home() {
             </div> : null}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050b12] p-4">
-            <p className="text-xs leading-5 text-slate-400">Team testing mode. Real payment and final order automation can plug into this same order shape later.</p>
+            <p className="text-xs leading-5 text-slate-400">{paypalCheckoutAvailable === true ? 'PayPal payments are captured before Hue stores and emails the final order.' : 'Team testing mode is still available while PayPal is disabled.'}</p>
             <div className="flex gap-2">
               {checkoutStep !== 'contact' && checkoutStep !== 'complete' ? <button type="button" onClick={() => setCheckoutStep(checkoutStep === 'review' ? 'fulfillment' : 'contact')} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Back</button> : null}
               {checkoutStep === 'contact' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('fulfillment'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Continue</button> : null}
               {checkoutStep === 'fulfillment' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('review'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Review Order</button> : null}
-              {checkoutStep === 'review' ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : 'Submit Test Order'}</button> : null}
+              {checkoutStep === 'review' && pendingPayPalFinalization ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void finalizeCapturedPayPalOrder()} className="rounded bg-amber-500 px-4 py-3 text-xs font-black uppercase text-slate-950 hover:bg-amber-400 disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing...' : 'Finalize Paid Order'}</button> : null}
+              {checkoutStep === 'review' && paypalCheckoutAvailable === false ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : 'Submit Test Order'}</button> : null}
               {checkoutStep === 'complete' ? <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Done</button> : null}
             </div>
           </div>

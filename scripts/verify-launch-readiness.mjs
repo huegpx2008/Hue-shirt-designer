@@ -48,6 +48,25 @@ const checkoutValue = value('CHECKOUT_ENABLED').toLowerCase();
 if (!checkoutValue) warnings.push('CHECKOUT_ENABLED is unset and therefore defaults to true. Set it explicitly for launch.');
 else if (!['true', 'false'].includes(checkoutValue)) failures.push('CHECKOUT_ENABLED must be true or false.');
 
+const paypalCheckoutValue = value('PAYPAL_CHECKOUT_ENABLED').toLowerCase();
+if (paypalCheckoutValue && !['true', 'false'].includes(paypalCheckoutValue)) failures.push('PAYPAL_CHECKOUT_ENABLED must be true or false.');
+
+const paypalEnvironment = value('PAYPAL_ENV').toLowerCase();
+if (paypalEnvironment && !['sandbox', 'live'].includes(paypalEnvironment)) failures.push('PAYPAL_ENV must be sandbox or live.');
+
+if (paypalCheckoutValue === 'true') {
+  required('PAYPAL_CLIENT_ID');
+  required('PAYPAL_CLIENT_SECRET');
+  minLength('PAYPAL_ORDER_SIGNING_SECRET', 32);
+  required('PAYPAL_WEBHOOK_ID');
+
+  if (!paypalEnvironment) failures.push('PAYPAL_ENV is required when PayPal checkout is enabled.');
+  if (checkoutValue === 'false') failures.push('CHECKOUT_ENABLED must be true when PayPal checkout is enabled.');
+  if (paypalEnvironment === 'live' && /vercel\.app|localhost|127\.0\.0\.1/i.test(value('NEXT_PUBLIC_SITE_URL'))) {
+    failures.push('PAYPAL_ENV cannot be live while NEXT_PUBLIC_SITE_URL is a preview or local address.');
+  }
+}
+
 allOrNone(['CANVA_CLIENT_ID', 'CANVA_CLIENT_SECRET', 'CANVA_REDIRECT_URI'], 'Canva integration');
 if (value('CANVA_REDIRECT_URI') && (!validHttpsUrl(value('CANVA_REDIRECT_URI')) || !value('CANVA_REDIRECT_URI').endsWith('/api/canva/connect/callback'))) failures.push('CANVA_REDIRECT_URI must be the HTTPS /api/canva/connect/callback URL.');
 allOrNone(['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'], 'Cloudinary integration');
