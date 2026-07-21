@@ -15,6 +15,7 @@ import {
 import { getStorageBucket, getSupabaseAdminClient, getStorageSignedUrl } from '@/lib/server/supabase-admin';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SUPABASE_ORIGINAL_RETENTION_DAYS = 30;
 const RASTER_MIME = /^image\/(png|jpe?g|webp|gif|tiff?|avif)$/i;
 
 export type ArtworkArchiveRecord = {
@@ -272,7 +273,7 @@ export const recordVerifiedDriveArchive = async (args: {
     drive_web_view_link: driveFile.webViewLink || args.driveWebViewLink || null,
     archive_status: 'verified',
     drive_verified_at: now.toISOString(),
-    cleanup_eligible_at: new Date(now.getTime() + 7 * DAY_MS).toISOString(),
+    cleanup_eligible_at: new Date(now.getTime() + SUPABASE_ORIGINAL_RETENTION_DAYS * DAY_MS).toISOString(),
     error: null,
     updated_at: now.toISOString(),
   }, { onConflict: 'storage_path' }).select('*').single();
@@ -403,6 +404,7 @@ export const cleanupVerifiedSupabaseArtwork = async (options: { emergency?: bool
   await cleanupExpiredRestores();
   let query = client.from('hue_artwork_archive').select('*')
     .eq('archive_status', 'verified')
+    .neq('kind', 'library')
     .is('supabase_deleted_at', null)
     .not('drive_file_id', 'is', null)
     .not('preview_storage_path', 'is', null)

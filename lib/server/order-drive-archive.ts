@@ -10,6 +10,7 @@ export type DriveArchiveOrder = {
   customer_email?: string | null;
   customer_user_id?: string | null;
   customer_name?: string | null;
+  created_at?: string | null;
   total?: number | null;
   currency?: string | null;
   order_data?: unknown;

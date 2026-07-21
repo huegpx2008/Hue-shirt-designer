@@ -7,6 +7,8 @@ import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/o
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
+const GUEST_UPLOAD_RETENTION_HOURS = 24 * 7;
+
 const recentUnarchivedOrders = async () => {
   const orders = await supabaseAdminFetch(
     '/rest/v1/hue_orders?select=*&order=created_at.desc&limit=100',
@@ -52,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
     const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: 30, limit: 25 });
     const cleanup = await cleanupVerifiedSupabaseArtwork({ emergency, limit: 100 });
-    const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: 72, limit: 100 });
+    const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: GUEST_UPLOAD_RETENTION_HOURS, limit: 100 });
     const after = await getArtworkArchiveStats();
     return NextResponse.json({ ok: true, emergency, before, after, staleArchive, cleanup, guestCleanup, archiveResults });
   } catch (error) {

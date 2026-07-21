@@ -1,10 +1,9 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
 import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
-import { archiveOrderToDriveBestEffort } from '@/lib/server/order-drive-archive';
 
 type OrderArtworkFile = {
   role?: string;
@@ -320,9 +319,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'This checkout submission does not match the original customer.' }, { status: 409 });
       }
       if (existing.status === 'received' && existing.admin_email_sent_at && existing.customer_email_sent_at && existing.order_data) {
-        if (existing.drive_archive_status !== 'archived') {
-          after(async () => { await archiveOrderToDriveBestEffort(existing); });
-        }
         return NextResponse.json({ ok: true, duplicate: true, order: existing.order_data });
       }
       const updatedAt = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
@@ -574,15 +570,5 @@ export async function POST(request: Request) {
   }
 
   await updateOrderState({ status: 'received', last_email_error: null, order_data: order });
-  after(async () => {
-    await archiveOrderToDriveBestEffort({
-      ...storedRecord,
-      customer_email: order.customer!.email,
-      customer_name: order.customer!.name || null,
-      total: Number(order.total || 0),
-      currency: order.currency || 'USD',
-      order_data: order as unknown as Record<string, unknown>,
-    });
-  });
   return NextResponse.json({ ok: true, duplicate: !isNewOrder, order });
 }

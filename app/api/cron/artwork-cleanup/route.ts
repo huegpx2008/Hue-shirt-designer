@@ -5,6 +5,10 @@ import { isGoogleDriveArchiveConfigured } from '@/lib/server/google-drive';
 import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/order-drive-archive';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ORDER_DRIVE_ARCHIVE_DELAY_DAYS = 1;
+const GUEST_UPLOAD_RETENTION_HOURS = 24 * 7;
+
 const authorized = (request: NextRequest) => {
   const secret = process.env.CRON_SECRET || '';
   return Boolean(secret) && request.headers.get('authorization') === `Bearer ${secret}`;
@@ -18,7 +22,8 @@ export async function GET(request: NextRequest) {
       const orders = await supabaseAdminFetch(
         '/rest/v1/hue_orders?select=*&order=created_at.asc&limit=100',
       ) as DriveArchiveOrder[];
-      const pendingOrders = orders.filter((order) => order.drive_archive_status !== 'archived').slice(0, 25);
+      const archiveCutoff = Date.now() - ORDER_DRIVE_ARCHIVE_DELAY_DAYS * DAY_MS;
+      const pendingOrders = orders.filter((order) => order.drive_archive_status !== 'archived' && new Date(order.created_at || 0).getTime() <= archiveCutoff).slice(0, 25);
       for (const order of pendingOrders) {
         const result = await archiveOrderToDriveBestEffort(order, { force: true });
         archiveResults.push({ orderNumber: order.order_number, ok: result.ok });
@@ -26,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
     const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: 30, limit: 25 });
     const cleanup = await cleanupVerifiedSupabaseArtwork({ limit: 100 });
-    const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: 72, limit: 100 });
+    const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: GUEST_UPLOAD_RETENTION_HOURS, limit: 100 });
     return NextResponse.json({ ok: true, staleArchive, cleanup, guestCleanup, archiveResults, stats: await getArtworkArchiveStats() });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Scheduled artwork cleanup failed.';
