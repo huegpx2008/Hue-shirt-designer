@@ -2574,10 +2574,7 @@ export default function Home() {
   const formatArtworkSetNumber = (setNumber: number) => String(setNumber).padStart(2, '0');
   const signPricePerSheet = signRetailTotal !== null ? signRetailTotal / coroSheetLayout.sheetCount : null;
   const coroPricePerSign = signEachTotal ?? (signRetailTotal !== null ? signRetailTotal / Math.max(1, effectiveCoroQuantity) : null);
-  const serverFilledSheetPrice = numericPrice(signEstimate?.studioPricing?.sheetPricing?.filledSheetTotal);
-  // A filled-sheet preview is a single sheet plus its density surcharge. It is
-  // not the current per-piece price multiplied by every available position.
-  const coroPricePerFullSheet = serverFilledSheetPrice ?? signPricePerSheet;
+  const coroPricePerFullSheet = signPricePerSheet;
   const coroPricingCurrency = signEstimate?.currency || 'USD';
   const coroPricingIsLoaded = isCoroBuilder && signEstimate && signRetailTotal !== null;
   const coroSheetCapacity = coroSheetLayout.sheetCount * coroSheetLayout.signsPerSheet;

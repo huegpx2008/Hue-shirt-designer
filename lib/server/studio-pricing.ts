@@ -99,9 +99,9 @@ const sheetLayout = (payload: PricingPayload) => {
   return { quantity, piecesPerSheet, sheetCount: Math.max(1, Math.ceil(quantity / piecesPerSheet)) };
 };
 
-const masterSheetPrice = async (productKey: string, payload: PricingPayload) => {
+const masterFilledSheetPrice = async (productKey: string, payload: PricingPayload, piecesPerSheet: number) => {
   const apiSlug = productKey === 'yard-sign' ? 'custom-cut-coroplast' : productKey;
-  const referencePayload: PricingPayload = { ...payload, quantity: 1, sheetCount: 1 };
+  const referencePayload: PricingPayload = { ...payload, quantity: piecesPerSheet, sheetCount: 1 };
   const response = await fetch(`https://quotes.huegraphics.cc/api/pricing/${apiSlug}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -125,8 +125,7 @@ const applySheetDensityPricing = async (
   if (!payload || !SHEET_PRICED_PRODUCTS.has(productKey)) return { source, sheetPricing: null };
   const layout = sheetLayout(payload);
   if (!layout) return { source, sheetPricing: null };
-  const referencePerSheet = await masterSheetPrice(productKey, payload).catch(() => null);
-  if (!referencePerSheet) return { source, sheetPricing: null };
+  const referenceFilledSheetTotal = await masterFilledSheetPrice(productKey, payload, layout.piecesPerSheet).catch(() => null);
 
   const includedPieces = Math.round(safeSheetSetting(adjustment.sheet_included_pieces, DEFAULT_SHEET_PRICING.includedPieces, 1, 10000));
   const extraPercentPerPiece = safeSheetSetting(adjustment.sheet_extra_percent, DEFAULT_SHEET_PRICING.extraPercentPerPiece, 0, 100);
@@ -135,27 +134,12 @@ const applySheetDensityPricing = async (
     maxSurchargePercent,
     Math.max(0, layout.piecesPerSheet - includedPieces) * extraPercentPerPiece,
   );
-  const filledSheetPreAdjustmentTotal = Number((referencePerSheet * (1 + filledSheetSurchargePercent / 100)).toFixed(2));
-  let remaining = layout.quantity;
-  let surchargeTotal = 0;
-  for (let sheet = 0; sheet < layout.sheetCount; sheet += 1) {
-    const piecesOnSheet = Math.min(layout.piecesPerSheet, remaining);
-    remaining -= piecesOnSheet;
-    const surchargePercent = Math.min(maxSurchargePercent, Math.max(0, piecesOnSheet - includedPieces) * extraPercentPerPiece);
-    surchargeTotal += referencePerSheet * surchargePercent / 100;
-  }
-  const densityTotal = Number((referencePerSheet * layout.sheetCount + surchargeTotal).toFixed(2));
-  const sourcePrice = source.price && typeof source.price === 'object' ? source.price as Record<string, unknown> : null;
-  if (!sourcePrice || densityTotal <= 0) return { source, sheetPricing: null };
+  const filledSheetPreAdjustmentTotal = referenceFilledSheetTotal && referenceFilledSheetTotal > 0
+    ? Number(referenceFilledSheetTotal.toFixed(2))
+    : null;
+
   return {
-    source: {
-      ...source,
-      price: {
-        ...sourcePrice,
-        retail: densityTotal,
-        each: Number((densityTotal / layout.quantity).toFixed(4)),
-      },
-    },
+    source,
     sheetPricing: {
       applied: true,
       sheetCount: layout.sheetCount,
@@ -163,11 +147,10 @@ const applySheetDensityPricing = async (
       includedPieces,
       extraPercentPerPiece,
       maxSurchargePercent,
-      masterReferencePerSheet: referencePerSheet,
+      masterFilledSheetTotal: referenceFilledSheetTotal,
       filledSheetSurchargePercent,
       filledSheetPreAdjustmentTotal,
-      surchargeTotal: Number(surchargeTotal.toFixed(2)),
-      preAdjustmentTotal: densityTotal,
+      preAdjustmentTotal: numericValue((source.price as Record<string, unknown> | undefined)?.retail),
     },
   };
 };
