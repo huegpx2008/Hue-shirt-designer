@@ -7624,7 +7624,7 @@ export default function Home() {
                             const cellFitState = coroSheetViewSide === 'back' ? cell.item.backFitState : cell.item.frontFitState;
                             const cellArtworkMatchesTarget = coroSheetViewSide === 'back'
                               ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, cell.width, cell.height, cell.item.dpi)
-                              : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.sourceSignWidth || cell.item.signWidth, cell.item.sourceSignHeight || cell.item.signHeight);
+                              : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight);
                             const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellFitState === 'fit' || cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
                             return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}>{cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellObjectFitClass}`} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div>;
                           })}
@@ -7637,7 +7637,7 @@ export default function Home() {
                             const cellArtworkMatchesTarget = sheetItem
                               ? coroSheetViewSide === 'back'
                                 ? artworkPrintSizeMatchesTarget(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
-                                : artworkPrintSizeMatchesTarget(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.sourceSignWidth || sheetItem.signWidth, sheetItem.sourceSignHeight || sheetItem.signHeight)
+                                : artworkPrintSizeMatchesTarget(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.sourceSignWidth, sheetItem.sourceSignHeight)
                               : false;
                             const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellFitState === 'fit' || cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
                             return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellObjectFitClass}`} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
@@ -7800,7 +7800,7 @@ export default function Home() {
                     const itemSignHeight = isCustomCoro ? Number(item.signHeight || signHeight || 0) : signHeight;
                     const frontActualSize = getFittedArtworkSize(item.width, item.height, itemSignWidth, itemSignHeight);
                     const backActualSize = getFittedArtworkSize(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight);
-                    const frontSizeMatchesTarget = artworkPrintSizeMatchesTarget(item.width, item.height, itemSignWidth, itemSignHeight, item.dpi, item.sourceSignWidth || item.signWidth, item.sourceSignHeight || item.signHeight);
+                    const frontSizeMatchesTarget = artworkPrintSizeMatchesTarget(item.width, item.height, itemSignWidth, itemSignHeight, item.dpi, item.sourceSignWidth, item.sourceSignHeight);
                     const backSizeMatchesTarget = item.backDataUrl ? artworkPrintSizeMatchesTarget(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight, item.dpi) : false;
                     const rawFrontMismatch = aspectRatioMismatch(item.width, item.height, itemSignWidth, itemSignHeight);
                     const rawBackMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight) : false;
@@ -9092,7 +9092,18 @@ export default function Home() {
             <button type="button" onClick={openAccountFromGuestArtworkWarning} className="shrink-0 rounded-lg border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Create Account / Sign In</button>
           </div> : null}
           <div className="hue-image-library-grid min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
-            {imageZoneItems.length === 0 ? <div className="flex h-full min-h-80 items-center justify-center rounded-2xl border border-dashed border-[#38bdf8]/35 bg-white/[0.035] text-center">
+            {isImageLibraryLoading ? <div className="hue-image-library-loading flex h-full min-h-80 items-center justify-center rounded-2xl border border-dashed border-[#38bdf8]/35 bg-white/[0.035] text-center">
+              <div>
+                <span className="hue-image-library-loading__orb mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.18)]">
+                  <span className="hue-image-library-loading__spinner" aria-hidden="true" />
+                </span>
+                <p className="mt-5 text-lg font-black text-white">Loading your saved artwork...</p>
+                <p className="mt-2 text-sm text-slate-400">Hang tight while Hue Studio pulls your Image Zone files.</p>
+                <div className="mx-auto mt-6 grid max-w-md grid-cols-3 gap-3">
+                  {[0, 1, 2].map((item) => <span key={item} className="hue-image-library-loading__tile" />)}
+                </div>
+              </div>
+            </div> : imageZoneItems.length === 0 ? <div className="flex h-full min-h-80 items-center justify-center rounded-2xl border border-dashed border-[#38bdf8]/35 bg-white/[0.035] text-center">
               <div>
                 <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/20 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.15)]">+</span><p className="mt-5 text-lg font-black text-white">Your artwork vault is ready</p>
                 <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>

@@ -1350,6 +1350,102 @@ body {
   scrollbar-color: rgba(56, 189, 248, 0.45) rgba(255, 255, 255, 0.04);
 }
 
+.hue-image-library-loading {
+  position: relative;
+  overflow: hidden;
+}
+
+.hue-image-library-loading::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0%, rgba(103, 216, 255, 0.05) 42%, rgba(103, 216, 255, 0.16) 50%, rgba(103, 216, 255, 0.05) 58%, transparent 100%);
+  transform: translateX(-120%);
+  animation: hue-image-library-loading-sweep 1.7s ease-in-out infinite;
+}
+
+.hue-image-library-loading > div {
+  position: relative;
+  z-index: 1;
+}
+
+.hue-image-library-loading__orb {
+  position: relative;
+  animation: hue-image-library-loading-pulse 1.7s ease-in-out infinite;
+}
+
+.hue-image-library-loading__spinner {
+  display: block;
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 3px solid rgba(103, 216, 255, 0.24);
+  border-top-color: #8be3ff;
+  border-radius: 999px;
+  animation: hue-image-library-loading-spin 0.78s linear infinite;
+}
+
+.hue-image-library-loading__tile {
+  display: block;
+  height: 4.6rem;
+  border: 1px solid rgba(103, 216, 255, 0.16);
+  border-radius: 1rem;
+  background: linear-gradient(110deg, rgba(255,255,255,0.04), rgba(103,216,255,0.14), rgba(255,255,255,0.04));
+  background-size: 220% 100%;
+  animation: hue-image-library-loading-shimmer 1.35s ease-in-out infinite;
+}
+
+.hue-image-library-loading__tile:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.hue-image-library-loading__tile:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+@keyframes hue-image-library-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hue-image-library-loading-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  60%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes hue-image-library-loading-shimmer {
+  0% {
+    background-position: 120% 0;
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    background-position: -120% 0;
+    opacity: 0.45;
+  }
+}
+
+@keyframes hue-image-library-loading-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 24px rgba(14, 165, 233, 0.12);
+  }
+
+  50% {
+    box-shadow: 0 0 38px rgba(14, 165, 233, 0.28);
+  }
+}
+
 .rigid-sign-preview {
   background:
     linear-gradient(118deg, transparent 0 43%, rgba(255, 255, 255, 0.92) 49%, rgba(226, 232, 240, 0.42) 54%, transparent 61%),
