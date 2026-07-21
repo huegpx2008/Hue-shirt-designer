@@ -349,6 +349,84 @@ body {
   transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, transform 160ms ease;
 }
 
+.hue-preparing-artwork-button {
+  position: relative;
+  overflow: hidden;
+  opacity: 0.92;
+  box-shadow: 0 0 26px rgba(34, 197, 94, 0.26), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.hue-preparing-artwork-button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.12) 42%, rgba(255, 255, 255, 0.32) 50%, rgba(255, 255, 255, 0.12) 58%, transparent 100%);
+  transform: translateX(-120%);
+  animation: hue-preparing-artwork-sweep 1.45s ease-in-out infinite;
+}
+
+.hue-preparing-artwork-button__content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.hue-preparing-artwork-button__spinner {
+  width: 1em;
+  height: 1em;
+  border: 2px solid rgba(255, 255, 255, 0.36);
+  border-top-color: #ffffff;
+  border-radius: 999px;
+  animation: hue-preparing-artwork-spin 0.72s linear infinite;
+}
+
+.hue-preparing-artwork-button__dots::after {
+  content: "";
+  display: inline-block;
+  width: 1.35em;
+  text-align: left;
+  animation: hue-preparing-artwork-dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes hue-preparing-artwork-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hue-preparing-artwork-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  58%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes hue-preparing-artwork-dots {
+  0% {
+    content: "";
+  }
+
+  25% {
+    content: ".";
+  }
+
+  50% {
+    content: "..";
+  }
+
+  75%,
+  100% {
+    content: "...";
+  }
+}
+
 .hue-artwork-primary:hover,
 .hue-artwork-secondary:hover,
 .hue-add-artwork:hover {
