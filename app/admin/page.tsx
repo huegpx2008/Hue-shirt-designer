@@ -13,9 +13,10 @@ type AdminPromo = { id?: string; code?: string; description?: string; discount_t
 type AdminPricing = { productKey: string; sourceLabel?: string; displayName: string; category: string; percentage: number; active: boolean; notes?: string; updatedAt?: string | null; isSheetPriced?: boolean; sheetIncludedPieces?: number; sheetExtraPercent?: number; sheetMaxSurchargePercent?: number };
 type SheetPricingDraft = { includedPieces: string; extraPercent: string; maxSurchargePercent: string };
 type DashboardData = { users: AdminUser[]; orders: AdminOrder[]; files: AdminFile[]; promos: AdminPromo[]; pricing: AdminPricing[]; pricingConfigured: boolean; sheetPricingConfigured: boolean };
-type AdminTab = 'overview' | 'orders' | 'users' | 'guests' | 'files' | 'pricing' | 'promos';
+type AdminTab = 'overview' | 'orders' | 'users' | 'guests' | 'files' | 'pricing' | 'promos' | 'maintenance';
 type GuestGroupData = { key: string; label: string; detail: string; orders: AdminOrder[]; files: AdminFile[] };
 type ArchiveStats = { trackedFiles: number; activeOriginals: number; eligibleFiles: number; activeBytes: number; eligibleBytes: number; cleanedFiles: number };
+type PrelaunchResetPreview = { orders: number; users: number; archiveRows: number; files: Array<{ prefix: string; count: number; bytes: number }>; totalFiles: number; totalBytes: number };
 
 const money = (value: unknown, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0));
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
@@ -70,6 +71,10 @@ export default function AdminPage() {
   const [archiveStats, setArchiveStats] = useState<ArchiveStats | null>(null);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupMessage, setCleanupMessage] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetPreview, setResetPreview] = useState<PrelaunchResetPreview | null>(null);
+  const [resetConfirmation, setResetConfirmation] = useState('');
 
   const loadDashboard = async () => {
     setStatus('Loading Hue Studio data...');
@@ -113,6 +118,21 @@ export default function AdminPage() {
     if (authenticated && tab === 'files') void loadArchiveStats();
   }, [authenticated, tab]);
 
+  const loadPrelaunchResetPreview = async () => {
+    const response = await fetch('/api/admin/prelaunch-reset', { cache: 'no-store' });
+    const payload = await response.json().catch(() => ({})) as { preview?: PrelaunchResetPreview; error?: string };
+    if (!response.ok) {
+      setResetMessage(payload.error || 'Reset preview could not be loaded.');
+      return;
+    }
+    setResetPreview(payload.preview || null);
+    setResetMessage('');
+  };
+
+  useEffect(() => {
+    if (authenticated && tab === 'maintenance') void loadPrelaunchResetPreview();
+  }, [authenticated, tab]);
+
   const runStorageCleanup = async (emergency: boolean) => {
     if (emergency && !window.confirm('Archive and clean verified originals now, even if their normal retention period has not ended? Drive and preview verification will still be required.')) return;
     setCleanupBusy(true);
@@ -140,6 +160,42 @@ export default function AdminPage() {
       setTab('files');
     }
     setCleanupBusy(false);
+  };
+
+  const runPrelaunchReset = async () => {
+    if (resetConfirmation !== 'RESET HUE TEST DATA') {
+      setResetMessage('Type RESET HUE TEST DATA before running the pre-launch reset.');
+      return;
+    }
+    if (!window.confirm('This permanently deletes test customer accounts, orders, guest uploads, saved customer artwork, order artwork, and archive rows. Pricing, promos, and admin access stay untouched. Continue?')) return;
+    setResetBusy(true);
+    setResetMessage('Resetting test data now...');
+    const response = await fetch('/api/admin/prelaunch-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        confirmation: resetConfirmation,
+        deleteOrders: true,
+        deleteCustomerAccounts: true,
+        deleteArtworkFiles: true,
+        deleteArchiveRows: true,
+      }),
+    });
+    const payload = await response.json().catch(() => ({})) as {
+      error?: string;
+      deleted?: { orders?: number; archiveRows?: number; storage?: { deletedFiles?: number; deletedBytes?: number; skipped?: string[] }; users?: { deleted?: number; skipped?: unknown[] } };
+      after?: PrelaunchResetPreview;
+    };
+    if (!response.ok) setResetMessage(payload.error || 'Pre-launch reset failed.');
+    else {
+      const skipped = (payload.deleted?.storage?.skipped?.length || 0) + (payload.deleted?.users?.skipped?.length || 0);
+      setResetPreview(payload.after || null);
+      setResetConfirmation('');
+      setResetMessage(`Reset finished: ${payload.deleted?.orders || 0} orders, ${payload.deleted?.users?.deleted || 0} customer accounts, ${payload.deleted?.storage?.deletedFiles || 0} artwork files, and ${payload.deleted?.archiveRows || 0} archive rows deleted${skipped ? `. ${skipped} item${skipped === 1 ? '' : 's'} could not be removed and should be checked manually.` : '.'}`);
+      await loadDashboard();
+      setTab('maintenance');
+    }
+    setResetBusy(false);
   };
 
   const signIn = async (event: FormEvent) => {
@@ -284,6 +340,7 @@ export default function AdminPage() {
   const adjustedPricingCount = data.pricing.filter((item) => item.active && item.percentage !== 100).length;
   const pricingCategories = useMemo(() => Array.from(new Set(data.pricing.map((item) => item.category))), [data.pricing]);
   const updateOrder = (updatedOrder: AdminOrder) => setData((current) => ({ ...current, orders: current.orders.map((order) => order.id === updatedOrder.id ? updatedOrder : order) }));
+  const resetPreviewCards = resetPreview ? [[resetPreview.users, 'Customer accounts'], [resetPreview.orders, 'Orders'], [resetPreview.totalFiles, 'Artwork files'], [resetPreview.archiveRows, 'Archive rows'], [fileSize(resetPreview.totalBytes), 'Storage size']] : [];
 
   if (authenticated !== true) return <main className="flex min-h-screen items-center justify-center bg-[#030a12] p-5 text-white">
     <form onSubmit={signIn} className="w-full max-w-md rounded-[24px] border border-[#38bdf8]/25 bg-[#071522] p-7 shadow-[0_34px_110px_rgba(0,0,0,0.65),0_0_54px_rgba(14,165,233,0.14)]">
@@ -298,7 +355,7 @@ export default function AdminPage() {
   return <main className="min-h-screen bg-[#030a12] text-white">
     <header className="sticky top-0 z-30 border-b border-white/10 bg-[#07111f]/95 px-5 py-4 backdrop-blur md:px-8"><div className="mx-auto flex max-w-[1700px] flex-wrap items-center gap-4"><img src="/brand/hue-graphics-mark.png" alt="" className="h-11 w-11 rounded-lg border border-[#38bdf8]/30" /><div className="mr-auto"><p className="text-[9px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Graphics</p><h1 className="text-xl font-black">Studio Admin</h1></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search users, orders, or files" className="h-10 min-w-64 flex-1 rounded-xl border border-white/15 bg-black/25 px-4 text-sm outline-none focus:border-[#38bdf8] md:max-w-md" /><button onClick={() => void loadDashboard()} className="h-10 rounded-xl border border-[#38bdf8]/30 bg-[#0c2a40] px-4 text-xs font-black text-[#9be8ff]">Refresh</button><a href="/" className="h-10 rounded-xl border border-white/15 px-4 py-3 text-xs font-bold text-slate-300">Store</a><button onClick={signOut} className="h-10 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300">Sign out</button></div></header>
     <div className="mx-auto grid max-w-[1700px] gap-5 px-5 py-5 md:px-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-      <aside className="h-fit rounded-2xl border border-white/10 bg-[#071522] p-3 lg:sticky lg:top-24"><p className="px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Management</p>{(['overview', 'orders', 'users', 'guests', 'files', 'pricing', 'promos'] as AdminTab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`mb-1 w-full rounded-xl px-3 py-3 text-left text-sm font-bold capitalize ${tab === item ? 'bg-[#1686c9] text-white' : 'text-slate-300 hover:bg-white/[0.06]'}`}>{item === 'users' ? 'customers' : item}<span className="float-right text-xs opacity-60">{item === 'orders' ? data.orders.length : item === 'users' ? data.users.length : item === 'guests' ? guestGroups.length : item === 'files' ? data.files.length : item === 'pricing' ? adjustedPricingCount : item === 'promos' ? data.promos.length : ''}</span></button>)}<p className="mt-3 border-t border-white/10 px-3 pt-3 text-[10px] leading-5 text-slate-500">{status}</p></aside>
+      <aside className="h-fit rounded-2xl border border-white/10 bg-[#071522] p-3 lg:sticky lg:top-24"><p className="px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Management</p>{(['overview', 'orders', 'users', 'guests', 'files', 'pricing', 'promos', 'maintenance'] as AdminTab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`mb-1 w-full rounded-xl px-3 py-3 text-left text-sm font-bold capitalize ${tab === item ? 'bg-[#1686c9] text-white' : 'text-slate-300 hover:bg-white/[0.06]'}`}>{item === 'users' ? 'customers' : item}<span className="float-right text-xs opacity-60">{item === 'orders' ? data.orders.length : item === 'users' ? data.users.length : item === 'guests' ? guestGroups.length : item === 'files' ? data.files.length : item === 'pricing' ? adjustedPricingCount : item === 'promos' ? data.promos.length : ''}</span></button>)}<p className="mt-3 border-t border-white/10 px-3 pt-3 text-[10px] leading-5 text-slate-500">{status}</p></aside>
       <section className="min-w-0">
         {tab === 'overview' ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[[data.users.length, 'Customer accounts'], [data.orders.length, 'Orders'], [awaitingPrintavoCount, 'Awaiting Printavo'], [money(revenue), 'Recorded revenue'], [fileSize(storageBytes), 'Artwork storage']].map(([value, label]) => <div key={String(label)} className={`rounded-2xl border p-5 ${label === 'Awaiting Printavo' && Number(value) > 0 ? 'border-amber-300/25 bg-amber-300/[0.07]' : 'border-white/10 bg-[#071522]'}`}><p className={`text-3xl font-black ${label === 'Awaiting Printavo' && Number(value) > 0 ? 'text-amber-200' : 'text-white'}`}>{value}</p><p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p></div>)}</div><div className="mt-5 grid gap-5 xl:grid-cols-2"><AdminList title="Recent orders">{data.orders.slice(0, 8).map((order) => <Row key={order.id || order.order_number} title={order.order_number || 'Order'} detail={`${order.customer_email || 'No email'} · ${date(order.created_at)}`} value={money(order.total, order.currency)} />)}</AdminList><AdminList title="Recent customers">{data.users.slice(0, 8).map((user) => <Row key={user.id || user.email} title={user.email || 'Customer'} detail={`Joined ${date(user.created_at)}`} value={user.last_sign_in_at ? 'Active' : 'New'} />)}</AdminList></div></> : null}
         {tab === 'orders' ? <AdminList title="All orders — complete order details">{filteredOrders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={data.files} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />)}</AdminList> : null}
@@ -318,6 +375,7 @@ export default function AdminPage() {
         })}{unassignedFiles.length ? <CustomerFiles user={{ email: 'Unassigned / legacy storage' }} orders={[]} files={query ? unassignedFiles.filter((file) => `${file.path || ''} ${file.name || ''}`.toLowerCase().includes(query)) : unassignedFiles} onPreview={setPreviewFile} /> : null}</div> : null}
         {tab === 'pricing' ? <PricingPanel items={data.pricing} categories={pricingCategories} configured={data.pricingConfigured} sheetPricingConfigured={data.sheetPricingConfigured} drafts={pricingDrafts} sheetDrafts={sheetPricingDrafts} savingKey={savingPricingKey} onDraftChange={(productKey, value) => setPricingDrafts((current) => ({ ...current, [productKey]: value }))} onSheetDraftChange={(productKey, field, value) => setSheetPricingDrafts((current) => ({ ...current, [productKey]: { ...(current[productKey] || { includedPieces: '10', extraPercent: '0.325', maxSurchargePercent: '30' }), [field]: value } }))} onSave={savePricingAdjustment} onSaveAll={saveAllPricingAdjustments} /> : null}
         {tab === 'promos' ? <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]"><form onSubmit={savePromo} className="h-fit rounded-2xl border border-[#38bdf8]/20 bg-[#071522] p-5"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Create or update</p><h2 className="mt-1 text-xl font-black">Promo code</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><AdminInput label="Code" value={promo.code} onChange={(value) => setPromo((current) => ({ ...current, code: value.toUpperCase() }))} /><AdminInput label="Description" value={promo.description} onChange={(value) => setPromo((current) => ({ ...current, description: value }))} /><label className="text-xs font-bold text-slate-400">Discount type<select value={promo.discount_type} onChange={(event) => setPromo((current) => ({ ...current, discount_type: event.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white"><option value="percent">Percent off</option><option value="fixed">Fixed amount</option></select></label><AdminInput label="Discount value" type="number" value={String(promo.discount_value)} onChange={(value) => setPromo((current) => ({ ...current, discount_value: Number(value) }))} /><AdminInput label="Minimum order" type="number" value={promo.minimum_order} onChange={(value) => setPromo((current) => ({ ...current, minimum_order: value }))} /><AdminInput label="Maximum discount" type="number" value={promo.maximum_discount} onChange={(value) => setPromo((current) => ({ ...current, maximum_discount: value }))} /><AdminInput label="Expires" type="date" value={promo.expires_at} onChange={(value) => setPromo((current) => ({ ...current, expires_at: value }))} /><AdminInput label="Maximum uses" type="number" value={promo.max_uses} onChange={(value) => setPromo((current) => ({ ...current, max_uses: value }))} /></div><button disabled={savingPromo} className="mt-5 h-12 w-full rounded-xl bg-[#1686c9] text-sm font-black uppercase hover:bg-[#0f75b5] disabled:opacity-50">{savingPromo ? 'Saving...' : 'Save promo code'}</button></form><AdminList title="Promo codes">{data.promos.map((item) => <Row key={item.id || item.code} title={item.code || 'Code'} detail={`${item.description || 'No description'} · Used ${item.uses_count || 0}${item.max_uses ? ` of ${item.max_uses}` : ''} · ${item.expires_at ? `Expires ${date(item.expires_at)}` : 'No expiration'}`} value={`${item.discount_value || 0}${item.discount_type === 'percent' ? '%' : ' USD'} off${item.active === false ? ' · Inactive' : ''}`} />)}</AdminList></div> : null}
+        {tab === 'maintenance' ? <div className="space-y-5"><section className="rounded-2xl border border-red-400/30 bg-[linear-gradient(135deg,rgba(127,29,29,0.28),#071522)] p-5"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-200">Pre-launch maintenance</p><div className="mt-2 flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Reset fake testing data</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Use this before launch, or between heavy test rounds, to wipe customer accounts, orders, guest uploads, saved Image Zone artwork, order artwork, and archive rows. Pricing, promo codes, product settings, and admin access are left alone.</p></div><button type="button" onClick={() => void loadPrelaunchResetPreview()} disabled={resetBusy} className="rounded-xl border border-[#38bdf8]/40 bg-[#0b2537] px-4 py-3 text-xs font-black uppercase text-[#8be2ff] disabled:opacity-50">Refresh preview</button></div><div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{resetPreviewCards.map(([value, label]) => <StorageStat key={String(label)} label={String(label)} value={String(value)} />)}</div>{resetPreview?.files.length ? <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{resetPreview.files.map((group) => <div key={group.prefix} className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="text-xs font-black text-white">{group.prefix}</p><p className="mt-1 text-[11px] text-slate-400">{group.count} file{group.count === 1 ? '' : 's'} · {fileSize(group.bytes)}</p></div>)}</div> : <p className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">Load the preview to see what would be deleted.</p>}<div className="mt-5 rounded-2xl border border-red-400/25 bg-red-950/20 p-4"><p className="text-sm font-black text-red-100">This is permanent. Run it only for fake pre-launch/testing data.</p><p className="mt-1 text-xs leading-5 text-red-100/75">Type <span className="font-black text-white">RESET HUE TEST DATA</span> to enable the reset button.</p><input value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} placeholder="RESET HUE TEST DATA" className="mt-3 h-12 w-full rounded-xl border border-red-300/25 bg-[#02070d] px-4 text-sm text-white outline-none focus:border-red-300" /><button type="button" disabled={resetBusy || resetConfirmation !== 'RESET HUE TEST DATA'} onClick={() => void runPrelaunchReset()} className="mt-3 h-12 w-full rounded-xl bg-red-600 text-sm font-black uppercase text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40">{resetBusy ? 'Resetting...' : 'Permanently delete test data'}</button>{resetMessage ? <p className="mt-3 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-200">{resetMessage}</p> : null}</div></section></div> : null}
       </section>
     </div>
     {previewFile?.preview_url ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur" onClick={() => setPreviewFile(null)}>
