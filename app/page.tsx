@@ -6839,6 +6839,47 @@ export default function Home() {
     window.setTimeout(() => document.getElementById('store-products')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
   };
 
+  const hasStartedBuilderArtwork = () => Boolean(
+    signArtworkPreviewUrl
+    || signArtworkDisplayUrl
+    || bannerArtworkName
+    || rigidBackArtwork
+    || coroSheetArtworkItems.length > 0
+    || bannerOrderItems.length > 0
+    || layers.length > 0
+    || (fabricCanvasRef.current?.getObjects().length || 0) > 0
+  );
+
+  const confirmBuilderProductSwitch = (nextLabel: string) => {
+    if (!hasStartedBuilderArtwork()) return true;
+    return window.confirm(`Switch to ${nextLabel}? Artwork or layout progress started on this product will be cleared.`);
+  };
+
+  const switchBuilderCategoryFromHeader = (categoryId: StoreCategoryId) => {
+    const nextProduct = STORE_PRODUCTS.find((product) => product.category === categoryId && !product.disabled);
+    if (!nextProduct) {
+      if (!confirmBuilderProductSwitch(STORE_CATEGORIES.find((category) => category.id === categoryId)?.label || 'this category')) return;
+      setStoreCategory(categoryId);
+      setStoreView('store');
+      window.setTimeout(() => document.getElementById('store-products')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
+      return;
+    }
+
+    const alreadyOpen = storeView === 'builder'
+      && productMode === nextProduct.mode
+      && (!nextProduct.signProductId || signProductId === nextProduct.signProductId);
+
+    if (alreadyOpen) {
+      setStoreCategory(categoryId);
+      setStoreView('builder');
+      return;
+    }
+
+    if (!confirmBuilderProductSwitch(nextProduct.title)) return;
+    setStoreCategory(categoryId);
+    openStoreProduct(nextProduct);
+  };
+
   const openStoreProduct = (product: StoreProductCard) => {
     if (product.disabled) return;
     if (product.id === 'apparel-dtg') {
@@ -7097,7 +7138,7 @@ export default function Home() {
             {STORE_CATEGORIES.map((category) => {
               const active = storeCategory === category.id;
               const icon = category.id === 'banners' ? 'BN' : category.id === 'rigid' ? 'RG' : category.id === 'decals' ? 'AD' : category.id === 'magnets' ? 'MG' : category.id === 'apparel' ? 'AP' : category.id === 'misc' ? 'MS' : 'CO';
-              return <button key={category.id} type="button" onClick={() => chooseStoreCategory(category.id)} className={`group flex min-w-14 flex-col items-center gap-1 border-b-2 px-1 pb-2 pt-0 transition ${active ? 'border-[#0ea5e9] text-[#50c7ff]' : 'border-transparent text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}>
+              return <button key={category.id} type="button" onClick={() => switchBuilderCategoryFromHeader(category.id)} className={`group flex min-w-14 flex-col items-center gap-1 border-b-2 px-1 pb-2 pt-0 transition ${active ? 'border-[#0ea5e9] text-[#50c7ff]' : 'border-transparent text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}>
                 <span className={`flex h-8 w-8 items-center justify-center rounded border text-[10px] font-black shadow-sm ${active ? 'border-[#0ea5e9] bg-[#071827] text-[#65d5ff] shadow-[0_0_16px_rgba(14,165,233,0.40)]' : 'border-white/20 bg-[#0c1118] text-slate-300 group-hover:border-slate-500'}`}>{icon}</span>
                 <span>{category.label}</span>
               </button>;
@@ -7403,8 +7444,8 @@ export default function Home() {
                   <a href="#quote" className="px-2 py-3 hover:bg-white/10" title="Names and quantities"><span className="block text-xl">00</span><span>Names</span></a>
                 </div>
               </div> : null}
-              {productMode === 'signage' ? <div className={`hue-builder-summary absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[5vw] top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(320px,480px)_minmax(180px,240px)]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
-                <div className={`hue-builder-product-card flex items-start gap-3 ${isProductionBuilder ? 'max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-2.5 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur' : ''}`}>
+              {productMode === 'signage' ? <div className={`hue-builder-summary absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? isCoroBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[6vw]'} right-4 top-4 lg:grid-cols-[minmax(260px,380px)_minmax(0,1fr)_minmax(260px,330px)]` : `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[5vw] top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(320px,480px)_minmax(180px,240px)]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
+                <div className={`hue-builder-product-card flex items-start gap-3 ${isProductionBuilder ? `${isCoroBuilder ? 'lg:col-start-1 lg:row-span-2' : ''} max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-2.5 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur` : ''}`}>
                   <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
                     <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-[#1678b8]'}`}>Order Builder</p>
@@ -7413,12 +7454,12 @@ export default function Home() {
                     {isCoroBuilder ? <p className="mt-3 max-w-sm rounded border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 text-[10px] font-bold leading-4 text-amber-100">One 48&quot; × 96&quot; sheet is the minimum. Add more pieces to fill the available sheet space and lower the price per piece.</p> : null}
                   </div>
                 </div>
-                <div className={`hue-builder-production-card text-xs ${isProductionBuilder ? 'max-w-[480px] rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-4 py-3 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur lg:col-start-2 lg:row-start-1' : ''}`}>
+                <div className={`hue-builder-production-card text-xs ${isProductionBuilder ? `${isCoroBuilder ? 'w-full max-w-none lg:col-start-3 lg:row-start-2' : 'max-w-[480px] lg:col-start-2 lg:row-start-1'} rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-4 py-3 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur` : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className={`font-black uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-slate-500'}`}>Hue Production Summary</p>
                     {isProductionBuilder ? <span className="rounded-full border border-[#0ea5e9]/35 bg-[#0b263d] px-2.5 py-1 text-[10px] font-black uppercase text-[#9be6ff]">{hueQualityStatus}</span> : null}
                   </div>
-                  <div className={`mt-2 grid gap-x-4 gap-y-0.5 ${isProductionBuilder ? 'grid-cols-[80px_1fr_1fr] text-center text-[11px]' : 'grid-cols-2'}`}>
+                  <div className={`mt-2 grid gap-x-4 gap-y-0.5 ${isProductionBuilder ? isCoroBuilder ? 'grid-cols-[54px_1fr_1fr] text-center text-[10px]' : 'grid-cols-[80px_1fr_1fr] text-center text-[11px]' : 'grid-cols-2'}`}>
                     {isCoroBuilder ? <>
                       <span />
                       <span className="font-bold text-slate-100">Sheet Price</span>
@@ -7502,7 +7543,7 @@ export default function Home() {
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">{hueOrderPathLabel}</span>
                   </div> : null}
                 </div>
-                <div className={`hue-builder-total-card text-right ${isProductionBuilder ? 'rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-5 py-3 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur lg:col-start-3 lg:row-start-1' : ''}`}>
+                <div className={`hue-builder-total-card text-right ${isProductionBuilder ? `${isCoroBuilder ? 'w-full lg:col-start-3 lg:row-start-1' : 'lg:col-start-3 lg:row-start-1'} rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-5 py-3 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur` : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
                   <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isSignEstimateLoading ? '...' : signOrderRetailTotal !== null ? formatSignPrice(signOrderRetailTotal, isCoroBuilder ? coroPricingCurrency : signEstimate?.currency) : '$0.00'}</p>
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? coroReadyTotalLabel : isBusinessCardBuilder ? `${designerQuantity} business cards` : hasMultipleArtworkSets ? `${signOrderQuantity} total pieces / ${artworkSetCount} artwork sets` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${summaryMaterialLabel}`}</p>
@@ -7534,9 +7575,9 @@ export default function Home() {
                 <button type="button" onClick={() => setPrintLocation('sleeve')} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">Sleeve<br />Design</button>
                 <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">+<br />Zoom</button>
               </div> : null}
-              <div id="design-canvas" className={`hue-builder-canvas ${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-20 top-[17rem]' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
+              <div id="design-canvas" className={`hue-builder-canvas ${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-20 top-32' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
                   {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
-                  {isCoroBuilder ? <div className={`coro-sheet-stage relative flex w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[340px]' : ''}`}>
+                  {isCoroBuilder ? <div className={`coro-sheet-stage relative flex w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[340px] pr-[340px]' : 'pr-[340px]'}`}>
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.max(0, current - 1))} disabled={activeCoroSheetIndex === 0} className={`${activeCoroOptionPanel === 'images' ? 'left-[370px]' : 'left-8'} absolute z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-2xl font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.22)] backdrop-blur hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-35`}>‹</button> : null}
                     <div className={`coro-sheet-carousel relative z-[1] flex items-center gap-20 overflow-x-auto px-12 pb-24 pt-16 ${activeCoroOptionPanel === 'images' ? 'max-w-[calc(100vw-460px)]' : 'max-w-[86vw]'}`}>
                     {coroSheetPreviews.map((sheetPreview, sheetIndex) => {
