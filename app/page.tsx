@@ -7082,10 +7082,10 @@ export default function Home() {
       <header className={`hue-site-header ${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
         <div className={`hue-site-header-inner mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
           <div className="hue-mobile-brand flex min-w-0 flex-1 items-center gap-3">
-            <div className={`hue-mobile-logo ${isProductionBuilder ? 'h-12 w-12 rounded-md border border-white/35 shadow-[0_0_28px_rgba(22,120,184,0.20)]' : 'h-14 w-14 rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
-              <img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" />
+            <div className={`hue-mobile-logo ${isProductionBuilder ? 'h-14 w-[300px] rounded-md border border-white/20 shadow-[0_0_28px_rgba(22,120,184,0.20)] md:w-[360px]' : 'h-16 w-[340px] rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
+              <img src="/brand/hue-studio-wide.jpg" alt="Hue Studio - Design, Upload, Order" className="h-full w-full object-contain" />
             </div>
-            <div className={`hue-mobile-brand-copy min-w-0 ${isProductionBuilder ? 'hidden xl:block' : ''}`}>
+            <div className="sr-only">
               <p className={`text-xs font-black uppercase tracking-[0.24em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
               <h1 className={`truncate font-black tracking-tight ${isProductionBuilder ? 'text-[2rem] leading-none text-white drop-shadow-[0_0_18px_rgba(56,189,248,0.26)]' : 'text-2xl text-[#05090b] md:text-3xl'}`}>
                 <span className={isProductionBuilder ? 'bg-gradient-to-r from-white via-[#dff7ff] to-[#57c8ff] bg-clip-text text-transparent' : ''}>Hue Studio</span>
@@ -7097,7 +7097,7 @@ export default function Home() {
             {STORE_CATEGORIES.map((category) => {
               const active = storeCategory === category.id;
               const icon = category.id === 'banners' ? 'BN' : category.id === 'rigid' ? 'RG' : category.id === 'decals' ? 'AD' : category.id === 'magnets' ? 'MG' : category.id === 'apparel' ? 'AP' : category.id === 'misc' ? 'MS' : 'CO';
-              return <button key={category.id} type="button" onClick={() => openStoreCategory(category.id)} className={`group flex min-w-14 flex-col items-center gap-1 border-b-2 px-1 pb-2 pt-0 transition ${active ? 'border-[#0ea5e9] text-[#50c7ff]' : 'border-transparent text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}>
+              return <button key={category.id} type="button" onClick={() => chooseStoreCategory(category.id)} className={`group flex min-w-14 flex-col items-center gap-1 border-b-2 px-1 pb-2 pt-0 transition ${active ? 'border-[#0ea5e9] text-[#50c7ff]' : 'border-transparent text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}>
                 <span className={`flex h-8 w-8 items-center justify-center rounded border text-[10px] font-black shadow-sm ${active ? 'border-[#0ea5e9] bg-[#071827] text-[#65d5ff] shadow-[0_0_16px_rgba(14,165,233,0.40)]' : 'border-white/20 bg-[#0c1118] text-slate-300 group-hover:border-slate-500'}`}>{icon}</span>
                 <span>{category.label}</span>
               </button>;
@@ -7217,19 +7217,13 @@ export default function Home() {
               <div className="hue-mobile-category-strip mt-5 flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
                 {STORE_CATEGORIES.map((category) => <button key={category.id} type="button" onClick={() => chooseStoreCategory(category.id)} className={`w-44 shrink-0 rounded-md border p-3 text-left transition lg:w-full ${isProductionBuilder ? storeCategory === category.id ? 'border-[#0ea5e9] bg-[#0b263d] text-white shadow-[0_0_18px_rgba(14,165,233,0.16)]' : 'border-white/15 bg-white/[0.06] text-slate-200 hover:border-[#0ea5e9]/60 hover:bg-white/[0.10]' : storeCategory === category.id ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><span className="block text-sm font-bold">{category.label}</span><span className={`mt-1 block truncate text-xs ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>{category.description}</span></button>)}
               </div>
-              <div className="hue-mobile-canva-promo mt-5 overflow-hidden rounded-lg border border-[#38bdf8]/35 bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.28),transparent_40%),linear-gradient(135deg,rgba(14,165,233,0.22),rgba(7,17,31,0.94))] p-4 shadow-[0_0_32px_rgba(14,165,233,0.16)]">
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8be3ff]">New Canva import</p>
-                <h3 className="mt-2 text-lg font-black leading-tight text-white">Order straight from your Canva designs.</h3>
-                <p className="mt-2 text-xs leading-5 text-slate-300">Choose a saved Canva project and bring it into Hue Studio for print-ready ordering.</p>
-                <button type="button" onClick={openCanvaImport} className="mt-4 w-full rounded-lg bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.28)] hover:brightness-110">Import Canva</button>
-              </div>
             </aside>
 
             <section className={`hue-store-content min-w-0 overflow-hidden rounded-lg shadow-[0_18px_48px_rgba(7,17,31,0.08)] ${isProductionBuilder ? 'border border-white/15 bg-[#050b12] shadow-[0_24px_60px_rgba(0,0,0,0.45)]' : 'border border-white/80 bg-white/88'}`}>
               <div className="hue-store-hero relative overflow-hidden">
                 <div aria-hidden="true" className="hue-store-hero-pattern absolute inset-0" />
                 <div aria-hidden="true" className="hue-store-hero-glow absolute inset-0" />
-                <div className="relative grid items-center gap-6 px-4 py-5 sm:px-6 sm:py-6 md:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
+                <div className="relative grid items-center gap-6 px-4 py-5 sm:px-6 sm:py-6 md:grid-cols-[minmax(0,1fr)_320px] lg:px-8">
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.34em] text-[#67d8ff]">Hue Graphics design + ordering</p>
                     <h2 className="hue-store-hero-title mt-3 max-w-3xl uppercase leading-[0.84] drop-shadow-[0_10px_32px_rgba(0,0,0,0.55)]">
@@ -7261,21 +7255,9 @@ export default function Home() {
                       <strong className="block">Need full custom design help?</strong>
                       <span className="text-amber-300/75">For advanced design work, submit a quote request on the main website.</span>
                     </div>
-                    <div className="mt-4 rounded-xl border border-[#8be3ff]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(124,58,237,0.18))] p-3">
-                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8be3ff]">Canva friendly</p>
-                      <h3 className="mt-2 text-lg font-black leading-tight text-white">Already made it in Canva?</h3>
-                      <p className="mt-2 text-[11px] leading-5 text-slate-300">Import a saved Canva design and place the artwork on banners, signs, magnets, and more.</p>
-                      <button type="button" onClick={openCanvaImport} className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-white px-4 py-3 text-xs font-black uppercase text-[#0f5f94] shadow-[0_10px_28px_rgba(14,165,233,0.22)] hover:bg-[#eaf8ff]">Import Canva</button>
-                    </div>
-                    <div className="mt-4 overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(7,24,39,0.92))] p-3 shadow-[0_0_28px_rgba(14,165,233,0.10)]">
-                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Hue Designer</p>
-                      <h3 className="mt-2 text-lg font-black leading-tight text-white">Have an idea? Give it some Hue.</h3>
-                      <p className="mt-2 text-[11px] leading-5 text-slate-300">Build a simple sign or banner, create a quick layout, or make basic artwork changes—all right in your browser.</p>
-                      <button type="button" onClick={() => openNewArtworkCreator('home-create')} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1686c9] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Create in Hue Designer <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
                 </div>
-              </div>
 
               <div id="store-products" className="scroll-mt-24 p-4 md:p-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
