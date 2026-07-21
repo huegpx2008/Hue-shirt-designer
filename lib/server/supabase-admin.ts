@@ -62,7 +62,9 @@ export const supabaseAdminFetch = async (path: string, init: RequestInit = {}) =
     throw new Error(details || `Supabase admin request failed (${response.status}).`);
   }
   if (response.status === 204) return null;
-  return response.json();
+  const text = await response.text();
+  if (!text) return null;
+  return JSON.parse(text);
 };
 
 export const getPromoCode = async (code: string) => {
