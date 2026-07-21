@@ -1471,7 +1471,7 @@ const getCoroSheetLayout = (width: number, height: number, quantity: number, flu
 };
 
 const packCustomCoroSheets = (items: ImageZoneItem[], quantities: CoroArtworkQuantityMap, fallbackWidth: number, fallbackHeight: number, respectFluteDirection = false) => {
-  const sheets: { sheetNumber: number; quantity: number; cells: { item: ImageZoneItem; x: number; y: number; width: number; height: number }[] }[] = [{ sheetNumber: 1, quantity: 0, cells: [] }];
+  const sheets: { sheetNumber: number; quantity: number; cells: { item: ImageZoneItem; x: number; y: number; width: number; height: number; rotated?: boolean }[] }[] = [{ sheetNumber: 1, quantity: 0, cells: [] }];
   let x = 0;
   let y = 0;
   let rowHeight = 0;
@@ -1498,7 +1498,7 @@ const packCustomCoroSheets = (items: ImageZoneItem[], quantities: CoroArtworkQua
         rowHeight = 0;
       }
       const currentSheet = sheets[sheets.length - 1];
-      currentSheet.cells.push({ item, x, y, width, height });
+      currentSheet.cells.push({ item, x, y, width, height, rotated: shouldRotate });
       currentSheet.quantity += 1;
       x += width;
       rowHeight = Math.max(rowHeight, height);
@@ -7666,20 +7666,24 @@ export default function Home() {
                       <div className="coro-sheet-edge coro-sheet-edge--right absolute -right-12 bottom-0 top-0 text-[9px] font-black uppercase tracking-[0.2em] text-[#8be3ff]/70"><span className="absolute right-[-20px] top-1/2 -translate-y-1/2 rotate-90 bg-[#050b12]/80 px-2">Right edge</span></div>
                       <button type="button" onClick={() => { setActiveCoroSheetIndex(sheetIndex); if (!hasCoroSheetArtwork) setShowImageZone(true); }} className={`coro-sheet-frame absolute inset-0 overflow-hidden rounded-[3px] border bg-white text-left ${selectedSheet ? 'border-[#38bdf8] ring-2 ring-[#38bdf8]/60 ring-offset-4 ring-offset-[#071522]' : 'border-white/80'}`}>
                         {isCustomCoro && customCoroSheetPreviews.length > 0 ? <div className="relative h-full w-full overflow-hidden bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] p-1">
-                          {(sheetPreview.cells as { item: ImageZoneItem; x: number; y: number; width: number; height: number }[]).map((cell, index) => {
+                          {(sheetPreview.cells as { item: ImageZoneItem; x: number; y: number; width: number; height: number; rotated?: boolean }[]).map((cell, index) => {
                             const cellImage = coroSheetViewSide === 'back' ? cell.item.backDataUrl || null : cell.item.dataUrl || signArtworkPreviewUrl;
                             const cellFitState = coroSheetViewSide === 'back' ? cell.item.backFitState : cell.item.frontFitState;
+                            const cellRotated = Boolean(cell.rotated);
+                            const logicalCellWidth = cellRotated ? cell.height : cell.width;
+                            const logicalCellHeight = cellRotated ? cell.width : cell.height;
                             const cellArtworkMatchesTarget = coroSheetViewSide === 'back'
-                              ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, cell.width, cell.height, cell.item.dpi)
-                              : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight);
+                              ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, logicalCellWidth, logicalCellHeight, cell.item.dpi)
+                              : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, logicalCellWidth, logicalCellHeight, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight);
                             const centeredStyle = cellFitState === 'fit'
                               ? coroSheetViewSide === 'back'
-                                ? getCenteredArtworkStyle(cell.item.backWidth, cell.item.backHeight, cell.width, cell.height, cell.item.dpi)
-                                : getCenteredArtworkStyle(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight)
+                                ? getCenteredArtworkStyle(cell.item.backWidth, cell.item.backHeight, logicalCellWidth, logicalCellHeight, cell.item.dpi)
+                                : getCenteredArtworkStyle(cell.item.width, cell.item.height, logicalCellWidth, logicalCellHeight, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight)
                               : {};
                             const hasCenteredSize = Object.keys(centeredStyle).length > 0;
                             const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
-                            return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}>{cellImage ? <img src={cellImage} alt="" className={hasCenteredSize ? 'object-fill' : `h-full w-full ${cellObjectFitClass}`} style={hasCenteredSize ? centeredStyle : undefined} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div>;
+                            const rotatedSignStyle = cellRotated ? { width: `${(cell.height / Math.max(1, cell.width)) * 100}%`, height: `${(cell.width / Math.max(1, cell.height)) * 100}%`, transform: 'rotate(90deg)' } : undefined;
+                            return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}><div className={`${cellRotated ? 'flex items-center justify-center' : 'h-full w-full'} overflow-hidden`} style={rotatedSignStyle}>{cellImage ? <img src={cellImage} alt="" className={hasCenteredSize ? 'object-fill' : `h-full w-full ${cellObjectFitClass}`} style={hasCenteredSize ? centeredStyle : undefined} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div></div>;
                           })}
                         </div> : <div className="grid h-full w-full gap-[2px] p-1" style={{ gridTemplateColumns: `repeat(${coroSheetLayout.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${coroSheetLayout.rows}, minmax(0, 1fr))` }}>
                           {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => {
@@ -7687,6 +7691,7 @@ export default function Home() {
                             const sheetItem = shouldFillCell ? sheetPreview.cells[index] as ImageZoneItem | undefined : null;
                             const cellImage = coroSheetViewSide === 'back' ? sheetItem?.backDataUrl || null : sheetItem?.dataUrl || signArtworkPreviewUrl;
                             const cellFitState = coroSheetViewSide === 'back' ? sheetItem?.backFitState : sheetItem?.frontFitState;
+                            const cellRotated = Boolean(coroSheetLayout.rotated);
                             const cellArtworkMatchesTarget = sheetItem
                               ? coroSheetViewSide === 'back'
                                 ? artworkPrintSizeMatchesTarget(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
@@ -7699,7 +7704,8 @@ export default function Home() {
                               : {};
                             const hasCenteredSize = Object.keys(centeredStyle).length > 0;
                             const cellObjectFitClass = cellFitState === 'stretch' ? 'object-fill' : cellArtworkMatchesTarget ? 'object-contain' : 'object-fill';
-                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={hasCenteredSize ? 'object-fill' : `h-full w-full ${cellObjectFitClass}`} style={hasCenteredSize ? centeredStyle : undefined} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
+                            const rotatedSignStyle = cellRotated ? { width: `${(signWidth / Math.max(1, signHeight)) * 100}%`, height: `${(signHeight / Math.max(1, signWidth)) * 100}%`, transform: 'rotate(90deg)' } : undefined;
+                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <div className={`${cellRotated ? 'flex items-center justify-center' : 'h-full w-full'} overflow-hidden`} style={rotatedSignStyle}><img src={cellImage} alt="" className={hasCenteredSize ? 'object-fill' : `h-full w-full ${cellObjectFitClass}`} style={hasCenteredSize ? centeredStyle : undefined} /></div> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
                           })}
                         </div>}
                       </button>
@@ -7857,8 +7863,8 @@ export default function Home() {
                     const itemQuantity = Math.max(1, Number(coroArtworkQuantities[item.id] || 1));
                     const itemSignWidth = isCustomCoro ? Number(item.signWidth || signWidth || 0) : signWidth;
                     const itemSignHeight = isCustomCoro ? Number(item.signHeight || signHeight || 0) : signHeight;
-                    const frontActualSize = getFittedArtworkSize(item.width, item.height, itemSignWidth, itemSignHeight);
-                    const backActualSize = getFittedArtworkSize(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight);
+                    const frontActualSize = getArtworkSourcePrintSize(item.width, item.height, item.dpi, item.sourceSignWidth, item.sourceSignHeight) || getFittedArtworkSize(item.width, item.height, itemSignWidth, itemSignHeight);
+                    const backActualSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, item.dpi) || getFittedArtworkSize(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight);
                     const frontSizeMatchesTarget = artworkPrintSizeMatchesTarget(item.width, item.height, itemSignWidth, itemSignHeight, item.dpi, item.sourceSignWidth, item.sourceSignHeight);
                     const backSizeMatchesTarget = item.backDataUrl ? artworkPrintSizeMatchesTarget(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight, item.dpi) : false;
                     const rawFrontMismatch = aspectRatioMismatch(item.width, item.height, itemSignWidth, itemSignHeight);
@@ -7902,14 +7908,14 @@ export default function Home() {
                           <span className="w-full">
                             <img src={item.dataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.frontFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} />
                             <span className="mt-2 block font-bold text-slate-600">Front image</span>
-                            <span className="mt-1 block text-slate-500">Actual: {frontActualSize.width.toFixed(0)}&quot; x {frontActualSize.height.toFixed(0)}&quot;</span>
+                            <span className="mt-1 block text-slate-500">Actual: {frontActualSize.width.toFixed(2)}&quot; x {frontActualSize.height.toFixed(2)}&quot;</span>
                           </span>
                         </button>
                         {hasCoroDoubleSided ? <button type="button" onClick={() => chooseCoroSideImage(item.id, 'back')} className={`hue-artwork-dropzone flex min-h-32 w-full items-center justify-center rounded-xl border bg-white p-3 text-center text-[10px] uppercase hover:border-[#0ea5e9] hover:text-[#1678b8] ${!item.backDataUrl || backMismatch ? 'border-amber-500 text-amber-600' : 'border-slate-200 text-slate-400'}`}>
                           <span className="w-full">
                             {item.backDataUrl ? <img src={item.backDataUrl} alt="" className={`mx-auto max-h-20 max-w-full ${item.backFitState === 'stretch' ? 'object-fill' : 'object-contain'}`} /> : <span className="mx-auto flex h-20 max-w-full items-center justify-center bg-[repeating-linear-gradient(90deg,#f8fafc_0,#f8fafc_6px,#e2e8f0_6px,#e2e8f0_7px)] px-2 text-slate-400">Click here to select back image</span>}
                             <span className="mt-2 block font-bold text-slate-600">Back image</span>
-                            <span className="mt-1 block text-slate-500">{item.backDataUrl ? `Actual: ${backActualSize.width.toFixed(0)}" x ${backActualSize.height.toFixed(0)}"` : 'No image selected'}</span>
+                            <span className="mt-1 block text-slate-500">{item.backDataUrl ? `Actual: ${backActualSize.width.toFixed(2)}" x ${backActualSize.height.toFixed(2)}"` : 'No image selected'}</span>
                           </span>
                         </button> : null}
                       </div>
@@ -8148,7 +8154,6 @@ export default function Home() {
                       ...(selectedSignProduct.id === 'yard-sign'
                         ? [
                             ['Grommets', signValues.grommets ? 'Yes' : 'No', Boolean(signValues.grommets)],
-                            ...(isCustomCoro ? [['Flutes', String(signValues.fluteDirection || 'auto'), String(signValues.fluteDirection || 'auto') !== 'auto']] as [string, string, boolean][] : []),
                             ['Step Stakes', String(signValues.stepStakes || '0'), Number(signValues.stepStakes || 0) > 0],
                             ['Gloss', signValues.gloss ? 'Yes' : 'No', Boolean(signValues.gloss)]
                           ] as [string, string, boolean][]
