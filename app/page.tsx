@@ -1513,6 +1513,29 @@ const getFittedArtworkSize = (imageWidth: number | undefined, imageHeight: numbe
   };
 };
 
+const dimensionMatches = (actual: number | undefined, expected: number | undefined, tolerance = 0.06) => (
+  Boolean(actual && expected) && Math.abs(Number(actual) - Number(expected)) <= tolerance
+);
+
+const artworkPrintSizeMatchesTarget = (
+  imageWidth: number | undefined,
+  imageHeight: number | undefined,
+  targetWidth: number,
+  targetHeight: number,
+  dpi?: number,
+  detectedWidth?: number,
+  detectedHeight?: number
+) => {
+  if (!targetWidth || !targetHeight) return false;
+  const printSize = detectedWidth && detectedHeight
+    ? { width: Number(detectedWidth), height: Number(detectedHeight) }
+    : imageWidth && imageHeight
+      ? getArtworkPrintSize(imageWidth, imageHeight, isUsableImageDpi(Number(dpi || 0)) ? { dpiX: Number(dpi), dpiY: Number(dpi) } : null)
+      : null;
+  if (!printSize) return false;
+  return dimensionMatches(printSize.width, targetWidth) && dimensionMatches(printSize.height, targetHeight);
+};
+
 const getSignOptionLabel = (field: SignField, value: string | boolean) => {
   if (typeof value === 'boolean') return value ? field.label : '';
   return field.options?.find((option) => option.value === value)?.label || value;
@@ -7599,7 +7622,10 @@ export default function Home() {
                           {(sheetPreview.cells as { item: ImageZoneItem; x: number; y: number; width: number; height: number }[]).map((cell, index) => {
                             const cellImage = coroSheetViewSide === 'back' ? cell.item.backDataUrl || null : cell.item.dataUrl || signArtworkPreviewUrl;
                             const cellFitState = coroSheetViewSide === 'back' ? cell.item.backFitState : cell.item.frontFitState;
-                            return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}>{cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' ? 'object-contain' : 'object-fill'}`} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div>;
+                            const cellArtworkMatchesTarget = coroSheetViewSide === 'back'
+                              ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, cell.width, cell.height, cell.item.dpi)
+                              : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, cell.width, cell.height, cell.item.dpi, cell.item.signWidth, cell.item.signHeight);
+                            return <div key={`${cell.item.id}-${index}`} className="absolute flex items-center justify-center overflow-hidden border border-dashed border-[#94a3b8] bg-white" style={{ left: `${(cell.x / CORO_SHEET.width) * 100}%`, top: `${(cell.y / CORO_SHEET.height) * 100}%`, width: `${(cell.width / CORO_SHEET.width) * 100}%`, height: `${(cell.height / CORO_SHEET.height) * 100}%` }}>{cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' || cellArtworkMatchesTarget ? 'object-contain' : 'object-fill'}`} /> : <span className="px-1 text-center text-[9px] font-black uppercase italic leading-tight text-slate-400">add art</span>}</div>;
                           })}
                         </div> : <div className="grid h-full w-full gap-[2px] p-1" style={{ gridTemplateColumns: `repeat(${coroSheetLayout.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${coroSheetLayout.rows}, minmax(0, 1fr))` }}>
                           {Array.from({ length: coroSheetLayout.signsPerSheet }).map((_, index) => {
@@ -7607,7 +7633,12 @@ export default function Home() {
                             const sheetItem = shouldFillCell ? sheetPreview.cells[index] as ImageZoneItem | undefined : null;
                             const cellImage = coroSheetViewSide === 'back' ? sheetItem?.backDataUrl || null : sheetItem?.dataUrl || signArtworkPreviewUrl;
                             const cellFitState = coroSheetViewSide === 'back' ? sheetItem?.backFitState : sheetItem?.frontFitState;
-                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' ? 'object-contain' : 'object-fill'}`} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
+                            const cellArtworkMatchesTarget = sheetItem
+                              ? coroSheetViewSide === 'back'
+                                ? artworkPrintSizeMatchesTarget(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
+                                : artworkPrintSizeMatchesTarget(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.signWidth, sheetItem.signHeight)
+                              : false;
+                            return <div key={index} className="coro-sheet-cell relative flex items-center justify-center overflow-hidden border border-dashed border-[#9eb6c6] bg-[repeating-linear-gradient(90deg,#fbfdff_0,#fbfdff_7px,#eaf1f5_7px,#eaf1f5_8px)]">{shouldFillCell && cellImage ? <img src={cellImage} alt="" className={`h-full w-full ${cellFitState === 'fit' || cellArtworkMatchesTarget ? 'object-contain' : 'object-fill'}`} /> : shouldFillCell ? <span className="coro-sheet-empty flex flex-col items-center px-2 text-center"><span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#0ea5e9]/20 bg-[#e8f7ff] text-sm font-black text-[#1686c9] shadow-sm">H</span><span className="mt-2 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">Artwork zone</span></span> : null}</div>;
                           })}
                         </div>}
                       </button>
@@ -7766,10 +7797,13 @@ export default function Home() {
                     const itemSignHeight = isCustomCoro ? Number(item.signHeight || signHeight || 0) : signHeight;
                     const frontActualSize = getFittedArtworkSize(item.width, item.height, itemSignWidth, itemSignHeight);
                     const backActualSize = getFittedArtworkSize(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight);
+                    const frontSizeMatchesTarget = artworkPrintSizeMatchesTarget(item.width, item.height, itemSignWidth, itemSignHeight, item.dpi, item.signWidth, item.signHeight);
+                    const backSizeMatchesTarget = item.backDataUrl ? artworkPrintSizeMatchesTarget(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight, item.dpi) : false;
                     const rawFrontMismatch = aspectRatioMismatch(item.width, item.height, itemSignWidth, itemSignHeight);
                     const rawBackMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight) : false;
                     const frontMismatch = rawFrontMismatch && item.frontFitState !== 'fit' && item.frontFitState !== 'stretch';
                     const backMismatch = rawBackMismatch && item.backFitState !== 'fit' && item.backFitState !== 'stretch';
+                    const showCoroFitControls = !frontSizeMatchesTarget || (Boolean(item.backDataUrl) && !backSizeMatchesTarget);
                     const itemNeedsCheck = frontMismatch || backMismatch || (hasCoroDoubleSided && !item.backDataUrl);
                     const itemFirstCellIndex = coroSheetCells.findIndex((cell) => cell.id === item.id);
                     const customItemSheetIndex = customCoroSheetPreviews.findIndex((sheet) => sheet.cells.some((cell) => cell.item.id === item.id));
@@ -7823,10 +7857,10 @@ export default function Home() {
                       <div className="mt-3 text-xs">
                         <button type="button" className="w-full rounded border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <button type="button" aria-pressed={item.frontFitState === 'fit'} onClick={() => resolveCoroArtworkFit(item.id, 'fit')} className={`rounded border px-2 py-2 font-bold ${item.frontFitState === 'fit' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Fit</button>
+                      <div className={`mt-3 grid gap-2 text-xs ${showCoroFitControls ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        {showCoroFitControls ? <button type="button" aria-pressed={item.frontFitState === 'fit'} onClick={() => resolveCoroArtworkFit(item.id, 'fit')} className={`rounded border px-2 py-2 font-bold ${item.frontFitState === 'fit' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Fit</button> : null}
                         <button type="button" onClick={centerSelectedArtwork} disabled={!activeObject} className="rounded border border-[#1678b8] bg-white px-2 py-2 font-bold text-[#1678b8] hover:bg-[#eaf5fb] disabled:cursor-not-allowed disabled:opacity-40">Center</button>
-                        <button type="button" aria-pressed={item.frontFitState === 'stretch'} onClick={() => resolveCoroArtworkFit(item.id, 'stretch')} className={`rounded border px-2 py-2 font-bold ${item.frontFitState === 'stretch' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Stretch</button>
+                        {showCoroFitControls ? <button type="button" aria-pressed={item.frontFitState === 'stretch'} onClick={() => resolveCoroArtworkFit(item.id, 'stretch')} className={`rounded border px-2 py-2 font-bold ${item.frontFitState === 'stretch' ? 'border-[#1678b8] bg-[#1678b8] text-white hover:bg-[#0f5f94]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>Stretch</button> : null}
                         <button type="button" onClick={() => setShowImageZone(true)} className="rounded border border-slate-300 bg-white px-2 py-2 font-medium hover:bg-slate-50">Image Zone</button>
                       </div>
                     </div>;
