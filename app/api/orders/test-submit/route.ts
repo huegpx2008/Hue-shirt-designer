@@ -191,6 +191,14 @@ type HueContactInfo = {
   address?: string;
 };
 
+const HUE_STUDIO_LOGO_PATH = '/brand/hue-studio-logo.png';
+
+const buildAbsoluteUrl = (origin: string, path: string) => new URL(path, origin).toString();
+
+const renderEmailLogo = (logoUrl: string, maxWidth = 300) => `
+  <img src="${escapeHtml(logoUrl)}" alt="Hue Studio" width="${maxWidth}" style="display:block;max-width:${maxWidth}px;width:100%;height:auto;border-radius:10px;background:#ffffff;border:1px solid rgba(255,255,255,.18);" />
+`;
+
 const formatOrderDate = (value: string | undefined) => {
   const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) return 'Today';
@@ -270,6 +278,7 @@ const buildCustomerReceiptText = (
     isTestOrder: boolean;
     isSandboxPayPal: boolean;
     contact: HueContactInfo;
+    logoUrl: string;
   },
 ) => [
   `${context.isTestOrder ? 'TEST ONLY - ' : context.isSandboxPayPal ? 'PAYPAL SANDBOX - ' : ''}Hue Studio Receipt ${order.orderNumber}`,
@@ -316,6 +325,7 @@ const buildCustomerReceiptHtml = (
     isTestOrder: boolean;
     isSandboxPayPal: boolean;
     contact: HueContactInfo;
+    logoUrl: string;
   },
 ) => {
   const statusLabel = getCustomerPaymentLabel(order, context.isTestOrder, context.isSandboxPayPal);
@@ -337,7 +347,8 @@ const buildCustomerReceiptHtml = (
         ${warningBanner}
         <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden;">
           <div style="background:#07111f;padding:26px 24px;">
-            <p style="margin:0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.2em;">Hue Studio Receipt</p>
+            ${renderEmailLogo(context.logoUrl, 320)}
+            <p style="margin:20px 0 0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.2em;">Hue Studio Receipt</p>
             <h1 style="margin:9px 0 0;color:#ffffff;font-size:34px;line-height:1.05;">${escapeHtml(order.orderNumber)}</h1>
             <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">${escapeHtml(statusLabel)} on ${escapeHtml(formatOrderDate(order.createdAt))}</p>
           </div>
@@ -564,6 +575,8 @@ export async function POST(request: Request) {
     phone: process.env.HUE_CONTACT_PHONE || '(770) 867-3520 / Office Mobile: (678) 238-8913',
     address: process.env.HUE_ADDRESS || '741 Harry McCarty Road, Suite 101, Bethlehem, GA 30620',
   };
+  const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
+  const hueStudioLogoUrl = buildAbsoluteUrl(configuredOrigin, HUE_STUDIO_LOGO_PATH);
 
   let payload: TestOrderEmailPayload;
   try {
@@ -647,8 +660,7 @@ export async function POST(request: Request) {
       order.createdAt = new Date().toISOString();
       const organizationWarnings = await organizeOrderProductionFiles(order);
       if (organizationWarnings.length) throw new Error(organizationWarnings.join(' '));
-      const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
-      attachDurableArtworkLinks(order, configuredOrigin || new URL(request.url).origin);
+      attachDurableArtworkLinks(order, configuredOrigin);
       const orderCustomer = order.customer;
       if (!orderCustomer) throw new Error('Customer details are missing after payment verification.');
       const insertedRows = await supabaseAdminFetch('/rest/v1/hue_orders', {
@@ -749,7 +761,8 @@ export async function POST(request: Request) {
     <div style="background:#f5f7fb;padding:24px;font-family:Arial,Helvetica,sans-serif;">
       <div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
         <div style="background:#07111f;padding:24px;">
-          <p style="margin:0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.18em;">Hue Studio Order</p>
+          ${renderEmailLogo(hueStudioLogoUrl, 320)}
+          <p style="margin:20px 0 0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.18em;">Hue Studio Order</p>
           <h1 style="margin:8px 0 0;color:#ffffff;font-size:30px;line-height:1.1;">${escapeHtml(order.orderNumber)}</h1>
           <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">${isTestOrder ? 'Test checkout' : 'Paid checkout'} submitted ${escapeHtml(order.createdAt ? new Date(order.createdAt).toLocaleString() : "today")}.</p>
         </div>
@@ -803,6 +816,7 @@ export async function POST(request: Request) {
     fulfillmentLabel,
     isSandboxPayPal,
     isTestOrder,
+    logoUrl: hueStudioLogoUrl,
     shippingAddress,
   });
   void legacyCustomerHtml;
@@ -838,6 +852,7 @@ export async function POST(request: Request) {
     fulfillmentLabel,
     isSandboxPayPal,
     isTestOrder,
+    logoUrl: hueStudioLogoUrl,
     shippingAddress,
   });
 

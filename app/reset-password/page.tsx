@@ -84,7 +84,7 @@ export default function ResetPasswordPage() {
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl items-center justify-center">
         <div className="w-full overflow-hidden rounded-3xl border border-[#0ea5e9]/35 bg-[#07111f]/95 shadow-[0_38px_120px_rgba(0,0,0,0.72),0_0_50px_rgba(14,165,233,0.16)] backdrop-blur">
           <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(8,21,34,0.96),rgba(5,38,62,0.92))] px-7 py-7">
-            <img src="/brand/hue-studio-wide.jpg" alt="Hue Studio" className="h-auto w-56 rounded border border-white/10 bg-black/45 object-contain" />
+            <img src="/brand/hue-studio-logo.png" alt="Hue Studio" className="h-auto w-64 rounded border border-white/10 bg-white object-contain" />
             <p className="mt-6 text-xs font-black uppercase tracking-[0.32em] text-[#67d8ff]">Hue Customer Account</p>
             <h1 className="mt-2 text-3xl font-black text-white">Reset your password</h1>
             <p className="mt-3 text-sm leading-6 text-slate-300">Create a fresh password, then head back to Hue Studio to sign in and keep ordering.</p>

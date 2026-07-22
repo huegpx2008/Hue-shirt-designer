@@ -7504,8 +7504,8 @@ export default function Home() {
       <header className={`hue-site-header ${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
         <div className={`hue-site-header-inner mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
           <div className="hue-mobile-brand flex min-w-0 flex-1 items-center gap-3">
-            <div className={`hue-mobile-logo ${isProductionBuilder ? 'h-14 w-[300px] rounded-md border border-white/20 shadow-[0_0_28px_rgba(22,120,184,0.20)] md:w-[360px]' : 'h-16 w-[340px] rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-[#030706] shadow-sm`}>
-              <img src="/brand/hue-studio-wide.jpg" alt="Hue Studio - Design, Upload, Order" className="h-full w-full object-contain" />
+            <div className={`hue-mobile-logo ${isProductionBuilder ? 'h-14 w-[300px] rounded-md border border-white/20 shadow-[0_0_28px_rgba(22,120,184,0.20)] md:w-[360px]' : 'h-16 w-[340px] rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-white shadow-sm`}>
+              <img src="/brand/hue-studio-logo.png" alt="Hue Studio - Design, Upload, Order" className="h-full w-full object-contain" />
             </div>
             <div className="sr-only">
               <p className={`text-xs font-black uppercase tracking-[0.24em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
