@@ -730,6 +730,56 @@ body {
     bottom: 76px !important;
   }
 
+  .coro-sheet-stage {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .coro-sheet-carousel {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    overflow: visible !important;
+    padding: 46px 44px 96px !important;
+  }
+
+  .coro-sheet-shell {
+    top: 50% !important;
+    width: min(68vw, 36vh, 280px) !important;
+    min-width: 0 !important;
+    max-width: 280px !important;
+  }
+
+  .coro-sheet-heading {
+    top: -30px !important;
+    max-width: 86vw;
+    white-space: normal;
+  }
+
+  .coro-sheet-meta {
+    bottom: -34px !important;
+  }
+
+  .coro-sheet-edge--left {
+    left: -34px !important;
+  }
+
+  .coro-sheet-edge--right {
+    right: -34px !important;
+  }
+
+  .coro-sheet-stage > button:not(.hue-sheet-upload):first-of-type {
+    left: 10px !important;
+  }
+
+  .coro-sheet-stage > button:not(.hue-sheet-upload):last-of-type {
+    right: 10px !important;
+  }
+
+  .hue-builder-canvas .ml-\[360px\],
+  .hue-builder-canvas .ml-\[180px\] {
+    margin-left: 0 !important;
+  }
+
   .hue-mobile-artwork-panel {
     position: absolute !important;
     z-index: 35 !important;
