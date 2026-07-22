@@ -44,7 +44,7 @@ type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number;
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
-type BannerOrderItem = { id: string; setNumber: number; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; fitState: ArtworkFitState; backArtwork?: ImageZoneItem | null; sides?: string; material?: string; materialLabel?: string; estimate?: SignEstimate | null; localOptionTotal?: number };
+type BannerOrderItem = { id: string; setNumber: number; name: string; dataUrl: string | null; width: number; height: number; quantity: number; artworkSize: { width: number; height: number } | null; sourceArtworkSize?: { width: number; height: number } | null; fitState: ArtworkFitState; backArtwork?: ImageZoneItem | null; sides?: string; material?: string; materialLabel?: string; estimate?: SignEstimate | null; localOptionTotal?: number };
 type CoroArtworkQuantityMap = Record<string, number>;
 type CoroArtworkSide = 'front' | 'back';
 type CoroPlacementTarget = { itemId: string | null; side: CoroArtworkSide };
@@ -1947,6 +1947,7 @@ export default function Home() {
   const [artworkAnalysis, setArtworkAnalysis] = useState<ArtworkAnalysis | null>(null);
   const [artworkAnalysisStatus, setArtworkAnalysisStatus] = useState('');
   const [signArtworkSize, setSignArtworkSize] = useState<{ width: number; height: number } | null>(null);
+  const [signArtworkSourceSize, setSignArtworkSourceSize] = useState<{ width: number; height: number } | null>(null);
   const [lockSignProportions, setLockSignProportions] = useState(true);
   const [signArtworkPreviewUrl, setSignArtworkPreviewUrl] = useState<string | null>(null);
   const [signArtworkDisplayUrl, setSignArtworkDisplayUrl] = useState<string | null>(null);
@@ -1954,7 +1955,8 @@ export default function Home() {
   const [bannerArtworkFitState, setBannerArtworkFitState] = useState<ArtworkFitState>('unresolved');
   const [bannerOrderItems, setBannerOrderItems] = useState<BannerOrderItem[]>([]);
   const [activeBannerSetNumber, setActiveBannerSetNumber] = useState(1);
-  const [pendingBannerPlacement, setPendingBannerPlacement] = useState<{ dataUrl: string; name: string; width: number; height: number; printWidth: number; printHeight: number } | null>(null);
+  const [pendingBannerPlacement, setPendingBannerPlacement] = useState<{ dataUrl: string; name: string; width: number; height: number; printWidth: number; printHeight: number; targetWidth?: number; targetHeight?: number } | null>(null);
+  const [guidedTourTargetSize, setGuidedTourTargetSize] = useState<{ width: number; height: number } | null>(null);
   const guidedTourTargetSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [rigidBackArtwork, setRigidBackArtwork] = useState<ImageZoneItem | null>(null);
   const [rigidArtworkTarget, setRigidArtworkTarget] = useState<CoroArtworkSide>('front');
@@ -2664,8 +2666,8 @@ export default function Home() {
   const isProductionBuilder = productMode === 'signage';
   const signSurfacePreviewUrl = isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? rigidBackArtwork?.dataUrl || null : signArtworkDisplayUrl || signArtworkPreviewUrl;
   const hasPlacedSignArtwork = Boolean(signArtworkPreviewUrl) || Boolean(signSurfacePreviewUrl) || layers.length > 0;
-  const bannerArtworkActualSize = signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
-  const rawBannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(signArtworkSize?.width, signArtworkSize?.height, signWidth, signHeight);
+  const bannerArtworkActualSize = signArtworkSourceSize || signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
+  const rawBannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(bannerArtworkActualSize?.width, bannerArtworkActualSize?.height, signWidth, signHeight);
   const bannerFitResolved = isBannerBuilder && Boolean(signArtworkPreviewUrl) && (bannerArtworkFitState === 'fit' || bannerArtworkFitState === 'stretch');
   const bannerAspectMismatch = rawBannerAspectMismatch && !bannerFitResolved;
   const isMeshBanner = isBannerBuilder && (selectedSignProduct.id === 'mesh-banner' || String(signValues.material || '') === 'mesh-single');
@@ -2710,7 +2712,7 @@ export default function Home() {
   const rigidSafeZoneInsetY = signHeight > 0 ? Math.min(24, (0.25 / signHeight) * 100) : 0;
   const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
   const hasBannerArtwork = isBannerBuilder && Boolean(signArtworkPreviewUrl);
-  const signArtworkMatchesSize = Boolean(signArtworkSize && Math.abs(signArtworkSize.width - signWidth) < 0.05 && Math.abs(signArtworkSize.height - signHeight) < 0.05);
+  const signArtworkMatchesSize = Boolean(bannerArtworkActualSize && Math.abs(bannerArtworkActualSize.width - signWidth) < 0.05 && Math.abs(bannerArtworkActualSize.height - signHeight) < 0.05);
   const coroBackArtworkComplete = !hasCoroDoubleSided || (coroSheetArtworkItems.length > 0 && coroSheetArtworkItems.every((item) => Boolean(item.backDataUrl)));
   const missingSeparateBackArtwork = !isCoroBuilder && isAutoSidedRigidBuilder && String(signValues.sides || 'single') === 'double' && !rigidBackArtwork;
   const separateBackArtworkComplete = !missingSeparateBackArtwork;
@@ -3744,7 +3746,7 @@ export default function Home() {
   };
 
   const editSelected = (fn: (obj: FabricObject) => void) => { const canvas = fabricCanvasRef.current; const selected = canvas?.getActiveObject(); if (!canvas || !selected) return; fn(selected); clampToArea(selected); canvas.requestRenderAll(); refreshLayers(canvas); };
-  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) { setSignArtworkSize(null); setSignArtworkPreviewUrl(null); setSignArtworkDisplayUrl(null); setBannerArtworkName(''); setBannerArtworkFitState('unresolved'); } canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
+  const deleteSelected = () => { const canvas = fabricCanvasRef.current; if (!canvas) return; const selected = canvas.getActiveObject(); if (!selected) return; if (selected.type === 'activeSelection') (selected as ActiveSelection).getObjects().forEach((obj) => canvas.remove(obj)); else canvas.remove(selected); if (productMode === 'signage' && canvas.getObjects().length === 0) { setSignArtworkSize(null); setSignArtworkSourceSize(null); setSignArtworkPreviewUrl(null); setSignArtworkDisplayUrl(null); setBannerArtworkName(''); setBannerArtworkFitState('unresolved'); } canvas.discardActiveObject(); canvas.requestRenderAll(); refreshLayers(canvas); };
   const clearSignArtwork = () => {
     const canvas = fabricCanvasRef.current;
     if (canvas) {
@@ -3756,6 +3758,7 @@ export default function Home() {
     setActiveObject(null);
     setLayers([]);
     setSignArtworkSize(null);
+    setSignArtworkSourceSize(null);
     setSignArtworkPreviewUrl(null);
     setSignArtworkDisplayUrl(null);
     setBannerArtworkName('');
@@ -4142,6 +4145,7 @@ export default function Home() {
     const { width: nextWidth, height: nextHeight } = getArtworkPrintSize(width, height, resolution);
     setSignValues((prev) => ({ ...prev, width: String(nextWidth), height: String(nextHeight) }));
     setSignArtworkSize({ width: nextWidth, height: nextHeight });
+    setSignArtworkSourceSize({ width: nextWidth, height: nextHeight });
     setBannerArtworkFitState('unresolved');
     setSignEstimate(null);
     return { width: nextWidth, height: nextHeight };
@@ -4158,6 +4162,7 @@ export default function Home() {
     setActiveObject(null);
     setLayers([]);
     setSignArtworkSize(null);
+    setSignArtworkSourceSize(null);
     setSignArtworkPreviewUrl(null);
     setSignArtworkDisplayUrl(null);
     setRigidBackArtwork(null);
@@ -4228,6 +4233,7 @@ export default function Home() {
     height: signHeight,
     quantity: designerQuantity,
     artworkSize: signArtworkSize,
+    sourceArtworkSize: signArtworkSourceSize,
     fitState: bannerArtworkFitState,
     backArtwork: rigidBackArtwork,
     sides: String(signValues.sides || 'single'),
@@ -4276,6 +4282,7 @@ export default function Home() {
       material: item.material || prev.material
     }));
     setSignArtworkSize(item.artworkSize);
+    setSignArtworkSourceSize(item.sourceArtworkSize || item.artworkSize || null);
     setSignArtworkPreviewUrl(item.dataUrl);
     setSignArtworkDisplayUrl(item.dataUrl);
     setRigidBackArtwork(item.backArtwork || null);
@@ -6342,11 +6349,13 @@ export default function Home() {
       setBannerArtworkName(imageItem.name);
       const savedPrintSize = imageItem.signWidth && imageItem.signHeight ? { width: imageItem.signWidth, height: imageItem.signHeight } : null;
       const printSize = savedPrintSize || applySignSizeFromPixels(imageItem.width, imageItem.height) || getArtworkPrintSize(imageItem.width, imageItem.height);
-      if (savedPrintSize && !guidedTourTargetSizeRef.current) {
+      const guidedTargetSize = guidedTourTargetSizeRef.current || guidedTourTargetSize;
+      if (savedPrintSize && !guidedTargetSize) {
         setSignValues((prev) => ({ ...prev, width: String(savedPrintSize.width), height: String(savedPrintSize.height) }));
         setSignArtworkSize(savedPrintSize);
       }
-      setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height, printWidth: printSize.width, printHeight: printSize.height });
+      if (savedPrintSize) setSignArtworkSourceSize(savedPrintSize);
+      setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height, printWidth: printSize.width, printHeight: printSize.height, targetWidth: guidedTargetSize?.width, targetHeight: guidedTargetSize?.height });
       setImageLibraryStatus(`${imageItem.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       setShowImageZone(false);
       setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
@@ -6439,7 +6448,8 @@ export default function Home() {
           setSignArtworkDisplayUrl(previewUrl);
           setBannerArtworkName(file.name);
           const printSize = detectedPrintSize || getArtworkPrintSize(originalWidth || 1, originalHeight || 1);
-          setPendingBannerPlacement({ dataUrl: previewUrl, name: file.name, width: originalWidth, height: originalHeight, printWidth: printSize.width, printHeight: printSize.height });
+          const guidedTargetSize = guidedTourTargetSizeRef.current || guidedTourTargetSize;
+          setPendingBannerPlacement({ dataUrl: previewUrl, name: file.name, width: originalWidth, height: originalHeight, printWidth: printSize.width, printHeight: printSize.height, targetWidth: guidedTargetSize?.width, targetHeight: guidedTargetSize?.height });
         } else if (canPlaceOnCanvas) {
           await placeImageOnDesign(previewUrl, file.name);
         }
@@ -6534,11 +6544,13 @@ export default function Home() {
         setSignArtworkPreviewUrl(placementDataUrl);
         setBannerArtworkName(file.name);
         const printSize = pdfPrintSize || applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
-        if (pdfPrintSize && !guidedTourTargetSizeRef.current) {
+        const guidedTargetSize = guidedTourTargetSizeRef.current || guidedTourTargetSize;
+        if (pdfPrintSize && !guidedTargetSize) {
           setSignValues((prev) => ({ ...prev, width: String(pdfPrintSize.width), height: String(pdfPrintSize.height) }));
           setSignArtworkSize(pdfPrintSize);
         }
-        setPendingBannerPlacement({ dataUrl: placementDataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height, printWidth: printSize.width, printHeight: printSize.height });
+        if (pdfPrintSize) setSignArtworkSourceSize(pdfPrintSize);
+        setPendingBannerPlacement({ dataUrl: placementDataUrl, name: file.name, width: imagePixels.width, height: imagePixels.height, printWidth: printSize.width, printHeight: printSize.height, targetWidth: guidedTargetSize?.width, targetHeight: guidedTargetSize?.height });
         setImageLibraryStatus(`${file.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       } else if (canPlaceOnCanvas) {
         await placeImageOnDesign(placementDataUrl, file.name);
@@ -6601,18 +6613,24 @@ export default function Home() {
         try {
           await placeImageOnDesign(placement.dataUrl, placement.name);
           if (canceled) return;
-          const guidedTargetSize = guidedTourTargetSizeRef.current;
+          const guidedTargetSize = placement.targetWidth && placement.targetHeight
+            ? { width: placement.targetWidth, height: placement.targetHeight }
+            : guidedTourTargetSizeRef.current || guidedTourTargetSize;
           const targetWidth = guidedTargetSize?.width || placement.printWidth;
           const targetHeight = guidedTargetSize?.height || placement.printHeight;
           setSignArtworkPreviewUrl(placement.dataUrl);
           setBannerArtworkName(placement.name);
           setSignValues((prev) => ({ ...prev, width: String(targetWidth), height: String(targetHeight) }));
           setSignArtworkSize({ width: placement.printWidth, height: placement.printHeight });
+          setSignArtworkSourceSize({ width: placement.printWidth, height: placement.printHeight });
           setBannerArtworkFitState('unresolved');
           setImageLibraryStatus(guidedTargetSize
             ? `${placement.name} placed on the banner. Guided tour size kept at ${targetWidth}" × ${targetHeight}". Use Fit or Center if the artwork ratio needs adjustment.`
             : `${placement.name} placed on the banner.`);
-          if (guidedTargetSize) guidedTourTargetSizeRef.current = null;
+          if (guidedTargetSize) {
+            guidedTourTargetSizeRef.current = null;
+            setGuidedTourTargetSize(null);
+          }
           setPendingBannerPlacement(null);
         } catch (error) {
           if (canceled) return;
@@ -6622,7 +6640,7 @@ export default function Home() {
       })();
     });
     return () => { canceled = true; };
-  }, [isBannerBuilder, pendingBannerPlacement]);
+  }, [guidedTourTargetSize, isBannerBuilder, pendingBannerPlacement]);
 
   const alignSelected = (axis: 'horizontal' | 'vertical') => editSelected((obj) => {
     const center = obj.getCenterPoint();
@@ -7549,6 +7567,7 @@ export default function Home() {
     }
     resetPlacedArtworkForProduct();
     guidedTourTargetSizeRef.current = null;
+    setGuidedTourTargetSize(null);
     setStoreCategory(product.category);
     setProductMode(product.mode);
     if (product.signProductId) {
@@ -7556,9 +7575,11 @@ export default function Home() {
       const guidedWidth = Number(guidedTourChoice.width);
       const guidedHeight = Number(guidedTourChoice.height);
       const guidedQuantity = Math.max(1, Math.round(Number(guidedTourChoice.quantity) || 1));
-      guidedTourTargetSizeRef.current = Number.isFinite(guidedWidth) && guidedWidth > 0 && Number.isFinite(guidedHeight) && guidedHeight > 0
+      const guidedTargetSize = Number.isFinite(guidedWidth) && guidedWidth > 0 && Number.isFinite(guidedHeight) && guidedHeight > 0
         ? { width: guidedWidth, height: guidedHeight }
         : null;
+      guidedTourTargetSizeRef.current = guidedTargetSize;
+      setGuidedTourTargetSize(guidedTargetSize);
       const fieldNames = new Set((nextProduct?.fields || []).map((field) => field.name));
       const materialOptions = nextProduct?.fields.find((field) => field.name === 'material')?.options || [];
       const selectedMaterial = materialOptions.some((option) => option.value === guidedTourChoice.material)
@@ -7702,9 +7723,10 @@ export default function Home() {
           next.height = String(parsedSize.height);
         }
       }
-      if (isBannerBuilder && lockSignProportions && signArtworkSize && typeof value === 'string' && (name === 'width' || name === 'height')) {
+      const artworkProportionSize = signArtworkSourceSize || signArtworkSize;
+      if (isBannerBuilder && lockSignProportions && artworkProportionSize && typeof value === 'string' && (name === 'width' || name === 'height')) {
         const changedDimension = Number(value);
-        const artworkAspect = signArtworkSize.width / Math.max(0.01, signArtworkSize.height);
+        const artworkAspect = artworkProportionSize.width / Math.max(0.01, artworkProportionSize.height);
         if (changedDimension > 0 && Number.isFinite(artworkAspect) && artworkAspect > 0) {
           const linkedDimension = name === 'width' ? changedDimension / artworkAspect : changedDimension * artworkAspect;
           next[name === 'width' ? 'height' : 'width'] = String(Number(linkedDimension.toFixed(2)));
@@ -9140,8 +9162,8 @@ export default function Home() {
               <div className="mt-3 flex min-h-28 items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400">
                 {signArtworkPreviewUrl ? <div className="w-full">
                   <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" />
-                  <p className="mt-2 text-[10px] text-slate-600">{selectedSignProduct.id === 'yard-sign' ? `Placed ${coroSheetLayout.signsPerSheet} times on sheet` : signArtworkSize ? `Actual: ${signArtworkSize.width}" x ${signArtworkSize.height}"` : 'Artwork uploaded'}</p>
-                </div> : signArtworkSize ? `Actual: ${signArtworkSize.width}" x ${signArtworkSize.height}"` : layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
+                  <p className="mt-2 text-[10px] text-slate-600">{selectedSignProduct.id === 'yard-sign' ? `Placed ${coroSheetLayout.signsPerSheet} times on sheet` : bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width}" x ${bannerArtworkActualSize.height}"` : 'Artwork uploaded'}</p>
+                </div> : bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width}" x ${bannerArtworkActualSize.height}"` : layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
               </div>
               <div className="mt-3 text-xs">
                 <button className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-slate-400">Contour Cut</button>
