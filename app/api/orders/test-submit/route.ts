@@ -196,7 +196,7 @@ const HUE_STUDIO_LOGO_PATH = '/brand/hue-studio-logo.png';
 const buildAbsoluteUrl = (origin: string, path: string) => new URL(path, origin).toString();
 
 const renderEmailLogo = (logoUrl: string, maxWidth = 300) => `
-  <img src="${escapeHtml(logoUrl)}" alt="Hue Studio" width="${maxWidth}" style="display:block;max-width:${maxWidth}px;width:100%;height:auto;border-radius:10px;background:#ffffff;border:1px solid rgba(255,255,255,.18);" />
+  <img src="${escapeHtml(logoUrl)}" alt="Hue Studio" width="${maxWidth}" style="display:block;max-width:${maxWidth}px;width:100%;height:auto;border-radius:10px;background:transparent;border:1px solid rgba(255,255,255,.18);" />
 `;
 
 const formatOrderDate = (value: string | undefined) => {
