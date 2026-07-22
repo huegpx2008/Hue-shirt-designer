@@ -81,7 +81,7 @@ export async function GET(request: Request) {
     const rows = (await Promise.all(requests)).flat();
     const uniqueRows = new Map<string, StoredOrderRow>();
     rows.forEach((row) => {
-      const key = String(row.id || row.order_number || '');
+      const key = String(row.order_number || row.id || '');
       if (key && !uniqueRows.has(key)) uniqueRows.set(key, row);
     });
 

@@ -2674,7 +2674,7 @@ export default function Home() {
     });
     const mergedOrders = new Map<string, TestOrder>();
     [...accountOrders, ...localOrders].forEach((order) => {
-      const key = order.id || order.orderNumber;
+      const key = order.orderNumber || order.id;
       if (key && !mergedOrders.has(key)) mergedOrders.set(key, order);
     });
     return Array.from(mergedOrders.values()).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
