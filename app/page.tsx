@@ -1958,6 +1958,7 @@ export default function Home() {
   const [pendingBannerPlacement, setPendingBannerPlacement] = useState<{ dataUrl: string; name: string; width: number; height: number; printWidth: number; printHeight: number; targetWidth?: number; targetHeight?: number } | null>(null);
   const [guidedTourTargetSize, setGuidedTourTargetSize] = useState<{ width: number; height: number } | null>(null);
   const guidedTourTargetSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const pendingGuidedSignValuesRef = useRef<{ productId: SignProductId; values: Record<string, string | boolean> } | null>(null);
   const [rigidBackArtwork, setRigidBackArtwork] = useState<ImageZoneItem | null>(null);
   const [rigidArtworkTarget, setRigidArtworkTarget] = useState<CoroArtworkSide>('front');
   const [rigidPreviewSide, setRigidPreviewSide] = useState<CoroArtworkSide>('front');
@@ -2410,6 +2411,15 @@ export default function Home() {
   }, [customerSession]);
 
   useEffect(() => {
+    const pendingGuidedValues = pendingGuidedSignValuesRef.current;
+    if (pendingGuidedValues?.productId === selectedSignProduct.id) {
+      setSignValues(pendingGuidedValues.values);
+      setSignEstimate(null);
+      setSignEstimateStatus('');
+      pendingGuidedSignValuesRef.current = null;
+      return;
+    }
+    if (guidedTourTargetSizeRef.current) return;
     setSignValues(getDefaultSignValues(selectedSignProduct));
     setSignEstimate(null);
     setSignEstimateStatus('');
@@ -7459,6 +7469,7 @@ export default function Home() {
       : builderWalkthroughStep === 2 ? 'canvas'
       : builderWalkthroughStep === 3 ? 'pricing'
       : 'options';
+    if (activeTarget === 'canvas' && target === 'canvas') return '';
     return showBuilderWalkthrough && storeView === 'builder' && activeTarget === target
       ? 'relative z-[10005] ring-2 ring-[#67d8ff] ring-offset-4 ring-offset-[#050b12] shadow-[0_0_0_9999px_rgba(0,0,0,0.20),0_0_34px_rgba(56,189,248,0.55)]'
       : '';
@@ -7480,7 +7491,12 @@ export default function Home() {
 
   const openStoreCategory = (categoryId: StoreCategoryId) => {
     const categoryChanged = categoryId !== storeCategory;
-    if (categoryChanged) resetPlacedArtworkForProduct();
+    if (categoryChanged) {
+      pendingGuidedSignValuesRef.current = null;
+      guidedTourTargetSizeRef.current = null;
+      setGuidedTourTargetSize(null);
+      resetPlacedArtworkForProduct();
+    }
     setStoreCategory(categoryId);
     if (categoryId === 'banners') {
       setStoreView('store');
@@ -7614,6 +7630,7 @@ export default function Home() {
       if (product.signProductId === 'yard-sign' || nextProduct?.preview !== 'banner') {
         guidedValues.size = CORO_SIZE_OPTIONS.some((option) => option.value === presetSize) ? presetSize : 'custom';
       }
+      pendingGuidedSignValuesRef.current = { productId: product.signProductId, values: guidedValues };
       setSignProductId(product.signProductId);
       setSignValues(guidedValues);
       setSignEstimate(null);
@@ -7686,7 +7703,12 @@ export default function Home() {
   }, [queuedImageZonePlacement, queuedImageZonePlacementAttempt, storeView, productMode, signProductId]);
 
   const selectSignProductForBuilder = (nextProductId: SignProductId) => {
-    if (nextProductId !== signProductId) resetPlacedArtworkForProduct();
+    if (nextProductId !== signProductId) {
+      pendingGuidedSignValuesRef.current = null;
+      guidedTourTargetSizeRef.current = null;
+      setGuidedTourTargetSize(null);
+      resetPlacedArtworkForProduct();
+    }
     const nextProduct = SIGN_PRODUCT_CONFIGS.find((config) => config.id === nextProductId);
     setSignProductId(nextProductId);
     if (nextProduct) setSignValues(getDefaultSignValues(nextProduct));
