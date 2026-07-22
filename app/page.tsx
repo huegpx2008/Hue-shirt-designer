@@ -1920,6 +1920,7 @@ export default function Home() {
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
+  const [failedImageZoneThumbnailIds, setFailedImageZoneThumbnailIds] = useState<Set<string>>(() => new Set());
   const [deletingImageZoneId, setDeletingImageZoneId] = useState<string | null>(null);
   const [imageZoneProductChoice, setImageZoneProductChoice] = useState<ImageZoneItem | null>(null);
   const [showMainMenu, setShowMainMenu] = useState(false);
@@ -2318,6 +2319,7 @@ export default function Home() {
           const localItems = prev.filter((item) => item.source === 'local');
           return [...remoteItems, ...visibleArchivedItems, ...localItems];
         });
+        setFailedImageZoneThumbnailIds(new Set());
         const archivedMessage = visibleArchivedItems.length ? ` ${visibleArchivedItems.length} archived preview${visibleArchivedItems.length === 1 ? '' : 's'} available.` : '';
         setImageLibraryStatus(`Signed in as ${customerSession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.${archivedMessage}`);
       } catch (error) {
@@ -3952,7 +3954,33 @@ export default function Home() {
     }
   };
 
-  const hasImageZoneThumbnail = (item: ImageZoneItem) => Boolean(item.dataUrl && canPlaceImageZoneItem(item));
+  const hasImageZoneThumbnail = (item: ImageZoneItem) => Boolean(item.dataUrl && canPlaceImageZoneItem(item) && !failedImageZoneThumbnailIds.has(item.id));
+
+  const refreshArchiveThumbnail = async (item: ImageZoneItem) => {
+    if (item.source !== 'archive' || !item.archiveId || !customerSession?.access_token) {
+      setFailedImageZoneThumbnailIds((previous) => new Set(previous).add(item.id));
+      return;
+    }
+    try {
+      const archiveResponse = await fetch('/api/artwork/archive', {
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${customerSession.access_token}` },
+      });
+      if (!archiveResponse.ok) throw new Error('Could not refresh Hue Vault preview.');
+      const archivePayload = await archiveResponse.json() as { items?: Array<{ id: string; previewUrl?: string | null }> };
+      const refreshed = (archivePayload.items || []).find((entry) => entry.id === item.archiveId);
+      if (!refreshed?.previewUrl) throw new Error('Hue Vault preview is not available yet.');
+      setImageZoneItems((previous) => previous.map((entry) => entry.id === item.id ? { ...entry, dataUrl: refreshed.previewUrl || '', storageUrl: refreshed.previewUrl || entry.storageUrl } : entry));
+      setFailedImageZoneThumbnailIds((previous) => {
+        const next = new Set(previous);
+        next.delete(item.id);
+        return next;
+      });
+    } catch {
+      setFailedImageZoneThumbnailIds((previous) => new Set(previous).add(item.id));
+      setImageLibraryStatus(`${item.name} is still restorable from Hue Vault, but its tiny preview could not load yet.`);
+    }
+  };
 
   const deleteImageZoneItem = async (item: ImageZoneItem) => {
     if (item.source === 'archive') {
@@ -7116,6 +7144,34 @@ export default function Home() {
     }
   };
 
+  const handleCustomerPasswordRecovery = async () => {
+    const email = customerAuthEmail.trim();
+    if (!email) {
+      setCustomerAuthStatus('Enter your email and Hue Studio will send a password reset link.');
+      return;
+    }
+    setIsCustomerAuthLoading(true);
+    setCustomerAuthStatus('Sending Hue Studio reset email...');
+    try {
+      const redirectTo = `${window.location.origin}/reset-password`;
+      const response = await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_PUBLISHABLE_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email })
+      });
+      const data = await response.json().catch(() => ({})) as { msg?: string; message?: string; error_description?: string };
+      if (!response.ok) throw new Error(data.error_description || data.message || data.msg || 'Hue Studio could not send the reset email. Please try again.');
+      setCustomerAuthStatus(`If an account exists for ${email}, Hue Studio sent a password reset link. Check your inbox.`);
+    } catch (error) {
+      setCustomerAuthStatus(error instanceof Error ? error.message : 'Hue Studio could not send the reset email. Please try again.');
+    } finally {
+      setIsCustomerAuthLoading(false);
+    }
+  };
+
   const handleGuestMode = () => {
     setIsGuestCheckout(true);
     setShowCustomerLogin(false);
@@ -8046,7 +8102,7 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
@@ -8110,7 +8166,7 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
@@ -8695,6 +8751,9 @@ export default function Home() {
               <label className="block text-sm font-bold text-slate-200">Password
                 <input type="password" value={customerAuthPassword} onChange={(event) => setCustomerAuthPassword(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete={customerAuthMode === 'signin' ? 'current-password' : 'new-password'} />
               </label>
+              {customerAuthMode === 'signin' ? <div className="-mt-1 flex justify-end">
+                <button type="button" onClick={() => { void handleCustomerPasswordRecovery(); }} disabled={isCustomerAuthLoading} className="text-xs font-black uppercase tracking-[0.16em] text-[#8be3ff] hover:text-white disabled:cursor-wait disabled:opacity-60">Forgot password?</button>
+              </div> : null}
               <button type="submit" disabled={isCustomerAuthLoading} className="w-full rounded border border-[#0ea5e9]/60 bg-[#1678b8] px-5 py-3 text-sm font-black uppercase text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-60">{isCustomerAuthLoading ? 'Working...' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</button>
             </form>}
             {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
@@ -9491,7 +9550,7 @@ export default function Home() {
                 const selected = selectedImageZoneId === item.id;
                 return <article key={item.id} className={`group grid min-h-36 grid-cols-[92px_minmax(0,1fr)] gap-3 rounded-2xl border p-3 text-left transition sm:min-h-40 sm:grid-cols-[118px_minmax(0,1fr)] ${selected ? 'border-[#38bdf8] bg-[#f2fbff] shadow-[0_18px_46px_rgba(14,165,233,0.22),0_0_0_3px_rgba(56,189,248,0.12)]' : 'border-white/10 bg-white/[0.055] shadow-[0_16px_38px_rgba(0,0,0,0.24)] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.08]'}`}>
                   <button type="button" onClick={() => setSelectedImageZoneId(item.id)} aria-label={`Select ${item.name}`} className={`relative flex h-28 items-center justify-center overflow-hidden rounded-xl border sm:h-32 ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
-                    {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" decoding="async" className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center px-2 text-center text-sm font-black text-slate-500">{item.source === 'archive' ? 'Restore from Hue Vault' : 'PDF'}</span>}
+                    {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" decoding="async" onError={() => { void refreshArchiveThumbnail(item); }} className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center px-2 text-center text-sm font-black text-slate-500">{item.source === 'archive' ? 'Preview unavailable' : 'PDF'}</span>}
                     {selected ? <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1686c9] text-xs font-black text-white shadow-md">✓</span> : null}
                     <span className="absolute bottom-2 left-2 flex flex-col items-start gap-1">{item.backDataUrl ? <span className="rounded-full bg-[#071827]/90 px-2 py-1 text-[9px] font-black uppercase text-[#8be3ff] shadow">Front + Back</span> : null}{item.editorProject ? <span className="rounded-full bg-emerald-600/90 px-2 py-1 text-[9px] font-black uppercase text-white shadow">Editable</span> : null}</span>
                   </button>
