@@ -59,6 +59,19 @@ type SignFieldOption = { label: string; value: string };
 type SignField = { name: string; label: string; type: SignFieldType; defaultValue: string | boolean; step?: string; options?: SignFieldOption[] };
 type SignProductConfig = { id: SignProductId; name: string; apiSlug: string; description: string; preview: 'banner' | 'yard-sign'; fields: SignField[] };
 type StoreProductCard = { id: string; category: StoreCategoryId; title: string; subtitle: string; description: string; mode: ProductMode; signProductId?: SignProductId; badge?: string; image?: string; imageSprite?: { column: number; row: number }; disabled?: boolean; initialSignValues?: Partial<Record<string, string | boolean>> };
+type GuidedTourChoice = {
+  productId: string;
+  artworkPath: 'upload' | 'image-zone' | 'designer' | 'canva' | 'not-sure';
+  width: string;
+  height: string;
+  quantity: string;
+  sides: 'single' | 'double';
+  material: string;
+  orientation: 'Portrait' | 'Landscape';
+  coating: string;
+  finishing: string[];
+  priority: 'fast' | 'lowest-price' | 'not-sure';
+};
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; studioPricing?: { sheetPricing?: { filledSheetTotal?: number | string } }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
@@ -142,6 +155,7 @@ const CART_STORAGE_KEY = 'hue-print-ready-cart';
 const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
 const ORDER_CONFIRMATION_STORAGE_KEY = 'hue-order-confirmation';
 const CHECKOUT_SUBMISSION_STORAGE_KEY = 'hue-checkout-submission';
+const GUIDED_TOUR_STORAGE_KEY = 'hue-guided-tour-dismissed';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
 const CART_CHECKOUT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -655,6 +669,30 @@ const STORE_PRODUCTS: StoreProductCard[] = [
   { id: 'apparel-dtg', category: 'apparel', title: 'DTG — Direct to Garment', subtitle: 'Full-color printing directly on the shirt', description: 'Choose a garment, color, sizes, print location, and upload front or back artwork.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-dtg.svg', disabled: true },
   { id: 'apparel-dtf', category: 'apparel', title: 'DTF — Direct to Film', subtitle: 'Versatile full-color heat transfers', description: 'Online ordering for ready-to-press transfers and decorated apparel is coming soon.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-dtf.svg', disabled: true }
 ];
+const GUIDED_TOUR_FEATURED_PRODUCT_IDS = ['coro-sheet', 'banner-vinyl', 'rigid-pvc', 'decals-vinyl', 'magnets-vehicle', 'misc-poster', 'misc-handheld-paper'];
+const GUIDED_TOUR_DEFAULT_CHOICE: GuidedTourChoice = {
+  productId: 'coro-sheet',
+  artworkPath: 'not-sure',
+  width: '24',
+  height: '18',
+  quantity: '10',
+  sides: 'single',
+  material: '',
+  orientation: 'Portrait',
+  coating: 'No Coating',
+  finishing: [],
+  priority: 'not-sure'
+};
+const getGuidedTourProductPreset = (product: StoreProductCard): Partial<GuidedTourChoice> => {
+  if (product.signProductId === 'banner' || product.signProductId === 'mesh-banner') return { width: '72', height: '36', quantity: '1', material: product.initialSignValues?.material ? String(product.initialSignValues.material) : '13-single', finishing: ['grommets', 'welding'] };
+  if (product.signProductId === 'yard-sign') return { width: '24', height: '18', quantity: '10', material: '4mm', finishing: [] };
+  if (product.signProductId === 'pvc') return { width: '24', height: '18', quantity: '10', material: '3mm', finishing: [] };
+  if (product.signProductId === 'vinyl') return { width: '24', height: '18', quantity: '1', material: 'standard', finishing: [] };
+  if (product.signProductId === 'vehicle-magnet') return { width: '24', height: '18', quantity: '1', material: 'standard', finishing: ['roundedCorners'] };
+  if (product.signProductId === 'poster') return { width: '18', height: '24', quantity: '1', material: '8mil', finishing: [] };
+  if (product.signProductId === 'handheld-paper') return { width: '4', height: '6', quantity: '100', material: 'standard', orientation: 'Portrait', coating: 'No Coating', finishing: [] };
+  return {};
+};
 const CORO_SHEET = { width: 48, height: 96 };
 const BANNER_PREVIEW_DPI = 150;
 const GENERATED_ARTWORK_MAX_DPI = 300;
@@ -1936,6 +1974,12 @@ export default function Home() {
   const [deletingImageZoneId, setDeletingImageZoneId] = useState<string | null>(null);
   const [imageZoneProductChoice, setImageZoneProductChoice] = useState<ImageZoneItem | null>(null);
   const [showMainMenu, setShowMainMenu] = useState(false);
+  const [showGuidedTour, setShowGuidedTour] = useState(false);
+  const [guidedTourStep, setGuidedTourStep] = useState(0);
+  const [guidedTourChoice, setGuidedTourChoice] = useState<GuidedTourChoice>(GUIDED_TOUR_DEFAULT_CHOICE);
+  const [showBuilderWalkthrough, setShowBuilderWalkthrough] = useState(false);
+  const [builderWalkthroughStep, setBuilderWalkthroughStep] = useState(0);
+  const [showGuidedHelpPanel, setShowGuidedHelpPanel] = useState(false);
   const [queuedImageZonePlacement, setQueuedImageZonePlacement] = useState<{ item: ImageZoneItem; product: StoreProductCard } | null>(null);
   const [queuedImageZonePlacementAttempt, setQueuedImageZonePlacementAttempt] = useState(0);
   const [showCanvaImport, setShowCanvaImport] = useState(false);
@@ -2134,6 +2178,16 @@ export default function Home() {
     params.delete('open');
     const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
     window.history.replaceState({}, '', cleanUrl);
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(GUIDED_TOUR_STORAGE_KEY) === 'yes') return;
+      const timer = window.setTimeout(() => setShowGuidedTour(true), 900);
+      return () => window.clearTimeout(timer);
+    } catch {
+      // If browser storage is unavailable, the menu can still launch the tour manually.
+    }
   }, []);
 
   useEffect(() => {
@@ -7281,6 +7335,102 @@ export default function Home() {
   };
 
   const visibleStoreProducts = STORE_PRODUCTS.filter((product) => product.category === storeCategory);
+  const guidedTourProducts = GUIDED_TOUR_FEATURED_PRODUCT_IDS
+    .map((id) => STORE_PRODUCTS.find((product) => product.id === id && !product.disabled))
+    .filter((product): product is StoreProductCard => Boolean(product));
+  const selectedGuidedTourProduct = STORE_PRODUCTS.find((product) => product.id === guidedTourChoice.productId) || guidedTourProducts[0];
+  const selectedGuidedTourConfig = selectedGuidedTourProduct?.signProductId ? SIGN_PRODUCT_CONFIGS.find((config) => config.id === selectedGuidedTourProduct.signProductId) : null;
+  const guidedTourMaterialOptions = selectedGuidedTourConfig?.fields.find((field) => field.name === 'material')?.options || [];
+  const guidedTourCoatingOptions = selectedGuidedTourConfig?.fields.find((field) => field.name === 'coating')?.options || [];
+  const guidedTourSupportsDoubleSided = Boolean(selectedGuidedTourConfig?.fields.find((field) => field.name === 'sides')?.options?.some((option) => option.value === 'double'));
+  const builderWalkthroughSteps = [
+    {
+      title: 'This is your Order Builder',
+      body: `Hue Studio opened ${selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} with the starter choices from the guided tour.`,
+      tip: 'If this is not the right product, use Products or the category icons at the top to switch.'
+    },
+    {
+      title: 'Add or choose artwork',
+      body: 'Use the artwork setup panel to upload a file, pick from Image Zone, import Canva artwork, or create/edit a simple design.',
+      tip: 'Image Zone is the safest place to keep reusable customer artwork.'
+    },
+    {
+      title: 'Check the production preview',
+      body: isCoroBuilder ? 'The sheet preview shows how pieces are placed on the 48" x 96" production sheet.' : 'The preview shows the ordered print area and how the artwork will sit inside it.',
+      tip: isCoroBuilder ? 'For sheet-priced products, filling more of the sheet can lower the price per piece.' : 'If the artwork size does not match, Hue Studio will ask for Fit or Center before checkout.'
+    },
+    {
+      title: 'Review pricing and warnings',
+      body: 'The Ready Total is the current checkout total. The Production Summary explains the pricing and piece count.',
+      tip: 'Warnings are intentionally obvious; they stop bad orders before they reach checkout.'
+    },
+    {
+      title: 'Use the bottom option buttons',
+      body: 'The bottom pills open size, material, sides, finishing, and other product options without burying the customer in one giant form.',
+      tip: 'This keeps the advanced stuff available without making the first screen feel like tax paperwork.'
+    }
+  ];
+  const productTeachingCards = (() => {
+    if (isCoroBuilder) return [
+      ['Sheet pricing', 'Full-sheet products are produced from a 48" x 96" sheet. Hue Studio shows how many pieces fit and how many sheets the order uses.'],
+      ['Fit vs Center', 'Fit fills the selected sign size. Center keeps the artwork proportional and may leave blank space if the artwork shape does not match.'],
+      ['More pieces can help', 'Adding more pieces to a partially used sheet can lower the price per piece because the sheet cost is spread across more signs.']
+    ];
+    if (isTrueBannerBuilder) return [
+      ['Banner finishing', 'Grommets are common for hanging. Welding reinforces the edges. Pole pockets are for sliding over a pole.'],
+      ['Double-sided banners', 'Double-sided vinyl banners use a heavier material and need front/back artwork reviewed before checkout.'],
+      ['Large banner warning', 'Anything over 16 feet wide or tall should become a custom quote instead of an automatic online checkout.']
+    ];
+    if (selectedSignProduct.id === 'mesh-banner') return [
+      ['Mesh airflow', 'Mesh banners are best for fences and windy areas because the material lets air pass through.'],
+      ['Finishing choices', 'Webbing, rope, pole pockets, welding, and grommets change how the banner is mounted.'],
+      ['Artwork check', 'Hue Studio still checks the artwork shape before checkout so the printed banner matches the chosen size.']
+    ];
+    if (selectedSignProduct.id === 'handheld-paper') return [
+      ['Yield matters', 'Handheld products use fixed sizes. Hue Studio can show how many pieces fit per press sheet.'],
+      ['Orientation', 'Portrait and landscape use the same size turned different ways. Pick the direction that matches the artwork.'],
+      ['Coating', 'Coating changes the finish and feel. Choose it before checkout so pricing and production match.']
+    ];
+    if (selectedSignProduct.id === 'acrylic') return [
+      ['Acrylic print method', 'Acrylic signs are printed on the back with a white underbase for a polished look.'],
+      ['Standoffs', 'Standoffs are wall-mounting hardware that hold the sign away from the surface.'],
+      ['Transparency matters', 'Transparent artwork can behave differently on acrylic, so Hue Studio may ask for an extra review.']
+    ];
+    if (selectedSignProduct.id === 'vehicle-magnet') return [
+      ['Magnet limits', 'Custom magnets are capped at 24" x 96" for online ordering. Bigger jobs should be quoted.'],
+      ['Rounded corners', 'Rounded corners help vehicle magnets look cleaner and reduce sharp finished edges.'],
+      ['Fit check', 'If the artwork shape does not match the magnet, choose Fit or Center before checkout.']
+    ];
+    if (selectedSignProduct.id === 'poster') return [
+      ['Paper width limit', 'Poster paper is capped at 52" wide for online ordering. Longer pieces can be ordered up to the online limit.'],
+      ['Large prints', 'Very long poster jobs should become a custom quote so production can confirm handling.'],
+      ['Artwork sizing', 'If the file is a different shape than the poster, Center preserves proportions and Fit fills the whole size.']
+    ];
+    return [
+      ['Artwork first', 'Upload or choose artwork, then let Hue Studio compare the artwork shape against the ordered size.'],
+      ['Fit vs Center', 'Fit fills the full print area. Center keeps the artwork proportional and may leave blank space.'],
+      ['Warnings protect the order', 'Warnings are there to keep impossible sizes, missing back artwork, and mismatched art from reaching checkout.']
+    ];
+  })();
+  const guidedHelpReasons = [
+    productSizeIssue || '',
+    missingSeparateBackArtwork ? 'Double-sided is selected, but back artwork is missing. Upload back artwork or switch back to single-sided before checkout.' : '',
+    hasCoroAspectMismatch || rawBannerAspectMismatch ? 'Artwork shape does not match the selected print size. Choose Fit to fill the size, or Center to preserve proportions with blank space if needed.' : '',
+    hasCoroUnusedSheetSpace ? 'This sheet still has unused space. You can order as-is, but adding more pieces may improve the price per piece.' : '',
+    !hasCoroSheetArtwork && !hasBannerArtwork && layers.length === 0 ? 'No artwork has been added yet. Open Image Zone, upload a file, import Canva, or create artwork in Hue Designer.' : '',
+    signEstimate?.warnings?.length ? signEstimate.warnings.join(' ') : ''
+  ].filter(Boolean);
+  const builderTourHighlightClass = (target: 'product' | 'artwork' | 'canvas' | 'pricing' | 'options') => {
+    const activeTarget =
+      builderWalkthroughStep === 0 ? 'product'
+      : builderWalkthroughStep === 1 ? 'artwork'
+      : builderWalkthroughStep === 2 ? 'canvas'
+      : builderWalkthroughStep === 3 ? 'pricing'
+      : 'options';
+    return showBuilderWalkthrough && storeView === 'builder' && activeTarget === target
+      ? 'relative z-[10005] ring-2 ring-[#67d8ff] ring-offset-4 ring-offset-[#050b12] shadow-[0_0_0_9999px_rgba(0,0,0,0.20),0_0_34px_rgba(56,189,248,0.55)]'
+      : '';
+  };
   const dtgTotalQuantity = Object.values(dtgQuantities).reduce((total, quantity) => total + quantity, 0);
   const dtgArtworkCount = Number(Boolean(dtgArtwork.front)) + Number(Boolean(dtgArtwork.back));
   const dtgPrintHeight = Number((dtgPrintWidth * 1.18).toFixed(1));
@@ -7346,6 +7496,101 @@ export default function Home() {
     }
     setStoreView('builder');
     if (product.signProductId) setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+  };
+
+  const openGuidedTour = () => {
+    setShowMainMenu(false);
+    setShowGuidedTour(true);
+    setGuidedTourStep(0);
+  };
+
+  const dismissGuidedTour = (remember = false) => {
+    setShowGuidedTour(false);
+    if (remember) {
+      try {
+        window.localStorage.setItem(GUIDED_TOUR_STORAGE_KEY, 'yes');
+      } catch {
+        // The tour can still be dismissed for this session.
+      }
+    }
+  };
+
+  const toggleGuidedFinishing = (value: string) => {
+    setGuidedTourChoice((current) => ({
+      ...current,
+      finishing: current.finishing.includes(value)
+        ? current.finishing.filter((item) => item !== value)
+        : [...current.finishing, value]
+    }));
+  };
+
+  const startGuidedOrder = () => {
+    const product = selectedGuidedTourProduct || STORE_PRODUCTS.find((item) => item.id === 'coro-sheet');
+    if (!product || product.disabled) {
+      dismissGuidedTour(false);
+      return;
+    }
+    resetPlacedArtworkForProduct();
+    setStoreCategory(product.category);
+    setProductMode(product.mode);
+    if (product.signProductId) {
+      const nextProduct = SIGN_PRODUCT_CONFIGS.find((config) => config.id === product.signProductId);
+      const guidedWidth = Number(guidedTourChoice.width);
+      const guidedHeight = Number(guidedTourChoice.height);
+      const guidedQuantity = Math.max(1, Math.round(Number(guidedTourChoice.quantity) || 1));
+      const fieldNames = new Set((nextProduct?.fields || []).map((field) => field.name));
+      const materialOptions = nextProduct?.fields.find((field) => field.name === 'material')?.options || [];
+      const selectedMaterial = materialOptions.some((option) => option.value === guidedTourChoice.material)
+        ? guidedTourChoice.material
+        : materialOptions[0]?.value || '';
+      const selectedSides = (nextProduct?.fields.find((field) => field.name === 'sides')?.options || []).some((option) => option.value === guidedTourChoice.sides)
+        ? guidedTourChoice.sides
+        : 'single';
+      const guidedValues = {
+        ...(nextProduct ? getDefaultSignValues(nextProduct) : {}),
+        ...(product.initialSignValues || {}),
+        width: Number.isFinite(guidedWidth) && guidedWidth > 0 ? String(guidedWidth) : '24',
+        height: Number.isFinite(guidedHeight) && guidedHeight > 0 ? String(guidedHeight) : '18',
+        quantity: String(guidedQuantity),
+        sides: selectedSides
+      } as Record<string, string | boolean>;
+      if (selectedMaterial) guidedValues.material = selectedMaterial;
+      if (fieldNames.has('orientation')) guidedValues.orientation = guidedTourChoice.orientation;
+      if (fieldNames.has('coating')) guidedValues.coating = guidedTourChoice.coating;
+      if (fieldNames.has('grommets')) guidedValues.grommets = guidedTourChoice.finishing.includes('grommets');
+      if (fieldNames.has('welding')) guidedValues.welding = guidedTourChoice.finishing.includes('welding');
+      if (fieldNames.has('polePocket')) guidedValues.polePocket = guidedTourChoice.finishing.includes('polePocket');
+      if (fieldNames.has('rope')) guidedValues.rope = guidedTourChoice.finishing.includes('rope');
+      if (fieldNames.has('webbing')) guidedValues.webbing = guidedTourChoice.finishing.includes('webbing');
+      if (fieldNames.has('windSlits')) guidedValues.windSlits = guidedTourChoice.finishing.includes('windSlits');
+      if (fieldNames.has('gloss')) guidedValues.gloss = guidedTourChoice.finishing.includes('gloss');
+      if (fieldNames.has('roundedCorners')) guidedValues.roundedCorners = guidedTourChoice.finishing.includes('roundedCorners') ? '0.5' : 'none';
+      if (fieldNames.has('standOffs')) guidedValues.standOffs = guidedTourChoice.finishing.includes('standOffs');
+      if (fieldNames.has('stepStakes')) guidedValues.stepStakes = guidedTourChoice.finishing.includes('stakes') ? String(guidedQuantity) : '0';
+      if (fieldNames.has('stakeType')) guidedValues.stakeType = guidedTourChoice.finishing.includes('stakes') ? 'standard' : 'none';
+      const presetSize = `${guidedValues.width}x${guidedValues.height}`;
+      if (product.signProductId === 'yard-sign' || nextProduct?.preview !== 'banner') {
+        guidedValues.size = CORO_SIZE_OPTIONS.some((option) => option.value === presetSize) ? presetSize : 'custom';
+      }
+      setSignProductId(product.signProductId);
+      setSignValues(guidedValues);
+      setSignEstimate(null);
+    }
+    setStoreView('builder');
+    setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+    setShowGuidedTour(false);
+    setBuilderWalkthroughStep(0);
+    setShowBuilderWalkthrough(true);
+    if (guidedTourChoice.artworkPath === 'upload' || guidedTourChoice.artworkPath === 'image-zone') {
+      window.setTimeout(() => {
+        setImageLibraryStatus(`Choose artwork for ${product.title}, or upload a new file from Image Zone.`);
+        openArtworkLibrary();
+      }, 150);
+    } else if (guidedTourChoice.artworkPath === 'designer') {
+      window.setTimeout(() => openNewArtworkCreator('home-create'), 150);
+    } else if (guidedTourChoice.artworkPath === 'canva') {
+      window.setTimeout(() => openCanvaImport(), 150);
+    }
   };
 
   const uploadDtgArtwork = (side: ShirtView, file: File | null) => {
@@ -7624,12 +7869,230 @@ export default function Home() {
             <p className="mt-1 text-xs text-slate-400">Quick places to jump if you get turned around.</p>
           </div>
           <div className="p-2">
+            <button type="button" onClick={openGuidedTour} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Guided Tour<span className="mt-0.5 block text-xs font-normal text-slate-500">Answer a few questions and let Hue Studio point you in the right direction</span></button>
+            {storeView === 'builder' ? <button type="button" onClick={() => { setShowBuilderWalkthrough(true); setBuilderWalkthroughStep(0); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Show Builder Tips<span className="mt-0.5 block text-xs font-normal text-slate-500">Walk through artwork, pricing, warnings, and checkout controls</span></button> : null}
             <a href="/products" onClick={() => setShowMainMenu(false)} className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Product Catalog<span className="mt-0.5 block text-xs font-normal text-slate-500">Browse banners, signs, apparel, and more</span></a>
             <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Image Zone<span className="mt-0.5 block text-xs font-normal text-slate-500">Open saved artwork and uploads</span></button>
             <button type="button" onClick={() => { openCanvaImport(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Import Canva<span className="mt-0.5 block text-xs font-normal text-slate-500">Bring a Canva design into Image Zone</span></button>
             <button type="button" onClick={() => { openCustomerAccount(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">My Account<span className="mt-0.5 block text-xs font-normal text-slate-500">Sign in, create an account, or view saved artwork</span></button>
             <button type="button" onClick={() => { setShowCart(true); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Cart &amp; Checkout<span className="mt-0.5 block text-xs font-normal text-slate-500">Review items and submit your order</span></button>
             <a href="/help" onClick={() => setShowMainMenu(false)} className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Help / Contact Hue<span className="mt-0.5 block text-xs font-normal text-slate-500">Learn how Hue Studio works</span></a>
+          </div>
+        </div>
+      </div> : null}
+
+      {showGuidedTour ? <div className="fixed inset-0 z-[10020] flex items-center justify-center bg-black/72 px-3 py-5 text-white backdrop-blur-sm">
+        <div className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-3xl border border-[#38bdf8]/35 bg-[radial-gradient(circle_at_82%_0%,rgba(14,165,233,0.24),transparent_34%),linear-gradient(135deg,#071827,#050b12)] shadow-[0_35px_110px_rgba(0,0,0,0.72),0_0_45px_rgba(14,165,233,0.18)]">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-7">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#67d8ff]">Hue Studio Guided Tour</p>
+              <h2 className="mt-1 text-2xl font-black tracking-tight md:text-3xl">Let&apos;s build the right order path.</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Answer a few plain-English questions and Hue Studio will open the right product, size, artwork path, and checkout workflow.</p>
+            </div>
+            <button type="button" onClick={() => dismissGuidedTour(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-xs font-black uppercase text-slate-200 hover:border-white/30 hover:bg-white/[0.1]">Close</button>
+          </div>
+          <div className="grid gap-0 md:grid-cols-[220px_minmax(0,1fr)]">
+            <aside className="border-b border-white/10 bg-black/18 p-4 md:border-b-0 md:border-r">
+              {['Product', 'Artwork', 'Size + qty', 'Options', 'Review'].map((label, index) => <button key={label} type="button" onClick={() => setGuidedTourStep(index)} className={`mb-2 flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-xs font-black uppercase tracking-wide transition ${guidedTourStep === index ? 'bg-[#1686c9] text-white shadow-[0_0_24px_rgba(14,165,233,0.25)]' : 'bg-white/[0.045] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200'}`}>
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${guidedTourStep === index ? 'border-white/40 bg-white/15' : 'border-white/15 bg-black/20'}`}>{index + 1}</span>
+                {label}
+              </button>)}
+              <button type="button" onClick={() => dismissGuidedTour(true)} className="mt-4 w-full rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] px-3 py-3 text-left text-xs font-bold leading-5 text-amber-100 hover:bg-amber-300/[0.12]">Don&apos;t show this automatically again</button>
+            </aside>
+            <section className="max-h-[68vh] overflow-y-auto p-5 md:p-7">
+              {guidedTourStep === 0 ? <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">What do you need?</p>
+                <h3 className="mt-2 text-2xl font-black">Choose the closest product.</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">This can be changed later. The goal is to get customers out of the “where do I start?” moment fast.</p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {guidedTourProducts.map((product) => {
+                    const selected = guidedTourChoice.productId === product.id;
+                    return <button key={product.id} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, ...getGuidedTourProductPreset(product), productId: product.id }))} className={`rounded-2xl border p-4 text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c304b] shadow-[0_0_28px_rgba(14,165,233,0.22)]' : 'border-white/12 bg-white/[0.045] hover:border-[#38bdf8]/55 hover:bg-white/[0.08]'}`}>
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">{STORE_CATEGORIES.find((category) => category.id === product.category)?.label}</span>
+                      <strong className="mt-2 block text-base text-white">{product.title}</strong>
+                      <span className="mt-1 block text-xs font-semibold text-slate-300">{product.subtitle}</span>
+                      <span className="mt-3 block text-xs leading-5 text-slate-400">{product.description}</span>
+                    </button>;
+                  })}
+                </div>
+              </div> : null}
+              {guidedTourStep === 1 ? <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Artwork path</p>
+                <h3 className="mt-2 text-2xl font-black">Where is your artwork starting from?</h3>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ['upload', 'I have a finished file', 'Open Image Zone so I can upload print-ready artwork.'],
+                    ['image-zone', 'Use saved Image Zone art', 'Choose from artwork already saved in my account.'],
+                    ['designer', 'Create or edit in Hue Designer', 'Start a simple design or make quick changes.'],
+                    ['canva', 'Import from Canva', 'Bring in a saved Canva project.'],
+                    ['not-sure', 'I am not sure yet', 'Just show me the product first and I will decide.']
+                  ].map(([value, title, text]) => <button key={value} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, artworkPath: value as GuidedTourChoice['artworkPath'] }))} className={`rounded-2xl border p-4 text-left transition ${guidedTourChoice.artworkPath === value ? 'border-[#67d8ff] bg-[#0c304b]' : 'border-white/12 bg-white/[0.045] hover:border-[#38bdf8]/55 hover:bg-white/[0.08]'}`}>
+                    <strong className="block text-white">{title}</strong>
+                    <span className="mt-2 block text-sm leading-6 text-slate-300">{text}</span>
+                  </button>)}
+                </div>
+              </div> : null}
+              {guidedTourStep === 2 ? <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Size and quantity</p>
+                <h3 className="mt-2 text-2xl font-black">Give Hue Studio a starting size.</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">This preloads the builder. If the artwork size is different, the Fit and Center checks still guide them before checkout.</p>
+                <div className="mt-5 grid gap-4 sm:grid-cols-3">
+                  <label className="text-xs font-black uppercase tracking-wide text-slate-400">Width inches<input type="number" min="1" value={guidedTourChoice.width} onChange={(event) => setGuidedTourChoice((current) => ({ ...current, width: event.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-white/15 bg-[#050c14] px-3 text-base font-black text-white outline-none focus:border-[#38bdf8]" /></label>
+                  <label className="text-xs font-black uppercase tracking-wide text-slate-400">Height inches<input type="number" min="1" value={guidedTourChoice.height} onChange={(event) => setGuidedTourChoice((current) => ({ ...current, height: event.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-white/15 bg-[#050c14] px-3 text-base font-black text-white outline-none focus:border-[#38bdf8]" /></label>
+                  <label className="text-xs font-black uppercase tracking-wide text-slate-400">Quantity<input type="number" min="1" value={guidedTourChoice.quantity} onChange={(event) => setGuidedTourChoice((current) => ({ ...current, quantity: event.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-white/15 bg-[#050c14] px-3 text-base font-black text-white outline-none focus:border-[#38bdf8]" /></label>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {['18x24', '24x18', '24x36', '36x24', '48x24', '72x36'].map((size) => {
+                    const [width, height] = size.split('x');
+                    return <button key={size} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, width, height }))} className="rounded-full border border-[#38bdf8]/30 bg-[#0c2a40] px-4 py-2 text-xs font-bold text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">{width}&quot; x {height}&quot;</button>;
+                  })}
+                </div>
+              </div> : null}
+              {guidedTourStep === 3 ? <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Options</p>
+                <h3 className="mt-2 text-2xl font-black">Pick the common choices for {selectedGuidedTourProduct?.title || 'this product'}.</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">These are starter settings. The builder will still show the exact option tiles, warnings, and live pricing before checkout.</p>
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  {guidedTourMaterialOptions.length ? <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <p className="text-sm font-black text-white">Material / stock</p>
+                    <div className="mt-3 grid gap-2">
+                      {guidedTourMaterialOptions.slice(0, 5).map((option) => <button key={option.value} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, material: option.value }))} className={`rounded-xl px-4 py-3 text-left text-xs font-black uppercase ${guidedTourChoice.material === option.value || (!guidedTourChoice.material && option.value === guidedTourMaterialOptions[0]?.value) ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{option.label}</button>)}
+                    </div>
+                  </div> : null}
+                  <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <p className="text-sm font-black text-white">Print sides</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {(['single', 'double'] as const).map((side) => {
+                        const disabled = side === 'double' && !guidedTourSupportsDoubleSided;
+                        return <button key={side} type="button" disabled={disabled} onClick={() => setGuidedTourChoice((current) => ({ ...current, sides: side }))} className={`rounded-xl px-4 py-3 text-xs font-black uppercase ${disabled ? 'cursor-not-allowed bg-white/[0.03] text-slate-600' : guidedTourChoice.sides === side ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{side === 'single' ? 'Single-sided' : 'Double-sided'}</button>;
+                      })}
+                    </div>
+                    {!guidedTourSupportsDoubleSided ? <p className="mt-3 text-xs leading-5 text-slate-400">This product is currently configured as single-sided only.</p> : null}
+                  </div>
+                  {selectedGuidedTourProduct?.signProductId === 'handheld-paper' || selectedGuidedTourProduct?.signProductId === 'business-card' ? <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <p className="text-sm font-black text-white">Orientation</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {(['Portrait', 'Landscape'] as const).map((orientation) => <button key={orientation} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, orientation }))} className={`rounded-xl px-4 py-3 text-xs font-black uppercase ${guidedTourChoice.orientation === orientation ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{orientation}</button>)}
+                    </div>
+                  </div> : null}
+                  {guidedTourCoatingOptions.length ? <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <p className="text-sm font-black text-white">Coating</p>
+                    <div className="mt-3 grid gap-2">
+                      {guidedTourCoatingOptions.map((option) => <button key={option.value} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, coating: option.value }))} className={`rounded-xl px-4 py-3 text-left text-xs font-black uppercase ${guidedTourChoice.coating === option.value ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{option.label}</button>)}
+                    </div>
+                  </div> : null}
+                  <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <p className="text-sm font-black text-white">Finishing</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {[
+                        ['grommets', 'Grommets'],
+                        ['stakes', 'Stakes'],
+                        ['gloss', 'Gloss'],
+                        ['roundedCorners', 'Rounded corners'],
+                        ['standOffs', 'Standoffs'],
+                        ['welding', 'Welding'],
+                        ['polePocket', 'Pole pocket'],
+                        ['rope', 'Rope'],
+                        ['webbing', 'Webbing'],
+                        ['windSlits', 'Wind slits']
+                      ].filter(([value]) => {
+                        const fields = new Set((selectedGuidedTourConfig?.fields || []).map((field) => field.name));
+                        if (value === 'stakes') return fields.has('stepStakes') || fields.has('stakeType');
+                        return fields.has(value);
+                      }).map(([value, label]) => <button key={value} type="button" onClick={() => toggleGuidedFinishing(value)} className={`rounded-xl px-3 py-3 text-left text-[10px] font-black uppercase ${guidedTourChoice.finishing.includes(value) ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{label}</button>)}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-slate-400">If nothing applies, leave these off and Hue Studio will keep the product defaults.</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <p className="text-sm font-black text-white">What matters most?</p>
+                    <div className="mt-3 grid gap-2">
+                      {[
+                        ['fast', 'Fastest normal path'],
+                        ['lowest-price', 'Best sheet usage / lower price per piece'],
+                        ['not-sure', 'Not sure yet']
+                      ].map(([value, label]) => <button key={value} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, priority: value as GuidedTourChoice['priority'] }))} className={`rounded-xl px-4 py-3 text-left text-xs font-black uppercase ${guidedTourChoice.priority === value ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{label}</button>)}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] p-4 text-sm leading-6 text-amber-100/85">
+                  <strong className="block text-amber-200">Helpful customer explanation:</strong>
+                  The tour preselects common options, but the live builder still calculates price from the real product rules. Nothing is ordered until artwork passes checks and the cart is submitted.
+                </div>
+              </div> : null}
+              {guidedTourStep === 4 ? <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Review</p>
+                <h3 className="mt-2 text-2xl font-black">Ready to open the builder?</h3>
+                <div className="mt-5 rounded-2xl border border-[#38bdf8]/25 bg-[#071827]/80 p-5">
+                  <dl className="grid gap-4 sm:grid-cols-2">
+                    <div><dt className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Product</dt><dd className="mt-1 text-lg font-black text-white">{selectedGuidedTourProduct?.title || 'Product'}</dd></div>
+                    <div><dt className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Artwork</dt><dd className="mt-1 text-lg font-black text-white">{guidedTourChoice.artworkPath === 'not-sure' ? 'Decide later' : guidedTourChoice.artworkPath.replace('-', ' ')}</dd></div>
+                    <div><dt className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Size</dt><dd className="mt-1 text-lg font-black text-white">{guidedTourChoice.width || '24'}&quot; x {guidedTourChoice.height || '18'}&quot;</dd></div>
+                    <div><dt className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Quantity / sides</dt><dd className="mt-1 text-lg font-black text-white">{guidedTourChoice.quantity || '1'} / {guidedTourChoice.sides === 'single' ? 'single-sided' : 'double-sided'}</dd></div>
+                    <div><dt className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Material</dt><dd className="mt-1 text-lg font-black text-white">{guidedTourMaterialOptions.find((option) => option.value === guidedTourChoice.material)?.label || guidedTourMaterialOptions[0]?.label || 'Default'}</dd></div>
+                    <div><dt className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Finishing</dt><dd className="mt-1 text-lg font-black text-white">{guidedTourChoice.finishing.length ? guidedTourChoice.finishing.join(', ') : 'Product defaults'}</dd></div>
+                  </dl>
+                </div>
+                <p className="mt-4 text-sm leading-6 text-slate-300">The customer still reviews artwork, pricing, warnings, and checkout before anything is submitted.</p>
+              </div> : null}
+            </section>
+          </div>
+          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4 md:px-7">
+            <button type="button" onClick={() => setGuidedTourStep((step) => Math.max(0, step - 1))} disabled={guidedTourStep === 0} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black uppercase text-slate-200 hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-35">Back</button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => dismissGuidedTour(false)} className="rounded-xl border border-white/15 bg-transparent px-5 py-3 text-xs font-black uppercase text-slate-400 hover:text-white">Skip for now</button>
+              {guidedTourStep < 4 ? <button type="button" onClick={() => setGuidedTourStep((step) => Math.min(4, step + 1))} className="rounded-xl bg-[#1686c9] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Next</button> : <button type="button" onClick={startGuidedOrder} className="rounded-xl bg-[#22c55e] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(34,197,94,0.24)] hover:bg-[#16a34a]">Open my order setup</button>}
+            </div>
+          </footer>
+        </div>
+      </div> : null}
+
+      {showBuilderWalkthrough && storeView === 'builder' && !showGuidedTour && !showImageZone && !showCart && !showCustomerLogin ? <div className="fixed bottom-5 right-5 z-[10010] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,#071827,#050b12)] text-white shadow-[0_24px_80px_rgba(0,0,0,0.68),0_0_38px_rgba(14,165,233,0.18)]">
+        <div className="border-b border-white/10 px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Builder walkthrough</p>
+            <button type="button" onClick={() => setShowBuilderWalkthrough(false)} className="rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-xs font-black uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
+          </div>
+          <div className="mt-3 flex gap-1">
+            {builderWalkthroughSteps.map((step, index) => <button key={step.title} type="button" aria-label={`Builder walkthrough step ${index + 1}`} onClick={() => setBuilderWalkthroughStep(index)} className={`h-1.5 flex-1 rounded-full ${builderWalkthroughStep === index ? 'bg-[#38bdf8]' : 'bg-white/15'}`} />)}
+          </div>
+        </div>
+        <div className="px-5 py-4">
+          <h3 className="text-xl font-black tracking-tight">{builderWalkthroughSteps[builderWalkthroughStep]?.title}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-300">{builderWalkthroughSteps[builderWalkthroughStep]?.body}</p>
+          {builderWalkthroughStep === 0 ? <div className="mt-4 grid gap-2">
+            {productTeachingCards.map(([title, text]) => <div key={title} className="rounded-2xl border border-[#38bdf8]/20 bg-[#0c2a40]/45 p-3">
+              <strong className="block text-xs font-black uppercase tracking-wide text-[#9be8ff]">{title}</strong>
+              <span className="mt-1 block text-xs leading-5 text-slate-300">{text}</span>
+            </div>)}
+          </div> : null}
+          <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-100/85">
+            <strong className="text-amber-200">Tip: </strong>{builderWalkthroughSteps[builderWalkthroughStep]?.tip}
+          </div>
+          {guidedHelpReasons.length ? <button type="button" onClick={() => setShowGuidedHelpPanel((current) => !current)} className="mt-3 w-full rounded-xl border border-red-400/35 bg-red-500/15 px-4 py-3 text-left text-xs font-black uppercase text-red-100 hover:bg-red-500/22">Explain current warning / blocker</button> : null}
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-white/10 px-5 py-4">
+          <button type="button" onClick={() => setBuilderWalkthroughStep((step) => Math.max(0, step - 1))} disabled={builderWalkthroughStep === 0} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-xs font-black uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-35">Back</button>
+          {builderWalkthroughStep < builderWalkthroughSteps.length - 1 ? <button type="button" onClick={() => setBuilderWalkthroughStep((step) => Math.min(builderWalkthroughSteps.length - 1, step + 1))} className="rounded-xl bg-[#1686c9] px-5 py-2.5 text-xs font-black uppercase text-white hover:bg-[#0f75b5]">Next tip</button> : <button type="button" onClick={() => setShowBuilderWalkthrough(false)} className="rounded-xl bg-[#22c55e] px-5 py-2.5 text-xs font-black uppercase text-white hover:bg-[#16a34a]">Got it</button>}
+        </div>
+      </div> : null}
+
+      {showGuidedHelpPanel && storeView === 'builder' && !showGuidedTour && !showImageZone && !showCart && !showCustomerLogin ? <div className="fixed left-5 top-24 z-[10012] w-[min(460px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-red-400/35 bg-[linear-gradient(135deg,#1f0b12,#07111f)] text-white shadow-[0_24px_80px_rgba(0,0,0,0.68),0_0_38px_rgba(248,113,113,0.18)]">
+        <div className="flex items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-200">Hue warning help</p>
+            <h3 className="mt-1 text-xl font-black tracking-tight">What needs attention?</h3>
+          </div>
+          <button type="button" onClick={() => setShowGuidedHelpPanel(false)} className="rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-xs font-black uppercase text-slate-300 hover:bg-white/[0.1]">Close</button>
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          {guidedHelpReasons.length ? guidedHelpReasons.map((reason) => <p key={reason} className="rounded-2xl border border-red-300/20 bg-red-500/10 p-3 text-sm leading-6 text-red-50">{reason}</p>) : <p className="rounded-2xl border border-emerald-300/20 bg-emerald-500/10 p-3 text-sm leading-6 text-emerald-50">No active blocker found right now. Keep reviewing artwork, options, and pricing before checkout.</p>}
+          <div className="rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-100/85">
+            <strong className="text-amber-200">Best next step: </strong>
+            {productSizeIssue ? 'reduce the size or request a custom quote.'
+              : missingSeparateBackArtwork ? 'upload back artwork or switch to single-sided.'
+              : hasCoroAspectMismatch || rawBannerAspectMismatch ? 'choose Fit or Center in the artwork card.'
+              : hasCoroUnusedSheetSpace ? 'add more pieces if the customer wants a lower price per piece.'
+              : 'add artwork, then review the highlighted warnings before checkout.'}
           </div>
         </div>
       </div> : null}
@@ -7906,7 +8369,7 @@ export default function Home() {
                 </div>
               </div> : null}
               {productMode === 'signage' ? <div className={`hue-builder-summary absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? isCoroBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[6vw]'} right-4 top-4 lg:grid-cols-[minmax(260px,380px)_minmax(0,1fr)_minmax(260px,330px)]` : `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[5vw] top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(320px,480px)_minmax(180px,240px)]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
-                <div className={`hue-builder-product-card flex items-start gap-3 ${isProductionBuilder ? `${isCoroBuilder ? 'lg:col-start-1 lg:row-span-2' : ''} max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-2.5 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur` : ''}`}>
+                <div className={`hue-builder-product-card flex items-start gap-3 ${builderTourHighlightClass('product')} ${isProductionBuilder ? `${isCoroBuilder ? 'lg:col-start-1 lg:row-span-2' : ''} max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-2.5 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur` : ''}`}>
                   <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
                   <div>
                     <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-[#1678b8]'}`}>Order Builder</p>
@@ -7915,7 +8378,7 @@ export default function Home() {
                     {isCoroBuilder ? <p className="mt-3 max-w-sm rounded border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 text-[10px] font-bold leading-4 text-amber-100">One 48&quot; × 96&quot; sheet is the minimum. Add more pieces to fill the available sheet space and lower the price per piece.</p> : null}
                   </div>
                 </div>
-                <div className={`hue-builder-production-card text-xs ${isProductionBuilder ? `${isCoroBuilder ? 'w-full max-w-none lg:col-start-3 lg:row-start-2' : 'max-w-[480px] lg:col-start-2 lg:row-start-1'} rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-4 py-3 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur` : ''}`}>
+                <div className={`hue-builder-production-card text-xs ${builderTourHighlightClass('pricing')} ${isProductionBuilder ? `${isCoroBuilder ? 'w-full max-w-none lg:col-start-3 lg:row-start-2' : 'max-w-[480px] lg:col-start-2 lg:row-start-1'} rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-4 py-3 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur` : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className={`font-black uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-slate-500'}`}>Hue Production Summary</p>
                     {isProductionBuilder ? <span className="rounded-full border border-[#0ea5e9]/35 bg-[#0b263d] px-2.5 py-1 text-[10px] font-black uppercase text-[#9be6ff]">{hueQualityStatus}</span> : null}
@@ -8014,7 +8477,7 @@ export default function Home() {
                     <span className="rounded border border-white/10 bg-white/[0.04] px-2 py-1">{hueOrderPathLabel}</span>
                   </div> : null}
                 </div>
-                <div className={`hue-builder-total-card text-right ${isProductionBuilder ? `${isCoroBuilder ? 'w-full lg:col-start-3 lg:row-start-1' : 'lg:col-start-3 lg:row-start-1'} rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-5 py-3 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur` : ''}`}>
+                <div className={`hue-builder-total-card text-right ${builderTourHighlightClass('pricing')} ${isProductionBuilder ? `${isCoroBuilder ? 'w-full lg:col-start-3 lg:row-start-1' : 'lg:col-start-3 lg:row-start-1'} rounded-xl border border-[#22c55e]/25 bg-[#06111d]/78 px-5 py-3 shadow-[0_0_34px_rgba(34,197,94,0.12)] backdrop-blur` : ''}`}>
                   {isProductionBuilder ? <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7dd3fc]">Ready total</p> : null}
                   <p className={`${isProductionBuilder ? 'text-4xl' : 'text-2xl'} font-semibold text-green-500`}>{isSignEstimateLoading ? '...' : signOrderRetailTotal !== null ? formatSignPrice(signOrderRetailTotal, isCoroBuilder ? coroPricingCurrency : signEstimate?.currency) : '$0.00'}</p>
                   <p className={`text-sm ${isProductionBuilder ? 'text-slate-100' : 'text-slate-500'}`}>{isCoroBuilder ? coroReadyTotalLabel : isBusinessCardBuilder ? `${designerQuantity} business cards` : isHandheldBuilder ? `${designerQuantity} handheld pieces` : hasMultipleArtworkSets ? `${signOrderQuantity} total pieces / ${artworkSetCount} artwork sets` : `${bannerSquareFeet > 0 ? `${bannerSquareFeet.toFixed(1)} sqft` : '0 sqft'} / ${summaryMaterialLabel}`}</p>
@@ -8047,7 +8510,7 @@ export default function Home() {
                 <button type="button" onClick={() => setPrintLocation('sleeve')} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">Sleeve<br />Design</button>
                 <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="w-full rounded-lg bg-white p-2 text-xs shadow-sm">+<br />Zoom</button>
               </div> : null}
-              <div id="design-canvas" className={`hue-builder-canvas ${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-20 top-32' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
+              <div id="design-canvas" className={`hue-builder-canvas ${builderTourHighlightClass('canvas')} ${isProductionBuilder ? `absolute inset-x-0 mx-auto w-full ${isCoroBuilder ? 'bottom-20 top-32' : 'bottom-20 top-60'}` : 'relative w-full'} ${productMode === 'signage' ? `${isProductionBuilder ? 'max-w-none' : 'mt-24 aspect-[4/3] max-w-[1040px]'}` : productMode === 'apparel' ? 'aspect-[420/520] max-w-[860px]' : 'aspect-[420/520] max-w-[760px]'}`}>
                   {productMode === 'signage' ? <div className="absolute inset-0 flex items-center justify-center">
                   {isCoroBuilder ? <div className={`coro-sheet-stage relative flex h-full w-full items-center justify-center ${activeCoroOptionPanel === 'images' ? 'pl-[340px] pr-[340px]' : 'pr-[340px]'}`}>
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.max(0, current - 1))} disabled={activeCoroSheetIndex === 0} className={`${activeCoroOptionPanel === 'images' ? 'left-[390px]' : 'left-8'} absolute z-30 flex h-14 w-14 items-center justify-center rounded-full border border-[#38bdf8]/45 bg-[#071827]/88 text-3xl font-black text-white shadow-[0_0_30px_rgba(14,165,233,0.34),0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur hover:border-[#67d8ff] hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-30`}>‹</button> : null}
@@ -8154,7 +8617,7 @@ export default function Home() {
                 </div>
               </div> : null}
               {isProductionBuilder && activeCoroOptionPanel === null ? <button type="button" onClick={() => setActiveCoroOptionPanel('images')} className="hue-mobile-show-artwork absolute bottom-[76px] left-3 z-30 rounded-xl border border-[#38bdf8]/45 bg-[#0c2a40]/95 px-4 py-3 text-xs font-black uppercase tracking-wide text-[#a9ecff] shadow-[0_12px_30px_rgba(0,0,0,0.35)]">+ Show artwork options</button> : null}
-              {isProductionBuilder && !isCoroBuilder && !isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
+              {isProductionBuilder && !isCoroBuilder && !isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className={`hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)] ${builderTourHighlightClass('artwork')}`}>
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3">
                     <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
@@ -8186,7 +8649,7 @@ export default function Home() {
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
-              {isBannerBuilder && !isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
+              {isBannerBuilder && !isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className={`hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)] ${builderTourHighlightClass('artwork')}`}>
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3"><span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Order Builder</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p></div></div>
                   <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
@@ -8250,7 +8713,7 @@ export default function Home() {
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
-              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className="hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)]">
+              {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className={`hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)] ${builderTourHighlightClass('artwork')}`}>
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3">
                     <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
@@ -8545,7 +9008,7 @@ export default function Home() {
                   <button type="button" onClick={() => { const next = Math.min(2, zoom + 0.1); setZoom(next); fabricCanvasRef.current?.setZoom(next); }} className="h-full px-3 text-slate-300 hover:bg-white/10">+</button>
                 </div>
               </div> : null}
-              {productMode === 'signage' ? <div className={`hue-builder-option-bar absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${isProductionBuilder ? 'bottom-6 left-60 right-8 max-h-11 justify-end overflow-hidden' : 'inset-x-3 bottom-4 justify-center'}`}>
+              {productMode === 'signage' ? <div className={`hue-builder-option-bar absolute z-10 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase ${builderTourHighlightClass('options')} ${isProductionBuilder ? 'bottom-6 left-60 right-8 max-h-11 justify-end overflow-hidden' : 'inset-x-3 bottom-4 justify-center'}`}>
                 {(selectedSignProduct.id === 'business-card'
                   ? [
                       ['Images', String(activeBannerSetNumber), signArtworkStatusOk],
