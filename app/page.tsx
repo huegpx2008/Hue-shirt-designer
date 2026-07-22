@@ -144,6 +144,8 @@ const ORDER_CONFIRMATION_STORAGE_KEY = 'hue-order-confirmation';
 const CHECKOUT_SUBMISSION_STORAGE_KEY = 'hue-checkout-submission';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
+const CART_CHECKOUT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const CART_CHECKOUT_MAX_AGE_LABEL = '2 hours';
 
 const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
@@ -1519,11 +1521,9 @@ const formatSignPrice = (value: number | string | undefined, currency = 'USD') =
 };
 
 const createTestOrderNumber = (timestamp: number) => {
-  const orderDate = new Date(timestamp);
-  const dateToken = `${orderDate.getFullYear()}${String(orderDate.getMonth() + 1).padStart(2, '0')}${String(orderDate.getDate()).padStart(2, '0')}`;
-  const timeToken = `${String(orderDate.getHours()).padStart(2, '0')}${String(orderDate.getMinutes()).padStart(2, '0')}${String(orderDate.getSeconds()).padStart(2, '0')}`;
+  const timestampToken = timestamp.toString(36).toUpperCase().slice(-6).padStart(6, '0');
   const uniqueToken = Math.random().toString(36).slice(2, 5).toUpperCase().padEnd(3, 'X');
-  return `TEST-${dateToken}-${timeToken}-${uniqueToken}`;
+  return `HS-${timestampToken}-${uniqueToken}`;
 };
 
 const numericPrice = (value: number | string | undefined) => {
@@ -2630,6 +2630,30 @@ export default function Home() {
   const coroPieceLabel = selectedSignProduct.id === 'yard-sign' ? 'signs' : 'pieces';
   const coroReadyTotalLabel = `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${effectiveCoroQuantity} total ${coroPieceLabel}`;
   const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);
+  const getCartCheckoutIssue = () => {
+    const now = Date.now();
+    const sessionUserId = customerSession?.user?.id;
+    const sessionEmail = customerSession?.user?.email?.trim().toLowerCase();
+    for (const item of cartItems) {
+      const addedAt = Date.parse(item.addedAt || '');
+      if (!Number.isFinite(addedAt) || now - addedAt > CART_CHECKOUT_MAX_AGE_MS) {
+        return `This cart has been sitting for more than ${CART_CHECKOUT_MAX_AGE_LABEL}. Please rebuild it so artwork links, pricing, and checkout session data are fresh before payment.`;
+      }
+      const cartUserId = item.customer.userId;
+      const cartEmail = item.customer.email?.trim().toLowerCase();
+      if (cartUserId && cartUserId !== sessionUserId) return 'This cart was created under a different customer session. Please clear the cart and add the artwork again after signing in.';
+      if (item.customer.checkoutMode === 'account' && cartEmail && sessionEmail && cartEmail !== sessionEmail) return 'This cart was created for a different signed-in email. Please clear the cart and rebuild it before checkout.';
+      if (item.customer.checkoutMode === 'account' && !sessionUserId) return 'This cart was created while signed in. Please sign in again, then rebuild the cart before checkout.';
+      const missingArtworkReference = item.artworkFiles.some((file) => !file.storagePath)
+        || item.productionBreakdown.some((artwork) => !artwork.frontStoragePath || (artwork.backName && !artwork.backStoragePath));
+      if (missingArtworkReference) return 'One or more artwork files in this cart only has a browser preview, not a secure production file. Please re-add the artwork before checkout.';
+      const missingPreview = item.artworkFiles.some((file) => file.storagePath && !file.previewUrl)
+        || item.productionBreakdown.some((artwork) => artwork.frontStoragePath && !artwork.frontPreviewUrl);
+      if (missingPreview) return 'Some artwork previews in this cart expired. Please clear and rebuild the cart so the customer can review the artwork before checkout.';
+    }
+    return '';
+  };
+  const cartCheckoutIssue = getCartCheckoutIssue();
   const checkoutShippingAmount = checkoutFulfillment === 'direct_ship' ? HUE_STUDIO_US_SHIPPING_FEE : 0;
   const checkoutShippingLabel = checkoutFulfillment === 'direct_ship' ? 'US shipping' : 'Local pickup';
   const checkoutShipState = checkoutAddress.state.trim().toUpperCase();
@@ -2659,6 +2683,12 @@ export default function Home() {
   const openTestCheckout = () => {
     if (cartItems.length === 0) {
       setCartStatus('Add at least one print-ready item before starting test checkout.');
+      setShowCart(true);
+      return;
+    }
+    const checkoutIssue = getCartCheckoutIssue();
+    if (checkoutIssue) {
+      setCartStatus(checkoutIssue);
       setShowCart(true);
       return;
     }
@@ -2822,6 +2852,11 @@ export default function Home() {
   };
 
   const createPayPalCheckoutOrder = async () => {
+    const checkoutIssue = getCartCheckoutIssue();
+    if (checkoutIssue) {
+      setCheckoutStatus(checkoutIssue);
+      throw new Error(checkoutIssue);
+    }
     const order = buildCheckoutOrder('paypal');
     if (!order) throw new Error('Finish the checkout contact and delivery details before paying.');
     setCheckoutStatus('Verifying pricing and opening secure PayPal Checkout...');
@@ -2899,6 +2934,11 @@ export default function Home() {
 
   const submitTestOrder = async () => {
     if (isSubmittingTestOrder) return;
+    const checkoutIssue = getCartCheckoutIssue();
+    if (checkoutIssue) {
+      setCheckoutStatus(checkoutIssue);
+      return;
+    }
     const order = buildCheckoutOrder('test_no_payment');
     if (!order) return;
     setIsSubmittingTestOrder(true);
@@ -8549,6 +8589,11 @@ export default function Home() {
               <button type="button" onClick={() => { setShowCart(false); setStoreView('store'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
             </div>
             {cartStatus ? <p className="mt-3 rounded border border-[#0ea5e9]/20 bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-300">{cartStatus}</p> : null}
+            {cartCheckoutIssue ? <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-3 text-xs leading-5 text-amber-100">
+              <p className="font-black uppercase tracking-[0.14em] text-amber-200">Cart needs refresh</p>
+              <p className="mt-1">{cartCheckoutIssue}</p>
+              <button type="button" onClick={() => { setCartItems([]); setCartStatus('Stale cart cleared. Please add the product and artwork again before checkout.'); }} className="mt-2 rounded border border-amber-200/40 bg-amber-300/10 px-3 py-2 text-[11px] font-black uppercase text-amber-100 hover:bg-amber-300/20">Clear stale cart</button>
+            </div> : null}
             {testOrders[0] ? <p className="mt-2 text-xs text-slate-400">Latest test order: <span className="font-bold text-[#9be6ff]">{testOrders[0].orderNumber}</span></p> : null}
           </div>
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
@@ -8631,7 +8676,7 @@ export default function Home() {
               <div className="flex flex-wrap justify-end gap-2">
                 <button type="button" onClick={() => { setCartItems([]); setCartStatus('Cart cleared.'); }} disabled={cartItems.length === 0} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-red-400/60 disabled:cursor-not-allowed disabled:opacity-40">Clear</button>
                 <button type="button" onClick={() => { setShowCart(false); setStoreView('store'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded border border-[#38bdf8]/45 bg-[#0c2a40] px-4 py-3 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Keep Shopping</button>
-                <button type="button" onClick={openTestCheckout} disabled={cartItems.length === 0} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(14,165,233,0.20)] hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">Continue to Checkout</button>
+                <button type="button" onClick={openTestCheckout} disabled={cartItems.length === 0 || Boolean(cartCheckoutIssue)} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(14,165,233,0.20)] hover:bg-[#0f5f94] disabled:cursor-not-allowed disabled:opacity-40">{cartCheckoutIssue ? 'Refresh Cart First' : 'Continue to Checkout'}</button>
               </div>
             </div>
           </div>

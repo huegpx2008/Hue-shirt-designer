@@ -178,8 +178,212 @@ const getStorageExtension = (path: string | undefined) => {
 };
 
 const createServerOrderNumber = () => {
-  const timestamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
-  return `HUE-${timestamp}-${randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
+  const timestampToken = Date.now().toString(36).toUpperCase().slice(-6).padStart(6, '0');
+  const randomToken = randomUUID().replaceAll('-', '').slice(0, 3).toUpperCase();
+  return `HS-${timestampToken}-${randomToken}`;
+};
+
+type HueContactInfo = {
+  websiteUrl: string;
+  contactUrl: string;
+  email: string;
+  phone?: string;
+  address?: string;
+};
+
+const formatOrderDate = (value: string | undefined) => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return 'Today';
+  return new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'America/New_York',
+  }).format(date);
+};
+
+const getCustomerPaymentLabel = (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  isTestOrder: boolean,
+  isSandboxPayPal: boolean,
+) => {
+  if (isTestOrder) return 'Test order - no payment collected';
+  if (isSandboxPayPal) return 'PayPal sandbox payment - no real money collected';
+  if (order.payment?.status === 'completed') return 'Paid with PayPal';
+  return 'Payment submitted';
+};
+
+const getItemQuantity = (item: OrderItem) => {
+  const listed = Number(item.quantity || 0);
+  if (Number.isFinite(listed) && listed > 0) return listed;
+  return (item.productionBreakdown || []).reduce((total, entry) => total + Math.max(0, Number(entry.quantity || 0)), 0);
+};
+
+const renderCustomerReceiptItems = (items: OrderItem[], currency: string) => items.map((item, index) => {
+  const artworkBreakdown = (item.productionBreakdown || []).map((entry, artworkIndex) => {
+    const quantity = Math.max(0, Number(entry.quantity || 0));
+    const size = entry.sizeLabel || getOrderItemSizeLabel(item);
+    const label = entry.label || `Artwork set ${artworkIndex + 1}`;
+    return `<li style="margin:4px 0;">${escapeHtml(label)}: Qty ${escapeHtml(quantity)}${size ? ` / ${escapeHtml(size)}` : ''}</li>`;
+  }).join('');
+  const optionList = item.optionSummary?.length
+    ? `<ul style="margin:8px 0 0;padding-left:18px;color:#475569;font-size:13px;line-height:1.55;">${item.optionSummary.map((option) => `<li>${escapeHtml(option)}</li>`).join('')}</ul>`
+    : '<p style="margin:8px 0 0;color:#64748b;font-size:13px;">No additional options listed.</p>';
+  return `
+    <div style="border:1px solid #dbeafe;border-radius:14px;margin-top:16px;overflow:hidden;background:#ffffff;">
+      <div style="background:#eff6ff;padding:14px 16px;">
+        <p style="margin:0;color:#075985;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.12em;">Item ${index + 1}</p>
+        <h2 style="margin:5px 0 0;color:#0f172a;font-size:20px;line-height:1.2;">${escapeHtml(item.productName || 'Print-ready item')}</h2>
+        <p style="margin:6px 0 0;color:#334155;font-size:14px;">${escapeHtml(getOrderItemSizeLabel(item))} / Qty ${escapeHtml(getItemQuantity(item))} / ${formatMoney(item.price?.total, item.price?.currency || currency)}</p>
+      </div>
+      <div style="padding:16px;">
+        <p style="margin:0;color:#111827;font-size:14px;font-weight:900;">Artwork / Quantity</p>
+        ${artworkBreakdown ? `<ul style="margin:8px 0 0;padding-left:18px;color:#475569;font-size:13px;line-height:1.55;">${artworkBreakdown}</ul>` : '<p style="margin:8px 0 0;color:#64748b;font-size:13px;">Artwork received with this item.</p>'}
+        <p style="margin:16px 0 0;color:#111827;font-size:14px;font-weight:900;">Options</p>
+        ${optionList}
+      </div>
+    </div>
+  `;
+}).join('');
+
+const renderCustomerReceiptFooter = (contact: HueContactInfo) => {
+  const contactRows = [
+    `<a href="${escapeHtml(contact.websiteUrl)}" style="color:#38bdf8;text-decoration:none;font-weight:800;">${escapeHtml(contact.websiteUrl.replace(/^https?:\/\//, ''))}</a>`,
+    `<a href="${escapeHtml(contact.contactUrl)}" style="color:#38bdf8;text-decoration:none;font-weight:800;">Contact / request help</a>`,
+    contact.email ? `<a href="mailto:${escapeHtml(contact.email)}" style="color:#38bdf8;text-decoration:none;font-weight:800;">${escapeHtml(contact.email)}</a>` : '',
+    contact.phone ? `<span>${escapeHtml(contact.phone)}</span>` : '',
+    contact.address ? `<span>${escapeHtml(contact.address)}</span>` : '',
+  ].filter(Boolean);
+  return `
+    <div style="background:#07111f;padding:22px 24px;color:#cbd5e1;">
+      <p style="margin:0;color:#ffffff;font-size:17px;font-weight:900;">Hue Graphics / Hue Studio</p>
+      <p style="margin:8px 0 0;color:#94a3b8;font-size:13px;line-height:1.6;">${contactRows.join(' &nbsp;•&nbsp; ')}</p>
+    </div>
+  `;
+};
+
+const buildCustomerReceiptText = (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  context: {
+    currency: string;
+    fulfillmentLabel: string;
+    shippingAddress: string;
+    isTestOrder: boolean;
+    isSandboxPayPal: boolean;
+    contact: HueContactInfo;
+  },
+) => [
+  `${context.isTestOrder ? 'TEST ONLY - ' : context.isSandboxPayPal ? 'PAYPAL SANDBOX - ' : ''}Hue Studio Receipt ${order.orderNumber}`,
+  `Status: ${getCustomerPaymentLabel(order, context.isTestOrder, context.isSandboxPayPal)}`,
+  `Submitted: ${formatOrderDate(order.createdAt)}`,
+  '',
+  `Customer: ${order.customer?.name || 'Not provided'}`,
+  `Email: ${order.customer?.email || 'Not provided'}`,
+  `Phone: ${order.customer?.phone || 'Not provided'}`,
+  `Fulfillment: ${context.fulfillmentLabel}`,
+  context.shippingAddress ? `Ship To:\n${context.shippingAddress}` : '',
+  '',
+  'Items:',
+  ...(order.items || []).flatMap((item, index) => [
+    `${index + 1}. ${item.productName || 'Print-ready item'} / ${getOrderItemSizeLabel(item)} / Qty ${getItemQuantity(item)} / ${formatMoney(item.price?.total, item.price?.currency || context.currency)}`,
+    ...(item.productionBreakdown || []).map((entry, artworkIndex) => `   - ${entry.label || `Artwork set ${artworkIndex + 1}`}: Qty ${entry.quantity || 0} / ${entry.sizeLabel || getOrderItemSizeLabel(item)}`),
+    ...(item.optionSummary?.length ? [`   Options: ${item.optionSummary.join(', ')}`] : []),
+  ]),
+  '',
+  `Subtotal: ${formatMoney(order.subtotal, context.currency)}`,
+  order.promotion?.code ? `Promo ${order.promotion.code}: -${formatMoney(order.promotion.discountAmount || 0, context.currency)}` : '',
+  `${order.shipping?.label || 'Shipping'}: ${formatMoney(order.shipping?.amount || 0, context.currency)}`,
+  `${order.tax?.label || 'Tax'}: ${formatMoney(order.tax?.amount || 0, context.currency)}`,
+  `Total: ${formatMoney(order.total, context.currency)}`,
+  '',
+  'Important details:',
+  '- Please review this receipt and contact Hue right away if the size, quantity, spelling, artwork, pickup/shipping info, or options look wrong.',
+  '- Hue Studio is a self-service print-ready ordering tool. Hue may contact you if a major production issue is found.',
+  '- Most standard orders are ready in 3-4 business days unless otherwise noted.',
+  '',
+  `Website: ${context.contact.websiteUrl}`,
+  `Contact: ${context.contact.contactUrl}`,
+  `Email: ${context.contact.email}`,
+  context.contact.phone ? `Phone: ${context.contact.phone}` : '',
+  context.contact.address ? `Address: ${context.contact.address}` : '',
+].filter(Boolean).join('\n');
+
+const buildCustomerReceiptHtml = (
+  order: NonNullable<TestOrderEmailPayload['order']>,
+  context: {
+    currency: string;
+    fulfillmentLabel: string;
+    shippingAddress: string;
+    isTestOrder: boolean;
+    isSandboxPayPal: boolean;
+    contact: HueContactInfo;
+  },
+) => {
+  const statusLabel = getCustomerPaymentLabel(order, context.isTestOrder, context.isSandboxPayPal);
+  const warningBanner = context.isTestOrder
+    ? `<div style="margin:0 0 16px;background:#b91c1c;border:4px solid #7f1d1d;border-radius:16px;padding:20px;text-align:center;color:#ffffff;box-shadow:0 8px 24px rgba(127,29,29,.25);">
+        <p style="margin:0;font-size:25px;line-height:1.1;font-weight:900;text-transform:uppercase;letter-spacing:.05em;">Test Only - Not an Actual Order</p>
+        <p style="margin:10px 0 0;font-size:14px;line-height:1.5;font-weight:700;">Hue Studio is currently being tested. This confirmation is for testing purposes only and is not a real production order.</p>
+      </div>`
+    : context.isSandboxPayPal
+      ? `<div style="margin:0 0 16px;background:#92400e;border:4px solid #78350f;border-radius:16px;padding:20px;text-align:center;color:#ffffff;box-shadow:0 8px 24px rgba(120,53,15,.2);">
+          <p style="margin:0;font-size:22px;line-height:1.1;font-weight:900;text-transform:uppercase;letter-spacing:.05em;">PayPal Sandbox Receipt</p>
+          <p style="margin:10px 0 0;font-size:14px;line-height:1.5;font-weight:700;">This payment was processed in PayPal sandbox mode. No real money was collected.</p>
+        </div>`
+      : '';
+
+  return `
+    <div style="background:#f5f7fb;padding:24px;font-family:Arial,Helvetica,sans-serif;">
+      <div style="max-width:820px;margin:0 auto;">
+        ${warningBanner}
+        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden;">
+          <div style="background:#07111f;padding:26px 24px;">
+            <p style="margin:0;color:#62d4ff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.2em;">Hue Studio Receipt</p>
+            <h1 style="margin:9px 0 0;color:#ffffff;font-size:34px;line-height:1.05;">${escapeHtml(order.orderNumber)}</h1>
+            <p style="margin:10px 0 0;color:#cbd5e1;font-size:14px;">${escapeHtml(statusLabel)} on ${escapeHtml(formatOrderDate(order.createdAt))}</p>
+          </div>
+          <div style="padding:24px;">
+            <div style="border:1px solid #dbeafe;border-radius:16px;background:#f8fbff;padding:16px;">
+              <table style="width:100%;border-collapse:collapse;">
+                ${renderField('Customer', order.customer?.name)}
+                ${order.customer?.organization ? renderField('Organization', order.customer.organization) : ''}
+                ${renderField('Email', order.customer?.email)}
+                ${renderField('Phone', order.customer?.phone)}
+                ${renderField('Fulfillment', context.fulfillmentLabel)}
+                ${context.shippingAddress ? renderField('Ship To', context.shippingAddress) : ''}
+                ${renderField('Tax exempt', order.customer?.taxExempt ? 'Yes' : 'No')}
+              </table>
+            </div>
+
+            <div style="margin-top:18px;border:1px solid #e5e7eb;border-radius:14px;padding:16px;background:#ffffff;">
+              <p style="margin:0 0 8px;color:#111827;font-size:17px;font-weight:900;">Order Totals</p>
+              <table style="width:100%;border-collapse:collapse;">
+                ${renderField('Subtotal', formatMoney(order.subtotal, context.currency))}
+                ${order.promotion?.code ? renderField(`Promo ${order.promotion.code}`, `-${formatMoney(order.promotion.discountAmount || 0, context.currency)}`) : ''}
+                ${renderField(order.shipping?.label || 'Shipping', formatMoney(order.shipping?.amount || 0, context.currency))}
+                ${renderField(order.tax?.label || 'Tax', formatMoney(order.tax?.amount || 0, context.currency))}
+                <tr>
+                  <td style="padding:12px 0 0;color:#111827;font-size:16px;font-weight:900;">Total</td>
+                  <td style="padding:12px 0 0;color:#16a34a;font-size:24px;font-weight:900;text-align:left;">${formatMoney(order.total, context.currency)}</td>
+                </tr>
+              </table>
+            </div>
+
+            ${renderCustomerReceiptItems(order.items || [], context.currency)}
+
+            <div style="margin-top:18px;border:1px solid #facc15;border-radius:14px;padding:16px;background:#fefce8;">
+              <p style="margin:0;color:#713f12;font-size:15px;font-weight:900;">Important order details</p>
+              <ul style="margin:10px 0 0;padding-left:18px;color:#713f12;font-size:13px;line-height:1.65;">
+                <li>Please review this receipt and contact Hue right away if the size, quantity, spelling, artwork, pickup/shipping info, or options look wrong.</li>
+                <li>Hue Studio is a self-service print-ready ordering tool. Hue may contact you if a major production issue is found.</li>
+                <li>Most standard orders are ready in 3-4 business days unless otherwise noted.</li>
+              </ul>
+            </div>
+          </div>
+          ${renderCustomerReceiptFooter(context.contact)}
+        </div>
+      </div>
+    </div>
+  `;
 };
 
 const getSubmissionKey = (value: unknown) => {
@@ -353,6 +557,13 @@ export async function POST(request: Request) {
   const resendApiKey = process.env.RESEND_API_KEY;
   const orderToEmail = process.env.QUOTE_TO_EMAIL || "jason@huegraphics.cc";
   const orderFromEmail = process.env.QUOTE_FROM_EMAIL || "Hue Graphics Orders <orders@huegraphics.cc>";
+  const hueContact: HueContactInfo = {
+    websiteUrl: process.env.HUE_WEBSITE_URL || 'https://www.huegraphics.cc',
+    contactUrl: process.env.HUE_CONTACT_URL || 'https://www.huegraphics.cc/contact',
+    email: process.env.HUE_CONTACT_EMAIL || 'jason@huegraphics.cc',
+    phone: process.env.HUE_CONTACT_PHONE || '(770) 867-3520 / Office Mobile: (678) 238-8913',
+    address: process.env.HUE_ADDRESS || '741 Harry McCarty Road, Suite 101, Bethlehem, GA 30620',
+  };
 
   let payload: TestOrderEmailPayload;
   try {
@@ -507,6 +718,7 @@ export async function POST(request: Request) {
 
   const currency = order.currency || "USD";
   const isTestOrder = order.paymentMode !== 'paypal';
+  const isSandboxPayPal = !isTestOrder && String(process.env.PAYPAL_ENV || 'sandbox').toLowerCase() !== 'live';
   const fulfillmentLabel = order.fulfillment?.method === "direct_ship" ? "Direct ship" : "Local pickup";
   const shippingAddress = order.fulfillment?.address
     ? [order.fulfillment.address.line1, order.fulfillment.address.line2, `${order.fulfillment.address.city || ""}, ${order.fulfillment.address.state || ""} ${order.fulfillment.address.postalCode || ""}`.trim()].filter(Boolean).join("\n")
@@ -570,7 +782,7 @@ export async function POST(request: Request) {
 
   // Temporary launch-testing notice for no-payment confirmations only.
   // Keep the internal Hue order notification unchanged.
-  const customerHtml = (isTestOrder ? html
+  const legacyCustomerHtml = (isTestOrder ? html
     .replace(
       '<div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">',
       `<div style="max-width:820px;margin:0 auto;">
@@ -584,6 +796,16 @@ export async function POST(request: Request) {
     .replace(/\s*<\/div>\s*$/, '</div></div>') : html)
     .replace("Hue Studio Order</p>", "Hue Studio Order Confirmation</p>")
     .replaceAll("Supabase", "Hue secure storage");
+
+  const customerHtml = buildCustomerReceiptHtml(order, {
+    contact: hueContact,
+    currency,
+    fulfillmentLabel,
+    isSandboxPayPal,
+    isTestOrder,
+    shippingAddress,
+  });
+  void legacyCustomerHtml;
 
   const text = [
     `Hue Studio Order ${order.orderNumber}`,
@@ -609,6 +831,15 @@ export async function POST(request: Request) {
       ...(item.artworkFiles || []).map((file) => `   ${file.role || "Artwork"}: ${file.name || "Unnamed file"} / ${file.storagePath || "Browser/local preview only"}`),
     ]),
   ].filter(Boolean).join("\n");
+
+  const customerText = buildCustomerReceiptText(order, {
+    contact: hueContact,
+    currency,
+    fulfillmentLabel,
+    isSandboxPayPal,
+    isTestOrder,
+    shippingAddress,
+  });
 
   if (!storedRecord.admin_email_sent_at) {
     const resendResponse = await fetch("https://api.resend.com/emails", {
@@ -653,8 +884,8 @@ export async function POST(request: Request) {
         from: orderFromEmail,
         html: customerHtml,
         reply_to: orderToEmail,
-        subject: `${isTestOrder ? 'TEST ONLY — ' : ''}Hue Studio Confirmation ${order.orderNumber}`,
-        text: `${isTestOrder ? 'TEST ONLY — NOT AN ACTUAL ORDER\nHue Studio is currently being tested. This is not a real production order.\n\n' : ''}${text.replaceAll("Supabase", "Hue secure storage")}`,
+        subject: `${isTestOrder ? 'TEST ONLY - ' : isSandboxPayPal ? 'SANDBOX - ' : ''}Hue Studio Receipt ${order.orderNumber}`,
+        text: customerText,
         to: order.customer.email,
       }),
     });
