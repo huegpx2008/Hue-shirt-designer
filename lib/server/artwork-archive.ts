@@ -175,7 +175,12 @@ const createPreview = async (bytes: ArrayBuffer, mimeType: string) => {
 const ensureArchivePreview = async (row: ArtworkArchiveRecord) => {
   // Rebuild older archive previews once. The v2 key lets us distinguish the
   // lightweight customer-library thumbnail from the legacy preview format.
-  if (row.preview_storage_path?.includes('/vault-v2-')) return row.preview_storage_path;
+  const client = getSupabaseAdminClient();
+  const bucket = getStorageBucket();
+  if (row.preview_storage_path?.includes('/vault-v2-')) {
+    const { error } = await client.storage.from(bucket).download(row.preview_storage_path);
+    if (!error) return row.preview_storage_path;
+  }
   if (!row.drive_file_id) return null;
 
   try {
@@ -184,8 +189,6 @@ const ensureArchivePreview = async (row: ArtworkArchiveRecord) => {
     const preview = await createPreview(downloaded.bytes, mimeType);
     const pathHash = createHash('sha256').update(row.storage_path || row.id).digest('hex').slice(0, 16);
     const previewPath = `archive-previews/vault-v2-${row.id}-${pathHash}-${safeSegment(row.original_name || 'artwork')}.webp`;
-    const client = getSupabaseAdminClient();
-    const bucket = getStorageBucket();
     const { error } = await client.storage.from(bucket).upload(previewPath, preview, {
       contentType: 'image/webp',
       cacheControl: '31536000',

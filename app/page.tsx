@@ -2301,6 +2301,7 @@ export default function Home() {
         let archivedItems: ImageZoneItem[] = [];
         try {
           const archiveResponse = await fetch('/api/artwork/archive', {
+            cache: 'no-store',
             headers: { Authorization: `Bearer ${customerSession.access_token}` },
           });
           if (archiveResponse.ok) {
