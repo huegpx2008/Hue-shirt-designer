@@ -70,7 +70,6 @@ type GuidedTourChoice = {
   orientation: 'Portrait' | 'Landscape';
   coating: string;
   finishing: string[];
-  priority: 'fast' | 'lowest-price' | 'not-sure';
 };
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; studioPricing?: { sheetPricing?: { filledSheetTotal?: number | string } }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
@@ -680,8 +679,7 @@ const GUIDED_TOUR_DEFAULT_CHOICE: GuidedTourChoice = {
   material: '',
   orientation: 'Portrait',
   coating: 'No Coating',
-  finishing: [],
-  priority: 'not-sure'
+  finishing: []
 };
 const getGuidedTourProductPreset = (product: StoreProductCard): Partial<GuidedTourChoice> => {
   if (product.signProductId === 'banner' || product.signProductId === 'mesh-banner') return { width: '72', height: '36', quantity: '1', material: product.initialSignValues?.material ? String(product.initialSignValues.material) : '13-single', finishing: ['grommets', 'welding'] };
@@ -1957,6 +1955,7 @@ export default function Home() {
   const [bannerOrderItems, setBannerOrderItems] = useState<BannerOrderItem[]>([]);
   const [activeBannerSetNumber, setActiveBannerSetNumber] = useState(1);
   const [pendingBannerPlacement, setPendingBannerPlacement] = useState<{ dataUrl: string; name: string; width: number; height: number; printWidth: number; printHeight: number } | null>(null);
+  const guidedTourTargetSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [rigidBackArtwork, setRigidBackArtwork] = useState<ImageZoneItem | null>(null);
   const [rigidArtworkTarget, setRigidArtworkTarget] = useState<CoroArtworkSide>('front');
   const [rigidPreviewSide, setRigidPreviewSide] = useState<CoroArtworkSide>('front');
@@ -6335,7 +6334,7 @@ export default function Home() {
       setBannerArtworkName(imageItem.name);
       const savedPrintSize = imageItem.signWidth && imageItem.signHeight ? { width: imageItem.signWidth, height: imageItem.signHeight } : null;
       const printSize = savedPrintSize || applySignSizeFromPixels(imageItem.width, imageItem.height) || getArtworkPrintSize(imageItem.width, imageItem.height);
-      if (savedPrintSize) {
+      if (savedPrintSize && !guidedTourTargetSizeRef.current) {
         setSignValues((prev) => ({ ...prev, width: String(savedPrintSize.width), height: String(savedPrintSize.height) }));
         setSignArtworkSize(savedPrintSize);
       }
@@ -6527,7 +6526,7 @@ export default function Home() {
         setSignArtworkPreviewUrl(placementDataUrl);
         setBannerArtworkName(file.name);
         const printSize = pdfPrintSize || applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
-        if (pdfPrintSize) {
+        if (pdfPrintSize && !guidedTourTargetSizeRef.current) {
           setSignValues((prev) => ({ ...prev, width: String(pdfPrintSize.width), height: String(pdfPrintSize.height) }));
           setSignArtworkSize(pdfPrintSize);
         }
@@ -6594,12 +6593,18 @@ export default function Home() {
         try {
           await placeImageOnDesign(placement.dataUrl, placement.name);
           if (canceled) return;
+          const guidedTargetSize = guidedTourTargetSizeRef.current;
+          const targetWidth = guidedTargetSize?.width || placement.printWidth;
+          const targetHeight = guidedTargetSize?.height || placement.printHeight;
           setSignArtworkPreviewUrl(placement.dataUrl);
           setBannerArtworkName(placement.name);
-          setSignValues((prev) => ({ ...prev, width: String(placement.printWidth), height: String(placement.printHeight) }));
+          setSignValues((prev) => ({ ...prev, width: String(targetWidth), height: String(targetHeight) }));
           setSignArtworkSize({ width: placement.printWidth, height: placement.printHeight });
           setBannerArtworkFitState('unresolved');
-          setImageLibraryStatus(`${placement.name} placed on the banner.`);
+          setImageLibraryStatus(guidedTargetSize
+            ? `${placement.name} placed on the banner. Guided tour size kept at ${targetWidth}" × ${targetHeight}". Use Fit or Center if the artwork ratio needs adjustment.`
+            : `${placement.name} placed on the banner.`);
+          if (guidedTargetSize) guidedTourTargetSizeRef.current = null;
           setPendingBannerPlacement(null);
         } catch (error) {
           if (canceled) return;
@@ -7377,7 +7382,8 @@ export default function Home() {
       ['More pieces can help', 'Adding more pieces to a partially used sheet can lower the price per piece because the sheet cost is spread across more signs.']
     ];
     if (isTrueBannerBuilder) return [
-      ['Banner finishing', 'Grommets are common for hanging. Welding reinforces the edges. Pole pockets are for sliding over a pole.'],
+      ['13oz vinyl', '13oz vinyl is the most common everyday banner material and is the default starting point for normal indoor/outdoor banners.'],
+      ['Banner finishing', 'Grommets and welded edges are standard on normal vinyl banners. Pole pockets, rope, and wind slits are extra choices for specific hanging setups.'],
       ['Double-sided banners', 'Double-sided vinyl banners use a heavier material and need front/back artwork reviewed before checkout.'],
       ['Large banner warning', 'Anything over 16 feet wide or tall should become a custom quote instead of an automatic online checkout.']
     ];
@@ -7431,6 +7437,9 @@ export default function Home() {
       ? 'relative z-[10005] ring-2 ring-[#67d8ff] ring-offset-4 ring-offset-[#050b12] shadow-[0_0_0_9999px_rgba(0,0,0,0.20),0_0_34px_rgba(56,189,248,0.55)]'
       : '';
   };
+  const builderWalkthroughPanelClass = builderWalkthroughStep === 2
+    ? 'bottom-5 left-5 w-[min(380px,calc(100vw-2rem))]'
+    : 'bottom-5 right-5 w-[min(420px,calc(100vw-2rem))]';
   const dtgTotalQuantity = Object.values(dtgQuantities).reduce((total, quantity) => total + quantity, 0);
   const dtgArtworkCount = Number(Boolean(dtgArtwork.front)) + Number(Boolean(dtgArtwork.back));
   const dtgPrintHeight = Number((dtgPrintWidth * 1.18).toFixed(1));
@@ -7531,6 +7540,7 @@ export default function Home() {
       return;
     }
     resetPlacedArtworkForProduct();
+    guidedTourTargetSizeRef.current = null;
     setStoreCategory(product.category);
     setProductMode(product.mode);
     if (product.signProductId) {
@@ -7538,6 +7548,9 @@ export default function Home() {
       const guidedWidth = Number(guidedTourChoice.width);
       const guidedHeight = Number(guidedTourChoice.height);
       const guidedQuantity = Math.max(1, Math.round(Number(guidedTourChoice.quantity) || 1));
+      guidedTourTargetSizeRef.current = Number.isFinite(guidedWidth) && guidedWidth > 0 && Number.isFinite(guidedHeight) && guidedHeight > 0
+        ? { width: guidedWidth, height: guidedHeight }
+        : null;
       const fieldNames = new Set((nextProduct?.fields || []).map((field) => field.name));
       const materialOptions = nextProduct?.fields.find((field) => field.name === 'material')?.options || [];
       const selectedMaterial = materialOptions.some((option) => option.value === guidedTourChoice.material)
@@ -7886,14 +7899,14 @@ export default function Home() {
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-7">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#67d8ff]">Hue Studio Guided Tour</p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight md:text-3xl">Let&apos;s build the right order path.</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Answer a few plain-English questions and Hue Studio will open the right product, size, artwork path, and checkout workflow.</p>
+              <h2 className="mt-1 text-2xl font-black tracking-tight md:text-3xl">Start with your account, then build the order.</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">First we&apos;ll explain why signing in helps, then Hue Studio will guide the customer through product, artwork, size, options, and checkout.</p>
             </div>
             <button type="button" onClick={() => dismissGuidedTour(false)} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-xs font-black uppercase text-slate-200 hover:border-white/30 hover:bg-white/[0.1]">Close</button>
           </div>
           <div className="grid gap-0 md:grid-cols-[220px_minmax(0,1fr)]">
             <aside className="border-b border-white/10 bg-black/18 p-4 md:border-b-0 md:border-r">
-              {['Product', 'Artwork', 'Size + qty', 'Options', 'Review'].map((label, index) => <button key={label} type="button" onClick={() => setGuidedTourStep(index)} className={`mb-2 flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-xs font-black uppercase tracking-wide transition ${guidedTourStep === index ? 'bg-[#1686c9] text-white shadow-[0_0_24px_rgba(14,165,233,0.25)]' : 'bg-white/[0.045] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200'}`}>
+              {['Account', 'Product', 'Artwork', 'Size + qty', 'Options', 'Review'].map((label, index) => <button key={label} type="button" onClick={() => setGuidedTourStep(index)} className={`mb-2 flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-xs font-black uppercase tracking-wide transition ${guidedTourStep === index ? 'bg-[#1686c9] text-white shadow-[0_0_24px_rgba(14,165,233,0.25)]' : 'bg-white/[0.045] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200'}`}>
                 <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${guidedTourStep === index ? 'border-white/40 bg-white/15' : 'border-white/15 bg-black/20'}`}>{index + 1}</span>
                 {label}
               </button>)}
@@ -7901,6 +7914,31 @@ export default function Home() {
             </aside>
             <section className="max-h-[68vh] overflow-y-auto p-5 md:p-7">
               {guidedTourStep === 0 ? <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Start here</p>
+                <h3 className="mt-2 text-2xl font-black">Sign in first if you can.</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">A Hue Studio account is what makes the site feel less temporary. It keeps artwork, restored files, past orders, and receipts connected to the customer instead of depending on one browser session.</p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ['Private Image Zone', 'Uploaded artwork stays tied to the customer account so they can come back later and reuse it.'],
+                    ['Hue Vault restore', 'Archived files can still be retrieved when the active library is cleaned up or moved to long-term storage.'],
+                    ['Past orders', 'Customers can review order history, totals, quantities, and artwork references after checkout.'],
+                    ['Smoother checkout', 'Contact details and saved artwork are easier to recover if they refresh, switch devices, or come back another day.']
+                  ].map(([title, text]) => <div key={title} className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
+                    <strong className="block text-white">{title}</strong>
+                    <span className="mt-2 block text-sm leading-6 text-slate-300">{text}</span>
+                  </div>)}
+                </div>
+                <div className="mt-5 rounded-2xl border border-[#38bdf8]/25 bg-[#071827]/80 p-5">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Current status</p>
+                  <p className="mt-2 text-lg font-black text-white">{customerSession?.user?.email ? `Signed in as ${customerSession.user.email}` : 'Not signed in yet'}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{customerSession?.user?.email ? 'Great — saved artwork and order history can stay connected to this customer.' : 'Customers can still browse first, but signing in before uploading is the safer path for saved artwork.'}</p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button type="button" onClick={() => { openCustomerAccount(); setShowGuidedTour(false); }} className="rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">{customerSession?.user?.email ? 'Open my account' : 'Sign in / create account'}</button>
+                    <button type="button" onClick={() => setGuidedTourStep(1)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black uppercase text-slate-200 hover:bg-white/[0.1]">Continue for now</button>
+                  </div>
+                </div>
+              </div> : null}
+              {guidedTourStep === 1 ? <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">What do you need?</p>
                 <h3 className="mt-2 text-2xl font-black">Choose the closest product.</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-300">This can be changed later. The goal is to get customers out of the “where do I start?” moment fast.</p>
@@ -7916,7 +7954,7 @@ export default function Home() {
                   })}
                 </div>
               </div> : null}
-              {guidedTourStep === 1 ? <div>
+              {guidedTourStep === 2 ? <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Artwork path</p>
                 <h3 className="mt-2 text-2xl font-black">Where is your artwork starting from?</h3>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -7932,7 +7970,7 @@ export default function Home() {
                   </button>)}
                 </div>
               </div> : null}
-              {guidedTourStep === 2 ? <div>
+              {guidedTourStep === 3 ? <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Size and quantity</p>
                 <h3 className="mt-2 text-2xl font-black">Give Hue Studio a starting size.</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-300">This preloads the builder. If the artwork size is different, the Fit and Center checks still guide them before checkout.</p>
@@ -7948,7 +7986,7 @@ export default function Home() {
                   })}
                 </div>
               </div> : null}
-              {guidedTourStep === 3 ? <div>
+              {guidedTourStep === 4 ? <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Options</p>
                 <h3 className="mt-2 text-2xl font-black">Pick the common choices for {selectedGuidedTourProduct?.title || 'this product'}.</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-300">These are starter settings. The builder will still show the exact option tiles, warnings, and live pricing before checkout.</p>
@@ -8003,23 +8041,13 @@ export default function Home() {
                     </div>
                     <p className="mt-3 text-xs leading-5 text-slate-400">If nothing applies, leave these off and Hue Studio will keep the product defaults.</p>
                   </div>
-                  <div className="rounded-2xl border border-white/12 bg-white/[0.045] p-4">
-                    <p className="text-sm font-black text-white">What matters most?</p>
-                    <div className="mt-3 grid gap-2">
-                      {[
-                        ['fast', 'Fastest normal path'],
-                        ['lowest-price', 'Best sheet usage / lower price per piece'],
-                        ['not-sure', 'Not sure yet']
-                      ].map(([value, label]) => <button key={value} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, priority: value as GuidedTourChoice['priority'] }))} className={`rounded-xl px-4 py-3 text-left text-xs font-black uppercase ${guidedTourChoice.priority === value ? 'bg-[#1686c9] text-white' : 'bg-white/[0.07] text-slate-300 hover:bg-white/[0.1]'}`}>{label}</button>)}
-                    </div>
-                  </div>
                 </div>
                 <div className="mt-5 rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] p-4 text-sm leading-6 text-amber-100/85">
                   <strong className="block text-amber-200">Helpful customer explanation:</strong>
                   The tour preselects common options, but the live builder still calculates price from the real product rules. Nothing is ordered until artwork passes checks and the cart is submitted.
                 </div>
               </div> : null}
-              {guidedTourStep === 4 ? <div>
+              {guidedTourStep === 5 ? <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">Review</p>
                 <h3 className="mt-2 text-2xl font-black">Ready to open the builder?</h3>
                 <div className="mt-5 rounded-2xl border border-[#38bdf8]/25 bg-[#071827]/80 p-5">
@@ -8040,13 +8068,13 @@ export default function Home() {
             <button type="button" onClick={() => setGuidedTourStep((step) => Math.max(0, step - 1))} disabled={guidedTourStep === 0} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black uppercase text-slate-200 hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-35">Back</button>
             <div className="flex flex-wrap items-center gap-3">
               <button type="button" onClick={() => dismissGuidedTour(false)} className="rounded-xl border border-white/15 bg-transparent px-5 py-3 text-xs font-black uppercase text-slate-400 hover:text-white">Skip for now</button>
-              {guidedTourStep < 4 ? <button type="button" onClick={() => setGuidedTourStep((step) => Math.min(4, step + 1))} className="rounded-xl bg-[#1686c9] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Next</button> : <button type="button" onClick={startGuidedOrder} className="rounded-xl bg-[#22c55e] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(34,197,94,0.24)] hover:bg-[#16a34a]">Open my order setup</button>}
+              {guidedTourStep < 5 ? <button type="button" onClick={() => setGuidedTourStep((step) => Math.min(5, step + 1))} className="rounded-xl bg-[#1686c9] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Next</button> : <button type="button" onClick={startGuidedOrder} className="rounded-xl bg-[#22c55e] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(34,197,94,0.24)] hover:bg-[#16a34a]">Open my order setup</button>}
             </div>
           </footer>
         </div>
       </div> : null}
 
-      {showBuilderWalkthrough && storeView === 'builder' && !showGuidedTour && !showImageZone && !showCart && !showCustomerLogin ? <div className="fixed bottom-5 right-5 z-[10010] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,#071827,#050b12)] text-white shadow-[0_24px_80px_rgba(0,0,0,0.68),0_0_38px_rgba(14,165,233,0.18)]">
+      {showBuilderWalkthrough && storeView === 'builder' && !showGuidedTour && !showImageZone && !showCart && !showCustomerLogin ? <div className={`fixed z-[10010] overflow-hidden rounded-3xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,#071827,#050b12)] text-white shadow-[0_24px_80px_rgba(0,0,0,0.68),0_0_38px_rgba(14,165,233,0.18)] ${builderWalkthroughPanelClass}`}>
         <div className="border-b border-white/10 px-5 py-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Builder walkthrough</p>
