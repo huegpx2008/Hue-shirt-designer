@@ -155,6 +155,7 @@ const TEST_ORDER_STORAGE_KEY = 'hue-test-orders';
 const ORDER_CONFIRMATION_STORAGE_KEY = 'hue-order-confirmation';
 const CHECKOUT_SUBMISSION_STORAGE_KEY = 'hue-checkout-submission';
 const GUIDED_TOUR_STORAGE_KEY = 'hue-guided-tour-dismissed';
+const MOBILE_DESKTOP_NOTICE_STORAGE_KEY = 'hue-mobile-desktop-notice-dismissed';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
 const CART_CHECKOUT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -1980,6 +1981,7 @@ export default function Home() {
   const [guidedTourStep, setGuidedTourStep] = useState(0);
   const [guidedTourChoice, setGuidedTourChoice] = useState<GuidedTourChoice>(GUIDED_TOUR_DEFAULT_CHOICE);
   const [resumeGuidedTourAfterAccount, setResumeGuidedTourAfterAccount] = useState(false);
+  const [showMobileDesktopNotice, setShowMobileDesktopNotice] = useState(false);
   const [showBuilderWalkthrough, setShowBuilderWalkthrough] = useState(false);
   const [builderWalkthroughStep, setBuilderWalkthroughStep] = useState(0);
   const [showGuidedHelpPanel, setShowGuidedHelpPanel] = useState(false);
@@ -2186,10 +2188,24 @@ export default function Home() {
   useEffect(() => {
     try {
       if (window.localStorage.getItem(GUIDED_TOUR_STORAGE_KEY) === 'yes') return;
+      if (window.matchMedia('(max-width: 767px)').matches) return;
       const timer = window.setTimeout(() => setShowGuidedTour(true), 900);
       return () => window.clearTimeout(timer);
     } catch {
       // If browser storage is unavailable, the menu can still launch the tour manually.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(MOBILE_DESKTOP_NOTICE_STORAGE_KEY) === 'yes') return;
+      const mobileQuery = window.matchMedia('(max-width: 767px)');
+      const updateMobileNotice = () => setShowMobileDesktopNotice(mobileQuery.matches);
+      updateMobileNotice();
+      mobileQuery.addEventListener('change', updateMobileNotice);
+      return () => mobileQuery.removeEventListener('change', updateMobileNotice);
+    } catch {
+      // The notice is helpful but should never block the site.
     }
   }, []);
 
@@ -7566,6 +7582,15 @@ export default function Home() {
     }
   };
 
+  const dismissMobileDesktopNotice = () => {
+    setShowMobileDesktopNotice(false);
+    try {
+      window.localStorage.setItem(MOBILE_DESKTOP_NOTICE_STORAGE_KEY, 'yes');
+    } catch {
+      // The notice can still be dismissed for this session.
+    }
+  };
+
   const toggleGuidedFinishing = (value: string) => {
     setGuidedTourChoice((current) => ({
       ...current,
@@ -7891,6 +7916,17 @@ export default function Home() {
   return (
     <main className={`${isProductionBuilder ? `flex min-h-screen flex-col bg-[#050b12] text-slate-100 ${storeView === 'builder' ? 'overflow-y-auto pb-0 md:h-screen md:overflow-hidden' : 'overflow-y-auto pb-12'}` : 'min-h-screen bg-[#f4f8fc] pb-24 text-slate-950'}`}>
       <input id="artwork-upload-input" ref={artworkUploadInputRef} onChange={onUploadImage} className="fixed -left-96 top-0 h-px w-px opacity-0" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf" />
+      {isProductionBuilder && showMobileDesktopNotice && !showGuidedTour && !showBuilderWalkthrough && !showImageZone && !showCart && !showCustomerLogin && !showCanvaImport && !showArtworkEditor ? <div className="fixed inset-x-3 bottom-3 z-[10015] rounded-3xl border border-[#38bdf8]/35 bg-[linear-gradient(135deg,#071827,#050b12)] p-4 text-white shadow-[0_22px_70px_rgba(0,0,0,0.72),0_0_34px_rgba(14,165,233,0.22)] backdrop-blur md:hidden">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#38bdf8]/45 bg-[#0b2b42] text-sm font-black text-[#67d8ff]">i</span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Best on desktop</p>
+            <h2 className="mt-1 text-base font-black leading-tight">Hue Studio works on mobile, but desktop is smoother.</h2>
+            <p className="mt-2 text-xs leading-5 text-slate-300">You can browse, upload, and order from your phone. For detailed artwork setup, sizing, and final checks, a desktop or larger tablet will be easier before checkout.</p>
+            <button type="button" onClick={dismissMobileDesktopNotice} className="mt-3 w-full rounded-xl bg-[#1f9bd7] px-4 py-2 text-sm font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.30)] hover:bg-[#27aeea]">Continue on mobile</button>
+          </div>
+        </div>
+      </div> : null}
       <header className={`hue-site-header ${isProductionBuilder ? 'border-b border-white/10 bg-[#080d14]/96 px-5 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.42)] backdrop-blur md:px-7' : 'border-b border-white/70 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgba(7,17,31,0.06)] backdrop-blur md:px-6'}`}>
         <div className={`hue-site-header-inner mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
           <div className="hue-mobile-brand flex min-w-0 flex-1 items-center gap-3">
