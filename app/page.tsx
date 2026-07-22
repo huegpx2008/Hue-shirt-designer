@@ -1976,6 +1976,7 @@ export default function Home() {
   const [showGuidedTour, setShowGuidedTour] = useState(false);
   const [guidedTourStep, setGuidedTourStep] = useState(0);
   const [guidedTourChoice, setGuidedTourChoice] = useState<GuidedTourChoice>(GUIDED_TOUR_DEFAULT_CHOICE);
+  const [resumeGuidedTourAfterAccount, setResumeGuidedTourAfterAccount] = useState(false);
   const [showBuilderWalkthrough, setShowBuilderWalkthrough] = useState(false);
   const [builderWalkthroughStep, setBuilderWalkthroughStep] = useState(0);
   const [showGuidedHelpPanel, setShowGuidedHelpPanel] = useState(false);
@@ -2188,6 +2189,13 @@ export default function Home() {
       // If browser storage is unavailable, the menu can still launch the tour manually.
     }
   }, []);
+
+  useEffect(() => {
+    if (!resumeGuidedTourAfterAccount || showCustomerLogin) return;
+    setResumeGuidedTourAfterAccount(false);
+    setGuidedTourStep(customerSession?.user?.email ? 1 : 0);
+    setShowGuidedTour(true);
+  }, [customerSession?.user?.email, resumeGuidedTourAfterAccount, showCustomerLogin]);
 
   useEffect(() => {
     try {
@@ -7933,7 +7941,7 @@ export default function Home() {
                   <p className="mt-2 text-lg font-black text-white">{customerSession?.user?.email ? `Signed in as ${customerSession.user.email}` : 'Not signed in yet'}</p>
                   <p className="mt-2 text-sm leading-6 text-slate-300">{customerSession?.user?.email ? 'Great — saved artwork and order history can stay connected to this customer.' : 'Customers can still browse first, but signing in before uploading is the safer path for saved artwork.'}</p>
                   <div className="mt-4 flex flex-wrap gap-3">
-                    <button type="button" onClick={() => { openCustomerAccount(); setShowGuidedTour(false); }} className="rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">{customerSession?.user?.email ? 'Open my account' : 'Sign in / create account'}</button>
+                    <button type="button" onClick={() => { setResumeGuidedTourAfterAccount(true); openCustomerAccount(); setShowGuidedTour(false); }} className="rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">{customerSession?.user?.email ? 'Open my account' : 'Sign in / create account'}</button>
                     <button type="button" onClick={() => setGuidedTourStep(1)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black uppercase text-slate-200 hover:bg-white/[0.1]">Continue for now</button>
                   </div>
                 </div>
