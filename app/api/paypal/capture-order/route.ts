@@ -16,6 +16,7 @@ export async function POST(request: Request) {
 
     const existingRows = await supabaseAdminFetch(`/rest/v1/hue_payment_attempts?submission_key=eq.${encodeURIComponent(checkout.submissionKey)}&select=paypal_order_id,paypal_capture_id,status,paid_at&limit=1`) as Array<{ paypal_order_id?: string; paypal_capture_id?: string; status?: string; paid_at?: string }>;
     const existing = existingRows[0];
+    if (existing?.paypal_order_id && existing.paypal_order_id !== checkout.paypalOrderId) throw new Error('The saved PayPal checkout does not match this order.');
     if (existing?.status === 'completed' && existing.paypal_order_id === checkout.paypalOrderId && existing.paypal_capture_id) {
       const paymentToken = createPayPalToken({
         kind: 'paypal_payment',

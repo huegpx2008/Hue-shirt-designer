@@ -140,17 +140,19 @@ export const capturePayPalOrder = async (paypalOrderId: string, submissionKey: s
 );
 
 export const validateCompletedCapture = (payload: PayPalOrderResponse, expected: { paypalOrderId: string; submissionKey: string; amount: string; currency: string }) => {
-  const unit = payload.purchase_units?.[0];
-  const capture = unit?.payments?.captures?.[0];
+  const units = payload.purchase_units || [];
+  const unit = units.find((entry) => entry.custom_id === expected.submissionKey) || units[0];
+  const capture = unit?.payments?.captures?.find((entry) => entry.status === 'COMPLETED') || unit?.payments?.captures?.[0];
   const config = getPayPalConfig();
-  if (payload.id !== expected.paypalOrderId || payload.status !== 'COMPLETED' || capture?.status !== 'COMPLETED' || !capture.id) {
+  if (payload.id !== expected.paypalOrderId) throw new Error('PayPal returned a different order ID than this checkout.');
+  if (capture?.status !== 'COMPLETED' || !capture.id) {
     throw new Error('PayPal did not return a completed payment. Your order has not been submitted.');
   }
-  if (unit?.custom_id !== expected.submissionKey) throw new Error('PayPal order reference did not match this checkout.');
+  if (unit?.custom_id && unit.custom_id !== expected.submissionKey) throw new Error('PayPal order reference did not match this checkout.');
   if (normalizeMoney(capture.amount?.value) !== normalizeMoney(expected.amount) || capture.amount?.currency_code !== expected.currency) {
     throw new Error('PayPal captured amount did not match the verified Hue order total.');
   }
-  if (config.merchantId && unit?.payee?.merchant_id !== config.merchantId) throw new Error('PayPal merchant verification failed.');
+  if (config.merchantId && unit?.payee?.merchant_id && unit.payee.merchant_id !== config.merchantId) throw new Error('PayPal merchant verification failed.');
   return { captureId: capture.id, paidAt: capture.create_time || new Date().toISOString(), capture };
 };
 
