@@ -235,12 +235,13 @@ const getCustomerLegacyLibraryPrefixes = (session: CustomerSession | null) => {
   ];
 };
 
-const CLIENT_ARTWORK_MAX_BYTES = 50 * 1024 * 1024;
+const CLIENT_ARTWORK_MAX_BYTES = 150 * 1024 * 1024;
+const CLIENT_SERVER_PREVIEW_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_CLIENT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const isPreviewableImageFile = (file: File) => SUPPORTED_CLIENT_IMAGE_TYPES.has(file.type.toLowerCase()) || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
 const validateClientArtworkFile = (file: File, options: { allowPdf?: boolean } = {}) => {
   if (!file.size) throw new Error('The selected file is empty.');
-  if (file.size > CLIENT_ARTWORK_MAX_BYTES) throw new Error('Artwork files cannot exceed 50 MB.');
+  if (file.size > CLIENT_ARTWORK_MAX_BYTES) throw new Error('Artwork files cannot exceed 150 MB.');
   const isImage = isPreviewableImageFile(file);
   const isPdf = options.allowPdf && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
   if (!isImage && !isPdf) throw new Error('Upload a PNG, JPG, WebP, GIF, or PDF. SVG and other file types are not accepted.');
@@ -439,9 +440,20 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
     }),
   });
   if (!verifyResponse.ok) throw new Error(await getErrorMessage(verifyResponse));
-  const result = await verifyResponse.json() as { storagePath?: string; storageUrl?: string };
+  const result = await verifyResponse.json() as { storagePath?: string; storageUrl?: string; mimeType?: string; size?: number; width?: number; height?: number; previewStoragePath?: string; previewUrl?: string; previewWidth?: number; previewHeight?: number };
   if (!result.storagePath || !result.storageUrl) throw new Error('Secure storage did not return the saved artwork location.');
-  return { storagePath: result.storagePath, storageUrl: result.storageUrl };
+  return {
+    storagePath: result.storagePath,
+    storageUrl: result.storageUrl,
+    mimeType: result.mimeType,
+    size: result.size,
+    width: result.width,
+    height: result.height,
+    previewStoragePath: result.previewStoragePath,
+    previewUrl: result.previewUrl,
+    previewWidth: result.previewWidth,
+    previewHeight: result.previewHeight,
+  };
 };
 
 
@@ -6312,6 +6324,72 @@ export default function Home() {
     const isPdfFile = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     let canPlaceOnCanvas = Boolean(isImageFile && canvas);
     if (isImageFile && !canPlaceOnCanvas) setImageLibraryStatus(`Adding file to the library. Open the ${selectedSignProduct.name} builder to place it on the design.`);
+    if (isImageFile && file.size > CLIENT_SERVER_PREVIEW_BYTES && isSupabaseStorageConfigured) {
+      event.target.value = '';
+      setArtworkAnalysis(null);
+      setArtworkAnalysisStatus(`${file.name} is a large file. Uploading original first, then Hue Studio will use a flattened preview.`);
+      setImageLibraryStatus(`Uploading large original file (${(file.size / 1024 / 1024).toFixed(1)} MB) and preparing preview...`);
+      try {
+        const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
+        const originalWidth = Math.max(0, Number(storageInfo.width || 0));
+        const originalHeight = Math.max(0, Number(storageInfo.height || 0));
+        const previewUrl = storageInfo.previewUrl || storageInfo.storageUrl;
+        const detectedPrintSize = originalWidth > 0 && originalHeight > 0 ? getArtworkPrintSize(originalWidth, originalHeight) : null;
+        const item: ImageZoneItem = {
+          id: storageInfo.storagePath,
+          name: file.name,
+          dataUrl: previewUrl,
+          width: originalWidth,
+          height: originalHeight,
+          dpi: BANNER_PREVIEW_DPI,
+          uploadedAt: new Date().toLocaleString(),
+          storagePath: storageInfo.storagePath,
+          storageUrl: storageInfo.storageUrl,
+          source: customerSession?.access_token ? 'supabase' : 'local',
+          mimeType: storageInfo.mimeType || file.type,
+          signWidth: detectedPrintSize?.width,
+          signHeight: detectedPrintSize?.height
+        };
+        setImageZoneItems((prev) => [item, ...prev]);
+        setSelectedImageZoneId(item.id);
+        if (isCoroBuilder) {
+          placeCoroArtworkOnSheet(item);
+        } else if (!isCoroBuilder && isAutoSidedRigidBuilder && rigidArtworkTarget === 'back') {
+          setRigidBackArtwork(item);
+          setRigidArtworkTarget('front');
+          setRigidPreviewSide('back');
+          setSignValues((prev) => ({ ...prev, sides: 'double' }));
+          setSignEstimate(null);
+        } else if (!isCoroBuilder && isBannerBuilder) {
+          if (isAutoSidedRigidBuilder) {
+            setRigidArtworkTarget('front');
+            setRigidPreviewSide('front');
+            setSignValues((prev) => ({
+              ...prev,
+              sides: rigidBackArtwork
+                ? 'double'
+                : selectedSignProduct.id === 'business-card'
+                  ? String(prev.sides || 'single')
+                  : 'single'
+            }));
+          }
+          setSignArtworkPreviewUrl(previewUrl);
+          setSignArtworkDisplayUrl(previewUrl);
+          setBannerArtworkName(file.name);
+          const printSize = detectedPrintSize || getArtworkPrintSize(originalWidth || 1, originalHeight || 1);
+          setPendingBannerPlacement({ dataUrl: previewUrl, name: file.name, width: originalWidth, height: originalHeight, printWidth: printSize.width, printHeight: printSize.height });
+        } else if (canPlaceOnCanvas) {
+          await placeImageOnDesign(previewUrl, file.name);
+        }
+        setImageLibraryStatus(customerSession?.user?.email
+          ? `Large original saved to ${customerSession.user.email}'s library. Flattened preview is ready for ordering.`
+          : 'Large original saved for this guest session. Flattened preview is ready for ordering.');
+        return;
+      } catch (error) {
+        setImageLibraryStatus(`Large upload failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        return;
+      }
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result as string;
@@ -6409,10 +6487,11 @@ export default function Home() {
         setImageLibraryStatus(`${canPlaceOnCanvas ? 'Preview ready' : 'Library file ready'}. Saving original file to ${SUPABASE_STORAGE_BUCKET}...`);
         try {
           const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
+          const savedPreviewUrl = storageInfo.previewUrl || storageInfo.storageUrl;
           setImageZoneItems((prev) => prev.map((entry) => entry.id === localItemId ? {
             ...entry,
             id: storageInfo.storagePath,
-            dataUrl: storageInfo.storageUrl || entry.dataUrl,
+            dataUrl: savedPreviewUrl || entry.dataUrl,
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
             source: 'supabase'

@@ -1,4 +1,4 @@
-export const MAX_ARTWORK_BYTES = 50 * 1024 * 1024;
+export const MAX_ARTWORK_BYTES = 150 * 1024 * 1024;
 export const MAX_PROJECT_BYTES = 25 * 1024 * 1024;
 export const MAX_IMAGE_PIXELS = 200_000_000;
 export const MAX_IMAGE_DIMENSION = 50_000;

@@ -62,7 +62,7 @@ const finishExport = async (exportPayload: JsonRecord, title: string) => {
     return NextResponse.json({ error: "Canva exported the design, but Hue Studio could not download the file." }, { status: fileResponse.status });
   }
   const declaredLength = Number(fileResponse.headers.get('content-length') || 0);
-  if (declaredLength > MAX_ARTWORK_BYTES) return NextResponse.json({ error: 'The Canva export exceeds Hue Studio\'s 50 MB artwork limit.' }, { status: 413 });
+  if (declaredLength > MAX_ARTWORK_BYTES) return NextResponse.json({ error: 'The Canva export exceeds Hue Studio\'s 150 MB artwork limit.' }, { status: 413 });
   const buffer = Buffer.from(await fileResponse.arrayBuffer());
   const validated = validateArtworkBuffer(buffer, { maxBytes: MAX_ARTWORK_BYTES });
   return NextResponse.json({

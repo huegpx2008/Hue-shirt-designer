@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
+import sharp from 'sharp';
 import {
   MAX_ARTWORK_BYTES,
   MAX_PROJECT_BYTES,
@@ -53,12 +54,37 @@ const getBearerToken = (request: Request) => {
 
 const safeFolder = (value: string, fallback: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || fallback;
 const validGuestSession = (value: string) => /^[a-zA-Z0-9-]{20,80}$/.test(value);
+const PREVIEW_MAX_DIMENSION = 2400;
 
 const ownsPath = (storagePath: string, userId?: string, guestSessionId?: string) => {
   if (!storagePath || storagePath.includes('..') || storagePath.includes('\\')) return false;
   const parts = storagePath.split('/');
   if (userId) return parts[0] === 'customers' && parts[2] === userId;
   return Boolean(guestSessionId && parts[0] === 'guest-orders' && parts[1] === guestSessionId);
+};
+
+const getPreviewPath = (storagePath: string) => {
+  const slashIndex = storagePath.lastIndexOf('/');
+  const folder = slashIndex >= 0 ? storagePath.slice(0, slashIndex) : '';
+  const fileName = slashIndex >= 0 ? storagePath.slice(slashIndex + 1) : storagePath;
+  const previewName = fileName.replace(/\.[^.]+$/, '') || `preview-${randomUUID().slice(0, 8)}`;
+  return `${folder ? `${folder}/` : ''}previews/${previewName}-preview.webp`;
+};
+
+const createFlattenedImagePreview = async (buffer: Buffer, mimeType: string) => {
+  if (!mimeType.startsWith('image/') || mimeType === 'image/gif') return null;
+  const preview = await sharp(buffer, { limitInputPixels: false })
+    .rotate()
+    .resize({ width: PREVIEW_MAX_DIMENSION, height: PREVIEW_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' })
+    .webp({ quality: 82, effort: 4 })
+    .toBuffer({ resolveWithObject: true });
+  return {
+    bytes: preview.data,
+    width: preview.info.width,
+    height: preview.info.height,
+    mimeType: 'image/webp' as const,
+  };
 };
 
 export async function POST(request: Request) {
@@ -120,6 +146,24 @@ export async function POST(request: Request) {
         });
         const pathExtension = storagePath.split('.').pop()?.toLowerCase();
         if (pathExtension !== validated.extension) throw new Error('The file contents do not match the selected file type.');
+        let previewStoragePath: string | undefined;
+        let previewUrl: string | undefined;
+        let previewWidth: number | undefined;
+        let previewHeight: number | undefined;
+        const flattenedPreview = await createFlattenedImagePreview(buffer, validated.mimeType).catch(() => null);
+        if (flattenedPreview) {
+          previewStoragePath = getPreviewPath(storagePath);
+          const { error: previewError } = await storage.upload(previewStoragePath, flattenedPreview.bytes, {
+            contentType: flattenedPreview.mimeType,
+            cacheControl: '604800',
+            upsert: true,
+          });
+          if (!previewError) {
+            previewUrl = await getStorageSignedUrl(previewStoragePath, 3600);
+            previewWidth = flattenedPreview.width;
+            previewHeight = flattenedPreview.height;
+          }
+        }
         const storageUrl = await getStorageSignedUrl(storagePath, 3600);
         return NextResponse.json({
           storagePath,
@@ -128,6 +172,10 @@ export async function POST(request: Request) {
           size: buffer.length,
           width: validated.width,
           height: validated.height,
+          previewStoragePath,
+          previewUrl,
+          previewWidth,
+          previewHeight,
         });
       } catch (error) {
         await storage.remove([storagePath]);
