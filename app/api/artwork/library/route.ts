@@ -47,6 +47,8 @@ const getPreviewPath = (storagePath: string) => {
   return `${folder ? `${folder}/` : ''}previews/${previewName}-preview.webp`;
 };
 
+const getMetadataPath = (storagePath: string) => getPreviewPath(storagePath).replace(/-preview\.webp$/i, '-metadata.json');
+
 const getCustomerLibraryPrefixes = (userId: string, email?: string) => {
   const customerLabel = safeFolder(email || 'customer', 'customer');
   return Array.from(new Set([
@@ -64,14 +66,45 @@ const isRasterImage = (name: string, mimeType?: string) => Boolean(
   || /\.(png|jpe?g|webp|gif)$/i.test(name)
 );
 
-type InlinePreview = { dataUrl: string; width: number; height: number; sourcePath: string };
+type ArtworkImageMetadata = { width: number; height: number; dpiX?: number; dpiY?: number };
+type InlinePreview = { dataUrl: string; width: number; height: number; sourcePath: string; sourceMetadata?: ArtworkImageMetadata };
+
+const parseArtworkImageMetadata = (value: unknown): ArtworkImageMetadata | null => {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const width = Number(record.width || 0);
+  const height = Number(record.height || 0);
+  const dpiX = Number(record.dpiX || 0);
+  const dpiY = Number(record.dpiY || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) return null;
+  return {
+    width,
+    height,
+    ...(Number.isFinite(dpiX) && dpiX > 0 ? { dpiX } : {}),
+    ...(Number.isFinite(dpiY) && dpiY > 0 ? { dpiY } : {}),
+  };
+};
+
+const loadArtworkImageMetadata = async (storagePath: string) => {
+  const storage = getSupabaseAdminClient().storage.from(getStorageBucket());
+  const { data, error } = await storage.download(storagePath);
+  if (error || !data) return null;
+  try {
+    return parseArtworkImageMetadata(JSON.parse(await data.text()));
+  } catch {
+    return null;
+  }
+};
 
 const createInlinePreview = async (storagePath: string) => {
   const storage = getSupabaseAdminClient().storage.from(getStorageBucket());
   const { data, error } = await storage.download(storagePath);
   if (error || !data) throw new Error(error?.message || 'The artwork preview could not be downloaded.');
   if (data.size > INLINE_PREVIEW_MAX_SOURCE_BYTES) throw new Error('The artwork preview source is too large.');
-  const preview = await sharp(Buffer.from(await data.arrayBuffer()), { failOn: 'none' })
+  const source = sharp(Buffer.from(await data.arrayBuffer()), { failOn: 'none' });
+  const metadata = await source.metadata();
+  const preview = await source
+    .clone()
     .rotate()
     .resize({ width: 480, height: 480, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 72, effort: 3 })
@@ -81,11 +114,16 @@ const createInlinePreview = async (storagePath: string) => {
     width: preview.info.width,
     height: preview.info.height,
     sourcePath: storagePath,
+    sourceMetadata: metadata.width && metadata.height ? {
+      width: metadata.width,
+      height: metadata.height,
+      ...(metadata.density ? { dpiX: metadata.density, dpiY: metadata.density } : {}),
+    } : undefined,
   } satisfies InlinePreview;
 };
 
 const createInlinePreviews = async (
-  files: Array<{ path: string; sourcePaths: string[] }>,
+  files: Array<{ path: string; metadataPath: string; sourcePaths: string[] }>,
 ) => {
   const previews = new Map<string, InlinePreview>();
   let nextIndex = 0;
@@ -95,7 +133,15 @@ const createInlinePreviews = async (
       nextIndex += 1;
       for (const sourcePath of file.sourcePaths) {
         try {
-          previews.set(file.path, await createInlinePreview(sourcePath));
+          const preview = await createInlinePreview(sourcePath);
+          previews.set(file.path, preview);
+          if (sourcePath === file.path && preview.sourceMetadata) {
+            await getSupabaseAdminClient().storage.from(getStorageBucket()).upload(
+              file.metadataPath,
+              JSON.stringify({ version: 1, ...preview.sourceMetadata }),
+              { contentType: 'application/json', cacheControl: '604800', upsert: true },
+            ).catch(() => null);
+          }
           break;
         } catch {
           // Try the original when a derived preview is missing. The client can
@@ -163,17 +209,27 @@ export async function GET(request: NextRequest) {
     const previewPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-preview\.webp$/i.test(file.path)).map((file) => file.path));
     const originalFiles = allFiles.filter((file) => !/\/previews\//i.test(file.path));
     originalFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
+    const metadataPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-metadata\.json$/i.test(file.path)).map((file) => file.path));
+    const storedMetadataEntries = await Promise.all(originalFiles.map(async (file) => {
+      const metadataPath = getMetadataPath(file.path);
+      return [file.path, metadataPaths.has(metadataPath) ? await loadArtworkImageMetadata(metadataPath) : null] as const;
+    }));
+    const storedMetadata = new Map(storedMetadataEntries);
     const inlinePreviewCandidates = originalFiles
       .filter((file) => isRasterImage(file.name, mimeTypeFromName(file.name) || file.metadata?.mimetype || file.metadata?.mimeType))
       .slice(0, INLINE_PREVIEW_LIMIT)
       .map((file) => {
         const previewPath = getPreviewPath(file.path);
+        const metadataPath = getMetadataPath(file.path);
         const sourceSize = Number(file.metadata?.size || 0);
+        const needsOriginalMetadata = !storedMetadata.get(file.path);
         return {
           path: file.path,
+          metadataPath,
           // Try the deterministic preview path even when Supabase did not expose
           // its folder in the recursive list. This repairs older/missed listings.
           sourcePaths: Array.from(new Set([
+            ...(needsOriginalMetadata && (!sourceSize || sourceSize <= INLINE_PREVIEW_MAX_SOURCE_BYTES) ? [file.path] : []),
             previewPath,
             ...(!sourceSize || sourceSize <= INLINE_PREVIEW_MAX_SOURCE_BYTES ? [file.path] : []),
           ])),
@@ -188,6 +244,8 @@ export async function GET(request: NextRequest) {
       const previewPath = getPreviewPath(file.path);
       const inlinePreview = inlinePreviews.get(file.path);
       const hasStoredPreview = previewPaths.has(previewPath) || inlinePreview?.sourcePath === previewPath;
+      const originalMetadata = storedMetadata.get(file.path)
+        || (inlinePreview?.sourcePath === file.path ? inlinePreview.sourceMetadata : undefined);
       return {
         id: file.id || file.path,
         name: getArtworkDisplayName(file.name, file.metadata),
@@ -198,6 +256,10 @@ export async function GET(request: NextRequest) {
         previewDataUrl: inlinePreview?.dataUrl || null,
         previewWidth: inlinePreview?.width,
         previewHeight: inlinePreview?.height,
+        width: originalMetadata?.width,
+        height: originalMetadata?.height,
+        dpiX: originalMetadata?.dpiX,
+        dpiY: originalMetadata?.dpiY,
         mimeType,
         createdAt: file.created_at,
         updatedAt: file.updated_at,

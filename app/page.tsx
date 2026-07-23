@@ -2149,7 +2149,7 @@ export default function Home() {
   const [checkoutFulfillment, setCheckoutFulfillment] = useState<CheckoutFulfillment>('pickup');
   const [checkoutAddress, setCheckoutAddress] = useState({ line1: '', line2: '', city: '', state: '', postalCode: '' });
   const [lastTestOrder, setLastTestOrder] = useState<TestOrder | null>(null);
-  const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>(null);
+  const [activeCoroOptionPanel, setActiveCoroOptionPanel] = useState<CoroOptionPanel>('images');
   const [isAddingCoroSign, setIsAddingCoroSign] = useState(false);
   const [showCoroSheetWarning, setShowCoroSheetWarning] = useState(false);
   const [showBannerDoubleSidedWarning, setShowBannerDoubleSidedWarning] = useState(false);
@@ -2343,7 +2343,7 @@ export default function Home() {
           cache: 'no-store',
           headers: { Authorization: `Bearer ${customerSession.access_token}` },
         });
-        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
+        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; width?: number; height?: number; dpiX?: number; dpiY?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
         if (!libraryResponse.ok) throw new Error(libraryPayload.error || 'Could not load Image Zone files.');
         if (!mounted) return;
         const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all((libraryPayload.items || [])
@@ -2368,12 +2368,17 @@ export default function Home() {
             const imageSize = pdfPreview
               ? { width: pdfPreview.width, height: pdfPreview.height }
               : isImageFile
-                ? file.previewWidth && file.previewHeight
-                  ? { width: file.previewWidth, height: file.previewHeight }
+                ? file.width && file.height
+                  ? { width: file.width, height: file.height }
+                  : file.previewWidth && file.previewHeight
+                    ? { width: file.previewWidth, height: file.previewHeight }
                   : await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
                 : { width: 0, height: 0 };
+            const storedResolution = isUsableImageDpi(Number(file.dpiX || 0)) && isUsableImageDpi(Number(file.dpiY || 0))
+              ? { dpiX: Number(file.dpiX), dpiY: Number(file.dpiY) }
+              : null;
             const embeddedResolution = isImageFile
-              ? await fetch(previewUrl).then((imageResponse) => imageResponse.ok ? imageResponse.blob() : Promise.reject(new Error('Image metadata unavailable'))).then(readEmbeddedImageResolution).catch(() => null)
+              ? storedResolution || await fetch(previewUrl).then((imageResponse) => imageResponse.ok ? imageResponse.blob() : Promise.reject(new Error('Image metadata unavailable'))).then(readEmbeddedImageResolution).catch(() => null)
               : null;
             const inferredPrintSize = pdfPreview
               ? { width: pdfPreview.signWidth, height: pdfPreview.signHeight }
@@ -2776,9 +2781,7 @@ export default function Home() {
   const bannerSquareFeet = signWidth * signHeight > 0 ? (signWidth * signHeight) / 144 : 0;
   const signPreviewAspect = isSheetPricedProduct ? CORO_SHEET.width / CORO_SHEET.height : signWidth > 0 && signHeight > 0 ? Math.max(0.15, Math.min(6.5, signWidth / Math.max(1, signHeight))) : 1.5;
   const signPreviewWidth = isProductionBuilder
-    ? activeCoroOptionPanel === 'images'
-      ? `min(44vw, 760px, calc(48vh * ${signPreviewAspect}))`
-      : `min(50vw, 900px, calc(50vh * ${signPreviewAspect}))`
+    ? `min(44vw, 760px, calc(48vh * ${signPreviewAspect}))`
     : '82%';
   const signPreviewBoxStyle = { aspectRatio: signPreviewAspect, width: signPreviewWidth };
   const rigidSafeZoneInsetX = signWidth > 0 ? Math.min(24, (0.25 / signWidth) * 100) : 0;
@@ -6455,7 +6458,7 @@ export default function Home() {
       setSignEstimate(null);
       setImageLibraryStatus(`${imageItem.name} placed on the back. Double-sided pricing is now active.`);
       setShowImageZone(false);
-      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel('images');
       return;
     }
     if (isCoroBuilder) {
@@ -6491,7 +6494,7 @@ export default function Home() {
       setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height, printWidth: printSize.width, printHeight: printSize.height, targetWidth: guidedTargetSize?.width, targetHeight: guidedTargetSize?.height });
       setImageLibraryStatus(`${imageItem.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       setShowImageZone(false);
-      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel('images');
       return;
     }
     if (!fabricCanvasRef.current) {
@@ -6501,7 +6504,7 @@ export default function Home() {
       setStoreCategory(targetProductId === 'banner' ? 'banners' : 'coro');
       setStoreView('builder');
       setShowImageZone(false);
-      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel('images');
       return;
     }
     try {
@@ -7627,8 +7630,6 @@ export default function Home() {
     return option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query.replace(/\s/g, ''));
   });
 
-  const isCompactBuilderLayout = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
-
   const openStoreCategory = (categoryId: StoreCategoryId) => {
     const categoryChanged = categoryId !== storeCategory;
     if (categoryChanged) {
@@ -7646,7 +7647,7 @@ export default function Home() {
       setProductMode('signage');
       setSignProductId('yard-sign');
       setStoreView('builder');
-      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel('images');
       return;
     }
     if (categoryId === 'apparel') {
@@ -7686,7 +7687,7 @@ export default function Home() {
       setSignEstimate(null);
     }
     setStoreView('builder');
-    if (product.signProductId) setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
+    if (product.signProductId) setActiveCoroOptionPanel('images');
   };
 
   const openGuidedTour = () => {
@@ -7785,7 +7786,7 @@ export default function Home() {
       setSignEstimate(null);
     }
     setStoreView('builder');
-    setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
+    setActiveCoroOptionPanel('images');
     setShowGuidedTour(false);
     setBuilderWalkthroughStep(0);
     setShowBuilderWalkthrough(true);
@@ -7823,7 +7824,6 @@ export default function Home() {
     if (!item || product.disabled) return;
     setImageZoneProductChoice(null);
     setShowImageZone(false);
-    if (isCompactBuilderLayout()) setActiveCoroOptionPanel(null);
     setStoreCategory(product.category);
     setQueuedImageZonePlacementAttempt(0);
     setQueuedImageZonePlacement({ item, product });
@@ -7862,7 +7862,7 @@ export default function Home() {
     setSignProductId(nextProductId);
     if (nextProduct) setSignValues(getDefaultSignValues(nextProduct));
     setSignEstimate(null);
-    setActiveCoroOptionPanel(nextProductId === 'yard-sign' || nextProduct?.preview === 'banner' ? (isCompactBuilderLayout() ? null : 'images') : null);
+    setActiveCoroOptionPanel('images');
   };
 
   const updateSignOption = (name: string, value: string | boolean) => {
@@ -7943,7 +7943,7 @@ export default function Home() {
   };
 
   const openCoroOptionPanel = (panel: CoroOptionPanel) => {
-    setActiveCoroOptionPanel((current) => current === panel ? null : panel);
+    setActiveCoroOptionPanel((current) => current === panel ? 'images' : panel);
   };
 
   const handleCoroTileClick = (label: string) => {
@@ -8782,7 +8782,7 @@ export default function Home() {
                       const selectedSheet = sheetIndex === activeCoroSheetIndex;
                       const sheetOffset = sheetIndex - activeCoroSheetIndex;
                       const nearActiveSheet = Math.abs(sheetOffset) <= 1;
-                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell absolute left-1/2 top-[53%] flex shrink-0 cursor-pointer items-center justify-center transition duration-300 ease-out ${selectedSheet ? 'z-20 opacity-100' : nearActiveSheet ? 'z-10 opacity-45 hover:opacity-75' : 'pointer-events-none z-0 opacity-0'} ${activeCoroOptionPanel === 'images' ? 'w-[min(19vw,32vh)] min-w-52 max-w-[320px]' : 'w-[min(22vw,37vh)] min-w-60 max-w-[380px]'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height, transform: `translate(-50%, -50%) translateX(${sheetOffset * 88}%) scale(${selectedSheet ? 1 : 0.78})` }}>
+                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell absolute left-1/2 top-[53%] flex w-[min(19vw,32vh)] min-w-52 max-w-[320px] shrink-0 cursor-pointer items-center justify-center transition duration-300 ease-out ${selectedSheet ? 'z-20 opacity-100' : nearActiveSheet ? 'z-10 opacity-45 hover:opacity-75' : 'pointer-events-none z-0 opacity-0'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height, transform: `translate(-50%, -50%) translateX(${sheetOffset * 88}%) scale(${selectedSheet ? 1 : 0.78})` }}>
                       <div className={`coro-sheet-heading absolute left-1/2 flex w-max -translate-x-1/2 flex-col items-center text-center ${coroSheetPreviews.length > 1 ? '-top-6' : '-top-14 gap-1.5'}`}>
                         {coroSheetPreviews.length === 1 ? <span className="rounded-full border border-[#38bdf8]/25 bg-[#071827]/90 px-3 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-[#8be3ff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">Hue production sheet</span> : null}
                         <span className="text-xs font-bold text-slate-300"><strong className="text-white">{sheetPreview.quantity}</strong> {selectedSignProduct.id === 'yard-sign' ? `sign${sheetPreview.quantity === 1 ? '' : 's'}` : `piece${sheetPreview.quantity === 1 ? '' : 's'}`} mapped &middot; sheet {String(sheetPreview.sheetNumber).padStart(2, '0')}</span>
@@ -9132,7 +9132,7 @@ export default function Home() {
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-[#1678b8]">{activeCoroOptionPanel === 'sides' ? 'Print Sides' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : activeCoroOptionPanel}</p>
                     <h3 className="mt-1 text-lg font-black">{activeCoroOptionPanel === 'size' ? selectedSignProduct.id === 'vehicle-magnet' ? isCustomMagnet ? 'Custom Magnet Size' : 'Vehicle Magnet Size' : isCoroBuilder ? isCustomCoro ? `Custom ${selectedSignProduct.name} Sizes` : `Select ${selectedSignProduct.name} Size` : isBusinessCardBuilder ? 'Business Card Size' : selectedSignProduct.id === 'handheld-paper' ? 'Handheld Size' : isBannerBuilder ? `${selectedSignProduct.name} Size` : 'Select Size' : activeCoroOptionPanel === 'material' ? 'Select Material' : activeCoroOptionPanel === 'sides' ? 'Select Print Sides' : activeCoroOptionPanel === 'orientation' ? selectedSignProduct.id === 'handheld-paper' ? 'Select Handheld Orientation' : 'Select Card Orientation' : activeCoroOptionPanel === 'coating' ? selectedSignProduct.id === 'handheld-paper' ? 'Select Handheld Coating' : 'Select Card Coating' : activeCoroOptionPanel === 'stakes' ? 'Step Stakes' : activeCoroOptionPanel === 'webbing' ? 'Mesh Webbing' : activeCoroOptionPanel === 'standoffs' ? 'Acrylic Standoffs' : activeCoroOptionPanel === 'roundedCorners' ? 'Rounded Corners' : 'Options'}</h3>
                   </div>
-                  <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
+                  <button type="button" onClick={() => setActiveCoroOptionPanel('images')} className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase text-slate-600 hover:bg-slate-50">Close</button>
                 </div>
                 {activeCoroOptionPanel === 'size' && selectedSignProduct.id === 'vehicle-magnet' && isCustomMagnet ? <div className="mt-4 mx-auto max-w-sm overflow-hidden rounded border border-slate-200 bg-white">
                   <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-center text-sm font-medium text-slate-600">Sign size</div>
@@ -9144,13 +9144,13 @@ export default function Home() {
                 {activeCoroOptionPanel === 'size' && selectedSignProduct.id === 'vehicle-magnet' && !isCustomMagnet ? <div className="mt-4 mx-auto grid max-w-sm overflow-hidden rounded border border-slate-200 bg-white">
                   {MAGNET_SIZE_OPTIONS.map((option) => {
                     const selected = String(signValues.size || '') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('size', option.value); setActiveCoroOptionPanel(null); }} className={`border-b border-slate-100 px-4 py-3 text-center text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}>{option.label}</button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('size', option.value); setActiveCoroOptionPanel('images'); }} className={`border-b border-slate-100 px-4 py-3 text-center text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}>{option.label}</button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'size' && selectedSignProduct.id === 'handheld-paper' ? <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {HANDHELD_SIZE_OPTIONS.map((option) => {
                     const selected = String(signValues.size || '') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('size', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label.replace(/\s*\([^)]*\)/, '')}</span><span className="mt-1 block text-xs text-slate-500">{option.yield} pieces per press sheet</span></button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('size', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label.replace(/\s*\([^)]*\)/, '')}</span><span className="mt-1 block text-xs text-slate-500">{option.yield} pieces per press sheet</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'size' && isBannerBuilder && !isCoroBuilder && selectedSignProduct.id !== 'vehicle-magnet' && selectedSignProduct.id !== 'handheld-paper' ? <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -9171,7 +9171,7 @@ export default function Home() {
                       const parsed = parseCoroSize(option.value);
                       const layout = getCoroSheetLayout(parsed.width, parsed.height, designerQuantity);
                       const selected = String(signValues.size || '') === option.value;
-                      return <button key={option.value} type="button" onClick={() => { if (option.value === 'custom') switchCoroToCustomSize(); else updateSignOption('size', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-3 py-3 text-left text-xs ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}><span className="block font-black">{option.label}</span><span className="mt-1 block text-slate-500">{option.value === 'custom' ? 'Mix sizes on each sheet' : `${layout.signsPerSheet} per sheet / ${layout.sheetCount} sheet${layout.sheetCount === 1 ? '' : 's'}`}</span></button>;
+                      return <button key={option.value} type="button" onClick={() => { if (option.value === 'custom') switchCoroToCustomSize(); else updateSignOption('size', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-3 py-3 text-left text-xs ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}><span className="block font-black">{option.label}</span><span className="mt-1 block text-slate-500">{option.value === 'custom' ? 'Mix sizes on each sheet' : `${layout.signsPerSheet} per sheet / ${layout.sheetCount} sheet${layout.sheetCount === 1 ? '' : 's'}`}</span></button>;
                     })}
                   </div>
                 </div> : null}
@@ -9184,7 +9184,7 @@ export default function Home() {
                 {activeCoroOptionPanel === 'material' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {(isBannerBuilder ? bannerMaterialOptions.map((option) => ({ value: option.value, label: option.label, note: String('note' in option ? option.note : 'Priced by Hue API'), disabled: false })) : productMaterialOptions.map((option) => ({ value: option.value, label: option.label, note: 'note' in option ? String((option as { note?: string }).note || '') : '', disabled: false }))).map((option) => {
                     const selected = String(signValues.material || '4mm') === option.value;
-                    return <button key={option.value} type="button" disabled={option.disabled} onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${option.disabled ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span>{option.note ? <span className={`mt-1 block text-xs ${option.disabled ? 'font-bold uppercase tracking-wide text-slate-500' : 'text-slate-500'}`}>{option.note}</span> : null}</button>;
+                    return <button key={option.value} type="button" disabled={option.disabled} onClick={() => { updateSignOption('material', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${option.disabled ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span>{option.note ? <span className={`mt-1 block text-xs ${option.disabled ? 'font-bold uppercase tracking-wide text-slate-500' : 'text-slate-500'}`}>{option.note}</span> : null}</button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'sides' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -9204,14 +9204,14 @@ export default function Home() {
                   <div className="grid gap-3 sm:grid-cols-4">
                     {['0', '10', '25', '50'].map((count) => {
                       const selected = String(signValues.stepStakes || '0') === count;
-                      return <button key={count} type="button" onClick={() => { updateSignOption('stepStakes', count); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-center ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-lg font-black">{count}</span><span className="mt-1 block text-xs text-slate-500">stakes</span></button>;
+                      return <button key={count} type="button" onClick={() => { updateSignOption('stepStakes', count); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-center ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-lg font-black">{count}</span><span className="mt-1 block text-xs text-slate-500">stakes</span></button>;
                     })}
                   </div>
                   <div className="mt-3 flex flex-col gap-3 rounded border border-dashed border-[#9ec9df] bg-[#f3faff] p-3 sm:flex-row sm:items-end">
                     <label className="min-w-0 flex-1 text-xs font-bold uppercase tracking-wide text-[#0f5f94]">Custom quantity
                       <input type="number" min={0} step={1} inputMode="numeric" value={String(signValues.stepStakes ?? '0')} onChange={(event) => updateSignOption('stepStakes', event.target.value === '' ? '' : String(Math.max(0, Math.floor(Number(event.target.value) || 0))))} className="mt-1.5 h-10 w-full rounded border border-slate-300 bg-white px-3 text-base font-black text-slate-950 outline-none focus:border-[#1678b8] focus:ring-1 focus:ring-[#1678b8]" placeholder="Enter number of stakes" />
                     </label>
-                    <button type="button" onClick={() => { if (String(signValues.stepStakes ?? '') === '') updateSignOption('stepStakes', '0'); setActiveCoroOptionPanel(null); }} className="h-10 rounded bg-[#1678b8] px-5 text-xs font-black uppercase tracking-wide text-white hover:bg-[#0f5f94]">Use quantity</button>
+                    <button type="button" onClick={() => { if (String(signValues.stepStakes ?? '') === '') updateSignOption('stepStakes', '0'); setActiveCoroOptionPanel('images'); }} className="h-10 rounded bg-[#1678b8] px-5 text-xs font-black uppercase tracking-wide text-white hover:bg-[#0f5f94]">Use quantity</button>
                   </div>
                 </div> : null}
                 {activeCoroOptionPanel === 'webbing' ? <div className="mt-4 grid gap-4 sm:grid-cols-[1.15fr_1fr]">
@@ -9222,44 +9222,44 @@ export default function Home() {
                   <div className="grid grid-cols-2 gap-3">
                     {[{ value: true, label: 'Yes' }, { value: false, label: 'No' }].map((option) => {
                       const selected = Boolean(signValues.webbing) === option.value;
-                      return <button key={option.label} type="button" onClick={() => { updateSignOption('webbing', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-center text-sm font-black uppercase ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}>{option.label}</button>;
+                      return <button key={option.label} type="button" onClick={() => { updateSignOption('webbing', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-center text-sm font-black uppercase ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}>{option.label}</button>;
                     })}
                   </div>
                 </div> : null}
                 {activeCoroOptionPanel === 'standoffs' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: false, label: 'None', note: 'No mounting hardware' }, { value: true, label: '4 Silver Standoffs', note: 'One silver mount at each corner' }].map((option) => {
                     const selected = Boolean(signValues.standOffs) === option.value;
-                    return <button key={option.label} type="button" onClick={() => { updateSignOption('standOffs', option.value); if (option.value) { updateSignOption('standOffQty', '4'); updateSignOption('standOffColor', 'silver'); } setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                    return <button key={option.label} type="button" onClick={() => { updateSignOption('standOffs', option.value); if (option.value) { updateSignOption('standOffQty', '4'); updateSignOption('standOffColor', 'silver'); } setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'roundedCorners' ? <div className="mt-4 mx-auto grid max-w-md overflow-hidden rounded border border-slate-200 bg-white">
                   {(selectedSignProduct.id === 'acrylic' ? [{ label: 'None', value: false, note: 'Square finished corners' }, { label: 'Rounded Corners', value: true, note: '+$5 finishing option' }] : ROUNDED_CORNER_OPTIONS).map((option) => {
                     const selected = selectedSignProduct.id === 'acrylic' ? Boolean(signValues.roundedCorners) === option.value : String(signValues.roundedCorners || 'none') === option.value;
-                    return <button key={String(option.value)} type="button" onClick={() => { updateSignOption('roundedCorners', option.value); setActiveCoroOptionPanel(null); }} className={`border-b border-slate-100 px-4 py-3 text-left text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}><span className="block font-black">{option.label}</span><span className={`mt-1 block text-xs ${selected ? 'text-blue-100' : 'text-slate-500'}`}>{option.note}</span></button>;
+                    return <button key={String(option.value)} type="button" onClick={() => { updateSignOption('roundedCorners', option.value); setActiveCoroOptionPanel('images'); }} className={`border-b border-slate-100 px-4 py-3 text-left text-sm last:border-b-0 ${selected ? 'bg-[#1678b8] font-black text-white' : 'text-slate-700 hover:bg-slate-50'}`}><span className="block font-black">{option.label}</span><span className={`mt-1 block text-xs ${selected ? 'text-blue-100' : 'text-slate-500'}`}>{option.note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'orientation' && selectedSignProduct.id === 'handheld-paper' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: 'Portrait', label: 'Portrait', note: 'Tall layout' }, { value: 'Landscape', label: 'Landscape', note: 'Wide layout' }].map((option) => {
                     const selected = String(signValues.orientation || 'Portrait') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('orientation', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('orientation', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'orientation' && selectedSignProduct.id !== 'handheld-paper' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: 'Landscape', label: 'Landscape', note: '3.5 inches wide × 2 inches high' }, { value: 'Portrait', label: 'Portrait', note: '2 inches wide × 3.5 inches high' }].map((option) => {
                     const selected = String(signValues.orientation || 'Landscape') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('orientation', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('orientation', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'coating' && selectedSignProduct.id === 'handheld-paper' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {HANDHELD_COATING_OPTIONS.map((option) => {
                     const selected = String(signValues.coating || 'No Coating') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('coating', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.value === 'No Coating' ? 'Standard paper finish' : `${option.label} finish`}</span></button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('coating', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.value === 'No Coating' ? 'Standard paper finish' : `${option.label} finish`}</span></button>;
                   })}
                 </div> : null}
                 {activeCoroOptionPanel === 'coating' && selectedSignProduct.id !== 'handheld-paper' ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[{ value: 'No Coating', label: 'No Coating', note: 'Standard business card finish' }, { value: 'Gloss Laminate', label: 'Gloss Laminate', note: 'Gloss laminated finish' }].map((option) => {
                     const selected = String(signValues.coating || 'No Coating') === option.value;
-                    return <button key={option.value} type="button" onClick={() => { updateSignOption('coating', option.value); setActiveCoroOptionPanel(null); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
+                    return <button key={option.value} type="button" onClick={() => { updateSignOption('coating', option.value); setActiveCoroOptionPanel('images'); }} className={`rounded border px-4 py-4 text-left ${selected ? 'border-[#1678b8] bg-[#eaf5fb] text-[#0f5f94]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}><span className="block text-base font-black">{option.label}</span><span className="mt-1 block text-xs text-slate-500">{option.note}</span></button>;
                   })}
                 </div> : null}
               </div> : null}

@@ -71,9 +71,14 @@ const getPreviewPath = (storagePath: string) => {
   return `${folder ? `${folder}/` : ''}previews/${previewName}-preview.webp`;
 };
 
+const getMetadataPath = (storagePath: string) => getPreviewPath(storagePath).replace(/-preview\.webp$/i, '-metadata.json');
+
 const createDesignerImagePreview = async (buffer: Buffer, mimeType: string) => {
   if (!mimeType.startsWith('image/') || mimeType === 'image/gif') return null;
-  const preview = await sharp(buffer, { limitInputPixels: false })
+  const source = sharp(buffer, { limitInputPixels: false });
+  const metadata = await source.metadata();
+  const preview = await source
+    .clone()
     .rotate()
     .resize({ width: PREVIEW_MAX_DIMENSION, height: PREVIEW_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 82, effort: 4 })
@@ -82,6 +87,7 @@ const createDesignerImagePreview = async (buffer: Buffer, mimeType: string) => {
     bytes: preview.data,
     width: preview.info.width,
     height: preview.info.height,
+    dpi: metadata.density,
     mimeType: 'image/webp' as const,
   };
 };
@@ -162,6 +168,20 @@ export async function POST(request: Request) {
             previewWidth = designerPreview.width;
             previewHeight = designerPreview.height;
           }
+        }
+        if (validated.width && validated.height) {
+          const metadataStoragePath = getMetadataPath(storagePath);
+          await storage.upload(metadataStoragePath, JSON.stringify({
+            version: 1,
+            width: validated.width,
+            height: validated.height,
+            dpiX: designerPreview?.dpi,
+            dpiY: designerPreview?.dpi,
+          }), {
+            contentType: 'application/json',
+            cacheControl: '604800',
+            upsert: true,
+          }).catch(() => null);
         }
         const storageUrl = await getStorageSignedUrl(storagePath, 3600);
         return NextResponse.json({
