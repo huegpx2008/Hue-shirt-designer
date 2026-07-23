@@ -26,6 +26,24 @@ const getBearerToken = (request: Request) => {
 
 const safeFolder = (value: string, fallback: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || fallback;
 const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf|json)(\?.*)?$/i.test(value);
+const mimeTypeFromName = (name: string) => {
+  const extension = name.split('.').pop()?.toLowerCase();
+  if (extension === 'png') return 'image/png';
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'gif') return 'image/gif';
+  if (extension === 'pdf') return 'application/pdf';
+  if (extension === 'json') return 'application/json';
+  return undefined;
+};
+
+const getPreviewPath = (storagePath: string) => {
+  const slashIndex = storagePath.lastIndexOf('/');
+  const folder = slashIndex >= 0 ? storagePath.slice(0, slashIndex) : '';
+  const fileName = slashIndex >= 0 ? storagePath.slice(slashIndex + 1) : storagePath;
+  const previewName = fileName.replace(/\.[^.]+$/, '');
+  return `${folder ? `${folder}/` : ''}previews/${previewName}-preview.webp`;
+};
 
 const getCustomerLibraryPrefixes = (userId: string, email?: string) => {
   const customerLabel = safeFolder(email || 'customer', 'customer');
@@ -84,13 +102,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const items = await Promise.all([...filesByPath.values()].map(async (file) => {
-      const mimeType = file.metadata?.mimetype || file.metadata?.mimeType || undefined;
+    const allFiles = [...filesByPath.values()];
+    const previewPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-preview\.webp$/i.test(file.path)).map((file) => file.path));
+    const originalFiles = allFiles.filter((file) => !/\/previews\//i.test(file.path));
+    const items = await Promise.all(originalFiles.map(async (file) => {
+      // The validated filename extension is authoritative. Some older signed
+      // uploads were saved with stale storage metadata (for example PDF), which
+      // made browsers reject an otherwise valid JPG thumbnail.
+      const mimeType = mimeTypeFromName(file.name) || file.metadata?.mimetype || file.metadata?.mimeType || undefined;
+      const previewPath = getPreviewPath(file.path);
       return {
         id: file.id || file.path,
         name: file.name,
         storagePath: file.path,
         storageUrl: await getStorageSignedUrl(file.path, 3600).catch(() => null),
+        previewUrl: previewPaths.has(previewPath) ? await getStorageSignedUrl(previewPath, 3600).catch(() => null) : null,
         mimeType,
         createdAt: file.created_at,
         updatedAt: file.updated_at,

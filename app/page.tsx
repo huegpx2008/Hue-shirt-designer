@@ -181,6 +181,11 @@ const getPersistableTestOrders = (orders: TestOrder[]) => orders.map((order) => 
 
 const isLikelyImagePath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg)(\?.*)?$/i.test(value);
 const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf)(\?.*)?$/i.test(value);
+const getImageZoneFallbackLabel = (item: ImageZoneItem, archivedLabel = 'Preview unavailable') => item.source === 'archive'
+  ? archivedLabel
+  : item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name)
+    ? 'PDF'
+    : 'Preview unavailable';
 const GEORGIA_SALES_TAX_LABEL = 'GA sales tax';
 const isSupabaseStorageConfigured = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && SUPABASE_STORAGE_BUCKET);
 
@@ -669,7 +674,7 @@ const STORE_PRODUCTS: StoreProductCard[] = [
   { id: 'apparel-dtg', category: 'apparel', title: 'DTG — Direct to Garment', subtitle: 'Full-color printing directly on the shirt', description: 'Choose a garment, color, sizes, print location, and upload front or back artwork.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-dtg.svg', disabled: true },
   { id: 'apparel-dtf', category: 'apparel', title: 'DTF — Direct to Film', subtitle: 'Versatile full-color heat transfers', description: 'Online ordering for ready-to-press transfers and decorated apparel is coming soon.', mode: 'apparel', badge: 'Coming soon', image: '/apparel-dtf.svg', disabled: true }
 ];
-const GUIDED_TOUR_FEATURED_PRODUCT_IDS = ['coro-sheet', 'banner-vinyl', 'rigid-pvc', 'decals-vinyl', 'magnets-vehicle', 'misc-poster', 'misc-handheld-paper'];
+const GUIDED_TOUR_FEATURED_PRODUCT_IDS = ['coro-sheet', 'banner-vinyl', 'banner-mesh', 'rigid-acrylic', 'rigid-acm', 'rigid-pvc', 'rigid-foamcore', 'rigid-polystyrene', 'rigid-aluminum', 'decals-vinyl', 'magnets-vehicle', 'misc-poster', 'misc-handheld-paper'];
 const GUIDED_TOUR_DEFAULT_CHOICE: GuidedTourChoice = {
   productId: 'coro-sheet',
   artworkPath: 'not-sure',
@@ -686,6 +691,8 @@ const getGuidedTourProductPreset = (product: StoreProductCard): Partial<GuidedTo
   if (product.signProductId === 'banner' || product.signProductId === 'mesh-banner') return { width: '72', height: '36', quantity: '1', material: product.initialSignValues?.material ? String(product.initialSignValues.material) : '13-single', finishing: ['grommets', 'welding'] };
   if (product.signProductId === 'yard-sign') return { width: '24', height: '18', quantity: '10', material: '4mm', finishing: [] };
   if (product.signProductId === 'pvc') return { width: '24', height: '18', quantity: '10', material: '3mm', finishing: [] };
+  if (product.signProductId === 'foamcore' || product.signProductId === 'polystyrene') return { width: '24', height: '18', quantity: '10', finishing: [] };
+  if (product.signProductId === 'acrylic' || product.signProductId === 'acm' || product.signProductId === 'aluminum') return { width: '24', height: '18', quantity: '1', finishing: [] };
   if (product.signProductId === 'vinyl') return { width: '24', height: '18', quantity: '1', material: 'standard', finishing: [] };
   if (product.signProductId === 'vehicle-magnet') return { width: '24', height: '18', quantity: '1', material: 'standard', finishing: ['roundedCorners'] };
   if (product.signProductId === 'poster') return { width: '18', height: '24', quantity: '1', material: '8mil', finishing: [] };
@@ -2309,14 +2316,15 @@ export default function Home() {
           cache: 'no-store',
           headers: { Authorization: `Bearer ${customerSession.access_token}` },
         });
-        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
+        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewUrl?: string | null; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
         if (!libraryResponse.ok) throw new Error(libraryPayload.error || 'Could not load Image Zone files.');
         if (!mounted) return;
         const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all((libraryPayload.items || [])
           .filter((file) => file.name && file.storagePath && isLikelyArtworkPath(file.name))
           .map(async (file) => {
             const storagePath = file.storagePath;
-            const previewUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
+            const originalUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
+            const previewUrl = file.previewUrl || originalUrl;
             const isImageFile = Boolean(file.mimeType?.startsWith('image/') || isLikelyImagePath(file.name));
             const isPdfFile = file.mimeType === 'application/pdf' || /\.pdf$/i.test(file.name);
             const pdfPreview = isPdfFile ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
@@ -2347,7 +2355,7 @@ export default function Home() {
               dpi: pdfPreview?.dpi || (embeddedResolution ? Math.round(Math.min(embeddedResolution.dpiX, embeddedResolution.dpiY)) : BANNER_PREVIEW_DPI),
               uploadedAt: file.updatedAt || file.createdAt || 'Supabase',
               storagePath,
-              storageUrl: previewUrl,
+              storageUrl: originalUrl,
               source: 'supabase' as const,
               mimeType: file.mimeType,
               signWidth: inferredPrintSize?.width,
@@ -6591,10 +6599,16 @@ export default function Home() {
           setImageZoneItems((prev) => prev.map((entry) => entry.id === localItemId ? {
             ...entry,
             id: storageInfo.storagePath,
-            dataUrl: savedPreviewUrl || entry.dataUrl,
+            // Keep the already-rendered browser preview for the current session.
+            // The signed cloud URL is still stored for future sessions, but a
+            // transient cloud thumbnail failure must not replace a working JPG.
+            dataUrl: entry.dataUrl || savedPreviewUrl,
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
-            source: 'supabase'
+            source: 'supabase',
+            mimeType: storageInfo.mimeType || entry.mimeType,
+            width: Number(storageInfo.width || entry.width),
+            height: Number(storageInfo.height || entry.height)
           } : entry));
           setCoroSheetArtworkItems((prev) => prev.map((entry) => entry.id === localItemId ? {
             ...entry,
@@ -7395,6 +7409,12 @@ export default function Home() {
   const guidedTourProducts = GUIDED_TOUR_FEATURED_PRODUCT_IDS
     .map((id) => STORE_PRODUCTS.find((product) => product.id === id && !product.disabled))
     .filter((product): product is StoreProductCard => Boolean(product));
+  const guidedTourProductGroups = STORE_CATEGORIES
+    .map((category) => ({
+      category,
+      products: guidedTourProducts.filter((product) => product.category === category.id)
+    }))
+    .filter((group) => group.products.length);
   const selectedGuidedTourProduct = STORE_PRODUCTS.find((product) => product.id === guidedTourChoice.productId) || guidedTourProducts[0];
   const selectedGuidedTourConfig = selectedGuidedTourProduct?.signProductId ? SIGN_PRODUCT_CONFIGS.find((config) => config.id === selectedGuidedTourProduct.signProductId) : null;
   const guidedTourMaterialOptions = selectedGuidedTourConfig?.fields.find((field) => field.name === 'material')?.options || [];
@@ -8028,18 +8048,30 @@ export default function Home() {
               </div> : null}
               {guidedTourStep === 1 ? <div>
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff]">What do you need?</p>
-                <h3 className="mt-2 text-2xl font-black">Choose the closest product.</h3>
+                <h3 className="mt-2 text-2xl font-black">Choose a category, then the closest product.</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-300">This can be changed later. The goal is to get customers out of the “where do I start?” moment fast.</p>
-                <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {guidedTourProducts.map((product) => {
-                    const selected = guidedTourChoice.productId === product.id;
-                    return <button key={product.id} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, ...getGuidedTourProductPreset(product), productId: product.id }))} className={`rounded-2xl border p-4 text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c304b] shadow-[0_0_28px_rgba(14,165,233,0.22)]' : 'border-white/12 bg-white/[0.045] hover:border-[#38bdf8]/55 hover:bg-white/[0.08]'}`}>
-                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">{STORE_CATEGORIES.find((category) => category.id === product.category)?.label}</span>
-                      <strong className="mt-2 block text-base text-white">{product.title}</strong>
-                      <span className="mt-1 block text-xs font-semibold text-slate-300">{product.subtitle}</span>
-                      <span className="mt-3 block text-xs leading-5 text-slate-400">{product.description}</span>
-                    </button>;
-                  })}
+                <p className="mt-2 text-sm leading-6 text-slate-300">Rigid signs are split out so customers can choose Acrylic, ACM, PVC, Foamcore, Polystyrene, or Aluminum instead of getting dropped straight into PVC.</p>
+                <div className="mt-5 space-y-5">
+                  {guidedTourProductGroups.map(({ category, products }) => <section key={category.id} className="rounded-3xl border border-white/10 bg-white/[0.025] p-3">
+                    <div className="mb-3 flex flex-wrap items-end justify-between gap-2 px-1">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">{category.label}</p>
+                        <p className="mt-1 text-xs text-slate-400">{category.description}</p>
+                      </div>
+                      {category.id === 'rigid' ? <span className="rounded-full border border-[#67d8ff]/25 bg-[#0c304b] px-3 py-1 text-[10px] font-black uppercase text-[#9be6ff]">Choose material type</span> : null}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {products.map((product) => {
+                        const selected = guidedTourChoice.productId === product.id;
+                        return <button key={product.id} type="button" onClick={() => setGuidedTourChoice((current) => ({ ...current, ...getGuidedTourProductPreset(product), productId: product.id }))} className={`rounded-2xl border p-4 text-left transition ${selected ? 'border-[#67d8ff] bg-[#0c304b] shadow-[0_0_28px_rgba(14,165,233,0.22)]' : 'border-white/12 bg-white/[0.045] hover:border-[#38bdf8]/55 hover:bg-white/[0.08]'}`}>
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">{category.label}</span>
+                          <strong className="mt-2 block text-base text-white">{product.title}</strong>
+                          <span className="mt-1 block text-xs font-semibold text-slate-300">{product.subtitle}</span>
+                          <span className="mt-3 block text-xs leading-5 text-slate-400">{product.description}</span>
+                        </button>;
+                      })}
+                    </div>
+                  </section>)}
                 </div>
               </div> : null}
               {guidedTourStep === 2 ? <div>
@@ -8761,7 +8793,7 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
@@ -8825,7 +8857,7 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
@@ -8966,7 +8998,7 @@ export default function Home() {
                     {imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
                       return <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
-                        {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-[10px] font-black text-slate-500">{item.source === 'archive' ? 'RESTORE' : 'PDF'}</span>}
+                        {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
 <span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span>
@@ -10209,7 +10241,7 @@ export default function Home() {
                 const selected = selectedImageZoneId === item.id;
                 return <article key={item.id} className={`group grid min-h-36 grid-cols-[92px_minmax(0,1fr)] gap-3 rounded-2xl border p-3 text-left transition sm:min-h-40 sm:grid-cols-[118px_minmax(0,1fr)] ${selected ? 'border-[#38bdf8] bg-[#f2fbff] shadow-[0_18px_46px_rgba(14,165,233,0.22),0_0_0_3px_rgba(56,189,248,0.12)]' : 'border-white/10 bg-white/[0.055] shadow-[0_16px_38px_rgba(0,0,0,0.24)] hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:bg-white/[0.08]'}`}>
                   <button type="button" onClick={() => setSelectedImageZoneId(item.id)} aria-label={`Select ${item.name}`} className={`relative flex h-28 items-center justify-center overflow-hidden rounded-xl border sm:h-32 ${selected ? 'border-[#b7e7fa] bg-white' : 'border-white/10 bg-[#eaf0f4]'}`}>
-                    {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" decoding="async" onError={() => { void refreshArchiveThumbnail(item); }} className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center px-2 text-center text-sm font-black text-slate-500">{item.source === 'archive' ? 'Preview unavailable' : 'PDF'}</span>}
+                    {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" decoding="async" onError={() => { void refreshArchiveThumbnail(item); }} className="max-h-full max-w-full object-contain" /> : <span className="flex h-full w-full items-center justify-center px-2 text-center text-sm font-black text-slate-500">{getImageZoneFallbackLabel(item)}</span>}
                     {selected ? <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1686c9] text-xs font-black text-white shadow-md">✓</span> : null}
                     <span className="absolute bottom-2 left-2 flex flex-col items-start gap-1">{item.backDataUrl ? <span className="rounded-full bg-[#071827]/90 px-2 py-1 text-[9px] font-black uppercase text-[#8be3ff] shadow">Front + Back</span> : null}{item.editorProject ? <span className="rounded-full bg-emerald-600/90 px-2 py-1 text-[9px] font-black uppercase text-white shadow">Editable</span> : null}</span>
                   </button>
