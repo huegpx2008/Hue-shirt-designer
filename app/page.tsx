@@ -159,8 +159,8 @@ const GUIDED_TOUR_STORAGE_KEY = 'hue-guided-tour-dismissed';
 const MOBILE_DESKTOP_NOTICE_STORAGE_KEY = 'hue-mobile-desktop-notice-dismissed';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
-const CART_CHECKOUT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
-const CART_CHECKOUT_MAX_AGE_LABEL = '2 hours';
+const CART_CHECKOUT_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const CART_CHECKOUT_MAX_AGE_LABEL = '3 days';
 
 const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
@@ -2269,6 +2269,38 @@ export default function Home() {
     }
   }, [cartItems]);
 
+  const cartStoragePathKey = Array.from(new Set(cartItems.flatMap((item) => [
+    ...item.artworkFiles.map((file) => file.storagePath),
+    ...item.productionBreakdown.flatMap((artwork) => [artwork.frontStoragePath, artwork.backStoragePath]),
+  ].filter(Boolean) as string[]))).sort().join('|');
+
+  useEffect(() => {
+    if (!customerSession?.access_token || !cartStoragePathKey) return;
+    let canceled = false;
+    const storagePaths = cartStoragePathKey.split('|');
+    void Promise.all(storagePaths.map(async (storagePath) => [
+      storagePath,
+      await getSupabaseSignedUrl(storagePath, customerSession).catch(() => ''),
+    ] as const)).then((entries) => {
+      if (canceled) return;
+      const refreshedUrls = new Map(entries.filter((entry) => entry[1]));
+      if (!refreshedUrls.size) return;
+      setCartItems((current) => current.map((item) => ({
+        ...item,
+        artworkFiles: item.artworkFiles.map((file) => ({
+          ...file,
+          previewUrl: file.storagePath ? refreshedUrls.get(file.storagePath) || file.previewUrl : file.previewUrl,
+        })),
+        productionBreakdown: item.productionBreakdown.map((artwork) => ({
+          ...artwork,
+          frontPreviewUrl: artwork.frontStoragePath ? refreshedUrls.get(artwork.frontStoragePath) || artwork.frontPreviewUrl : artwork.frontPreviewUrl,
+          backPreviewUrl: artwork.backStoragePath ? refreshedUrls.get(artwork.backStoragePath) || artwork.backPreviewUrl : artwork.backPreviewUrl,
+        })),
+      })));
+    });
+    return () => { canceled = true; };
+  }, [cartStoragePathKey, customerSession]);
+
   useEffect(() => {
     try {
       const storedOrders = window.localStorage.getItem(TEST_ORDER_STORAGE_KEY);
@@ -2888,15 +2920,12 @@ export default function Home() {
       }
       const cartUserId = item.customer.userId;
       const cartEmail = item.customer.email?.trim().toLowerCase();
-      if (cartUserId && cartUserId !== sessionUserId) return 'This cart was created under a different customer session. Please clear the cart and add the artwork again after signing in.';
-      if (item.customer.checkoutMode === 'account' && cartEmail && sessionEmail && cartEmail !== sessionEmail) return 'This cart was created for a different signed-in email. Please clear the cart and rebuild it before checkout.';
-      if (item.customer.checkoutMode === 'account' && !sessionUserId) return 'This cart was created while signed in. Please sign in again, then rebuild the cart before checkout.';
+      if (cartUserId && sessionUserId && cartUserId !== sessionUserId) return 'This cart was created under a different customer account. Please clear the cart and add the artwork again under the current account.';
+      if (!cartUserId && item.customer.checkoutMode === 'account' && cartEmail && sessionEmail && cartEmail !== sessionEmail) return 'This cart was created for a different signed-in email. Please clear the cart and rebuild it before checkout.';
+      if (item.customer.checkoutMode === 'account' && !sessionUserId) return 'This cart belongs to your signed-in account. Sign in again to continue checkout; you do not need to rebuild it.';
       const missingArtworkReference = item.artworkFiles.some((file) => !file.storagePath)
         || item.productionBreakdown.some((artwork) => !artwork.frontStoragePath || (artwork.backName && !artwork.backStoragePath));
       if (missingArtworkReference) return 'One or more artwork files in this cart only has a browser preview, not a secure production file. Please re-add the artwork before checkout.';
-      const missingPreview = item.artworkFiles.some((file) => file.storagePath && !file.previewUrl)
-        || item.productionBreakdown.some((artwork) => artwork.frontStoragePath && !artwork.frontPreviewUrl);
-      if (missingPreview) return 'Some artwork previews in this cart expired. Please clear and rebuild the cart so the customer can review the artwork before checkout.';
     }
     return '';
   };
@@ -7787,7 +7816,7 @@ export default function Home() {
     }
     setStoreView('builder');
     setActiveCoroOptionPanel('images');
-    setShowGuidedTour(false);
+    dismissGuidedTour(true);
     setBuilderWalkthroughStep(0);
     setShowBuilderWalkthrough(true);
     if (guidedTourChoice.artworkPath === 'upload' || guidedTourChoice.artworkPath === 'image-zone') {
@@ -8122,7 +8151,6 @@ export default function Home() {
                 <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${guidedTourStep === index ? 'border-white/40 bg-white/15' : 'border-white/15 bg-black/20'}`}>{index + 1}</span>
                 {label}
               </button>)}
-              <button type="button" onClick={() => dismissGuidedTour(true)} className="mt-4 w-full rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] px-3 py-3 text-left text-xs font-bold leading-5 text-amber-100 hover:bg-amber-300/[0.12]">Don&apos;t show this automatically again</button>
             </aside>
             <section className="max-h-[68vh] overflow-y-auto p-5 md:p-7">
               {guidedTourStep === 0 ? <div>
@@ -8292,6 +8320,7 @@ export default function Home() {
             <button type="button" onClick={() => setGuidedTourStep((step) => Math.max(0, step - 1))} disabled={guidedTourStep === 0} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black uppercase text-slate-200 hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-35">Back</button>
             <div className="flex flex-wrap items-center gap-3">
               <button type="button" onClick={() => dismissGuidedTour(false)} className="rounded-xl border border-white/15 bg-transparent px-5 py-3 text-xs font-black uppercase text-slate-400 hover:text-white">Skip for now</button>
+              <button type="button" onClick={() => dismissGuidedTour(true)} className="rounded-xl border border-amber-300/35 bg-amber-300/[0.08] px-5 py-3 text-xs font-black uppercase text-amber-100 hover:bg-amber-300/[0.14]">Don&apos;t show again</button>
               {guidedTourStep < 5 ? <button type="button" onClick={() => setGuidedTourStep((step) => Math.min(5, step + 1))} className="rounded-xl bg-[#1686c9] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">Next</button> : <button type="button" onClick={startGuidedOrder} className="rounded-xl bg-[#22c55e] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(34,197,94,0.24)] hover:bg-[#16a34a]">Open my order setup</button>}
             </div>
           </footer>
@@ -8782,7 +8811,7 @@ export default function Home() {
                       const selectedSheet = sheetIndex === activeCoroSheetIndex;
                       const sheetOffset = sheetIndex - activeCoroSheetIndex;
                       const nearActiveSheet = Math.abs(sheetOffset) <= 1;
-                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell absolute left-1/2 top-[53%] flex w-[min(19vw,32vh)] min-w-52 max-w-[320px] shrink-0 cursor-pointer items-center justify-center transition duration-300 ease-out ${selectedSheet ? 'z-20 opacity-100' : nearActiveSheet ? 'z-10 opacity-45 hover:opacity-75' : 'pointer-events-none z-0 opacity-0'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height, transform: `translate(-50%, -50%) translateX(${sheetOffset * 88}%) scale(${selectedSheet ? 1 : 0.78})` }}>
+                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell absolute left-1/2 top-[53%] flex w-[min(19vw,32vh)] min-w-52 max-w-[320px] shrink-0 cursor-pointer items-center justify-center transition duration-300 ease-out ${selectedSheet ? 'z-20 opacity-100' : nearActiveSheet ? 'z-10 opacity-45 hover:opacity-75' : 'pointer-events-none z-0 opacity-0'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height, transform: `translate(-50%, -50%) translateX(${sheetOffset * 88}%) translateY(${selectedSheet ? '-22px' : '0px'}) scale(${selectedSheet ? 1 : 0.78})` }}>
                       <div className={`coro-sheet-heading absolute left-1/2 flex w-max -translate-x-1/2 flex-col items-center text-center ${coroSheetPreviews.length > 1 ? '-top-6' : '-top-14 gap-1.5'}`}>
                         {coroSheetPreviews.length === 1 ? <span className="rounded-full border border-[#38bdf8]/25 bg-[#071827]/90 px-3 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-[#8be3ff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">Hue production sheet</span> : null}
                         <span className="text-xs font-bold text-slate-300"><strong className="text-white">{sheetPreview.quantity}</strong> {selectedSignProduct.id === 'yard-sign' ? `sign${sheetPreview.quantity === 1 ? '' : 's'}` : `piece${sheetPreview.quantity === 1 ? '' : 's'}`} mapped &middot; sheet {String(sheetPreview.sheetNumber).padStart(2, '0')}</span>

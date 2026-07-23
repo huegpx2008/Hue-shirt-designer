@@ -228,12 +228,26 @@ const getItemQuantity = (item: OrderItem) => {
   return (item.productionBreakdown || []).reduce((total, entry) => total + Math.max(0, Number(entry.quantity || 0)), 0);
 };
 
+const renderCustomerArtworkThumbnail = (url: string | undefined, label: string) => url
+  ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(`${label} artwork preview`)}" width="72" height="72" style="display:block;width:72px!important;max-width:72px!important;height:72px!important;max-height:72px!important;object-fit:contain;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;" />`
+  : `<div style="width:72px;height:72px;border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;color:#64748b;font-size:10px;font-weight:800;line-height:72px;text-align:center;">No preview</div>`;
+
 const renderCustomerReceiptItems = (items: OrderItem[], currency: string) => items.map((item, index) => {
   const artworkBreakdown = (item.productionBreakdown || []).map((entry, artworkIndex) => {
     const quantity = Math.max(0, Number(entry.quantity || 0));
     const size = entry.sizeLabel || getOrderItemSizeLabel(item);
     const label = entry.label || `Artwork set ${artworkIndex + 1}`;
-    return `<li style="margin:4px 0;">${escapeHtml(label)}: Qty ${escapeHtml(quantity)}${size ? ` / ${escapeHtml(size)}` : ''}</li>`;
+    return `<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0;margin-top:8px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">
+      <tr>
+        <td width="90" style="width:90px;padding:9px;vertical-align:middle;">
+          ${renderCustomerArtworkThumbnail(entry.frontPreviewUrl, label)}
+        </td>
+        <td style="padding:9px 12px 9px 0;vertical-align:middle;color:#475569;font-size:13px;line-height:1.5;">
+          <strong style="display:block;color:#0f172a;font-size:13px;">${escapeHtml(label)}</strong>
+          <span>Qty ${escapeHtml(quantity)}${size ? ` / ${escapeHtml(size)}` : ''}</span>
+        </td>
+      </tr>
+    </table>`;
   }).join('');
   const optionList = item.optionSummary?.length
     ? `<ul style="margin:8px 0 0;padding-left:18px;color:#475569;font-size:13px;line-height:1.55;">${item.optionSummary.map((option) => `<li>${escapeHtml(option)}</li>`).join('')}</ul>`
@@ -247,7 +261,7 @@ const renderCustomerReceiptItems = (items: OrderItem[], currency: string) => ite
       </div>
       <div style="padding:16px;">
         <p style="margin:0;color:#111827;font-size:14px;font-weight:900;">Artwork / Quantity</p>
-        ${artworkBreakdown ? `<ul style="margin:8px 0 0;padding-left:18px;color:#475569;font-size:13px;line-height:1.55;">${artworkBreakdown}</ul>` : '<p style="margin:8px 0 0;color:#64748b;font-size:13px;">Artwork received with this item.</p>'}
+        ${artworkBreakdown || '<p style="margin:8px 0 0;color:#64748b;font-size:13px;">Artwork received with this item.</p>'}
         <p style="margin:16px 0 0;color:#111827;font-size:14px;font-weight:900;">Options</p>
         ${optionList}
       </div>
