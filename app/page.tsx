@@ -2325,7 +2325,7 @@ export default function Home() {
           cache: 'no-store',
           headers: { Authorization: `Bearer ${customerSession.access_token}` },
         });
-        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
+        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
         if (!libraryResponse.ok) throw new Error(libraryPayload.error || 'Could not load Image Zone files.');
         if (!mounted) return;
         const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all((libraryPayload.items || [])
@@ -2343,14 +2343,16 @@ export default function Home() {
             const privatePreviewPath = isImageFile && file.previewStoragePath
               ? file.previewStoragePath
               : storagePath;
-            const previewUrl = await loadPrivateArtworkFile(privatePreviewPath, customerSession.access_token)
+            const previewUrl = file.previewDataUrl || await loadPrivateArtworkFile(privatePreviewPath, customerSession.access_token)
               .catch(() => file.previewUrl || originalUrl);
             const pdfPreview = isPdfFile ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
             const imageSize = pdfPreview
               ? { width: pdfPreview.width, height: pdfPreview.height }
               : isImageFile
-                ? await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
+                ? file.previewWidth && file.previewHeight
+                  ? { width: file.previewWidth, height: file.previewHeight }
+                  : await getImageNaturalSize(previewUrl).catch(() => ({ width: 0, height: 0 }))
                 : { width: 0, height: 0 };
             const embeddedResolution = isImageFile
               ? await fetch(previewUrl).then((imageResponse) => imageResponse.ok ? imageResponse.blob() : Promise.reject(new Error('Image metadata unavailable'))).then(readEmbeddedImageResolution).catch(() => null)
@@ -4165,19 +4167,20 @@ export default function Home() {
 
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
     if (item.source === 'archive') throw new Error('Restore this archived artwork before using it.');
-    const refreshedUrl = item.source === 'supabase' && item.storagePath
+    const isPdfItem = item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name);
+    const hasInlineImagePreview = !isPdfItem && item.dataUrl.startsWith('data:image/');
+    const refreshedUrl = item.source === 'supabase' && item.storagePath && !hasInlineImagePreview
       ? customerSession?.access_token
         ? await loadPrivateArtworkFile(item.storagePath, customerSession.access_token)
             .catch(() => getSignedImageZoneUrl(item.storagePath!))
         : await getSignedImageZoneUrl(item.storagePath)
       : item.dataUrl;
-    const isPdfItem = item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name);
     if (isPdfItem) {
       const preview = await renderPdfFirstPage(refreshedUrl);
       const sizedItem = {
         ...item,
         dataUrl: preview.dataUrl,
-        storageUrl: item.storagePath ? refreshedUrl : item.storageUrl,
+        storageUrl: item.storagePath && refreshedUrl !== item.dataUrl ? refreshedUrl : item.storageUrl,
         width: preview.width,
         height: preview.height,
         dpi: preview.dpi,
@@ -4190,7 +4193,7 @@ export default function Home() {
     const size = item.width > 0 && item.height > 0 && refreshedUrl === item.dataUrl
       ? { width: item.width, height: item.height }
       : await getImageNaturalSize(refreshedUrl);
-    const sizedItem = { ...item, dataUrl: refreshedUrl, storageUrl: item.storagePath ? refreshedUrl : item.storageUrl, width: size.width, height: size.height };
+    const sizedItem = { ...item, dataUrl: refreshedUrl, storageUrl: item.storagePath && refreshedUrl !== item.dataUrl ? refreshedUrl : item.storageUrl, width: size.width, height: size.height };
     setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
     return sizedItem;
   };
