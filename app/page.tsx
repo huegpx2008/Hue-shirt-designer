@@ -2127,6 +2127,7 @@ export default function Home() {
   const [isGuestCheckout, setIsGuestCheckout] = useState(false);
   const [isCustomerAuthLoading, setIsCustomerAuthLoading] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [isCartStorageHydrated, setIsCartStorageHydrated] = useState(false);
   const [isPreparingCartArtwork, setIsPreparingCartArtwork] = useState(false);
   const [showCart, setShowCart] = useState(false);
   const [cartStatus, setCartStatus] = useState('');
@@ -2253,21 +2254,25 @@ export default function Home() {
   useEffect(() => {
     try {
       const storedCart = window.localStorage.getItem(CART_STORAGE_KEY);
-      if (!storedCart) return;
-      const parsedCart = JSON.parse(storedCart) as CartItem[];
-      if (Array.isArray(parsedCart)) setCartItems(getPersistableCartItems(parsedCart));
+      if (storedCart) {
+        const parsedCart = JSON.parse(storedCart) as CartItem[];
+        if (Array.isArray(parsedCart)) setCartItems(getPersistableCartItems(parsedCart));
+      }
     } catch {
       window.localStorage.removeItem(CART_STORAGE_KEY);
+    } finally {
+      setIsCartStorageHydrated(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!isCartStorageHydrated) return;
     try {
       window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(getPersistableCartItems(cartItems)));
     } catch {
       setCartStatus('Cart is open, but browser storage is full. Original artwork files remain attached by Supabase path.');
     }
-  }, [cartItems]);
+  }, [cartItems, isCartStorageHydrated]);
 
   const cartStoragePathKey = Array.from(new Set(cartItems.flatMap((item) => [
     ...item.artworkFiles.map((file) => file.storagePath),
@@ -2930,6 +2935,7 @@ export default function Home() {
     return '';
   };
   const cartCheckoutIssue = getCartCheckoutIssue();
+  const cartNeedsAccountSignIn = cartCheckoutIssue.startsWith('This cart belongs to your signed-in account.');
   const checkoutShippingAmount = checkoutFulfillment === 'direct_ship' ? HUE_STUDIO_US_SHIPPING_FEE : 0;
   const checkoutShippingLabel = checkoutFulfillment === 'direct_ship' ? 'US shipping' : 'Local pickup';
   const checkoutShipState = checkoutAddress.state.trim().toUpperCase();
@@ -7522,6 +7528,13 @@ export default function Home() {
 
   const handleCustomerSignOut = async () => {
     const sessionToClose = customerSession;
+    if (cartItems.length) {
+      try {
+        window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(getPersistableCartItems(cartItems)));
+      } catch {
+        setCartStatus('Your cart is still open in this tab, but the browser could not save it for a later visit.');
+      }
+    }
     setCustomerSession(null);
     setIsGuestCheckout(true);
     window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
@@ -7529,6 +7542,7 @@ export default function Home() {
     setSelectedImageZoneId(null);
     setCustomerAuthStatus('Signed out. Quick checkout is active.');
     setImageLibraryStatus('Signed out. Quick checkout is active.');
+    if (cartItems.length) setCartStatus('Your cart is saved. Sign in again with the same account when you are ready to continue.');
     if (sessionToClose?.access_token) {
       try {
         await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
@@ -8668,6 +8682,7 @@ export default function Home() {
                     <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name}</p>
                     <p className={`mt-1 text-xs ${isProductionBuilder ? 'text-slate-300' : 'text-slate-500'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name} {selectedSignProduct.id === 'vehicle-magnet' ? '' : isBannerBuilder ? selectedBannerMaterial?.label : String(signValues.material || '4mm')} {String(signValues.sides || 'single') === 'double' || String(signValues.material || '').includes('double') ? 'Double Sided' : 'Single Sided'} , {signWidth || 0}&quot; x {signHeight || 0}&quot;</p>
                     {isCoroBuilder ? <p className="mt-3 max-w-sm rounded border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 text-[10px] font-bold leading-4 text-amber-100">One 48&quot; × 96&quot; sheet is the minimum. Add more pieces to fill the available sheet space and lower the price per piece.</p> : null}
+                    {isCoroBuilder && coroSheetPreviews.length > 1 ? <p className="mt-2 inline-flex rounded-full border border-[#38bdf8]/25 bg-[#0b263d] px-3 py-1 text-[9px] font-black uppercase tracking-[0.16em] text-[#9be8ff]">Viewing sheet {activeCoroSheetIndex + 1} of {coroSheetPreviews.length}</p> : null}
                   </div>
                 </div>
                 <div className={`hue-builder-production-card text-xs ${builderTourHighlightClass('pricing')} ${isProductionBuilder ? `${isCoroBuilder ? 'w-full max-w-none lg:col-start-3 lg:row-start-2' : 'max-w-[480px] lg:col-start-2 lg:row-start-1'} rounded-xl border border-[#0ea5e9]/35 bg-[#06111d]/90 px-4 py-3 text-slate-300 shadow-[0_0_42px_rgba(22,120,184,0.24)] backdrop-blur` : ''}`}>
@@ -8811,7 +8826,7 @@ export default function Home() {
                       const selectedSheet = sheetIndex === activeCoroSheetIndex;
                       const sheetOffset = sheetIndex - activeCoroSheetIndex;
                       const nearActiveSheet = Math.abs(sheetOffset) <= 1;
-                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell absolute left-1/2 top-[53%] flex w-[min(19vw,32vh)] min-w-52 max-w-[320px] shrink-0 cursor-pointer items-center justify-center transition duration-300 ease-out ${selectedSheet ? 'z-20 opacity-100' : nearActiveSheet ? 'z-10 opacity-45 hover:opacity-75' : 'pointer-events-none z-0 opacity-0'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height, transform: `translate(-50%, -50%) translateX(${sheetOffset * 88}%) translateY(${selectedSheet ? '-22px' : '0px'}) scale(${selectedSheet ? 1 : 0.78})` }}>
+                      return <div key={sheetPreview.sheetNumber} onClick={() => setActiveCoroSheetIndex(sheetIndex)} className={`coro-sheet-shell absolute left-1/2 top-[48%] flex shrink-0 cursor-pointer items-center justify-center transition duration-300 ease-out ${selectedSheet ? 'z-20 opacity-100' : nearActiveSheet ? 'z-10 opacity-45 hover:opacity-75' : 'pointer-events-none z-0 opacity-0'}`} style={{ aspectRatio: CORO_SHEET.width / CORO_SHEET.height, transform: `translate(-50%, -50%) translateX(${sheetOffset * 88}%) scale(${selectedSheet ? 1 : 0.78})` }}>
                       <div className={`coro-sheet-heading absolute left-1/2 flex w-max -translate-x-1/2 flex-col items-center text-center ${coroSheetPreviews.length > 1 ? '-top-6' : '-top-14 gap-1.5'}`}>
                         {coroSheetPreviews.length === 1 ? <span className="rounded-full border border-[#38bdf8]/25 bg-[#071827]/90 px-3 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-[#8be3ff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">Hue production sheet</span> : null}
                         <span className="text-xs font-bold text-slate-300"><strong className="text-white">{sheetPreview.quantity}</strong> {selectedSignProduct.id === 'yard-sign' ? `sign${sheetPreview.quantity === 1 ? '' : 's'}` : `piece${sheetPreview.quantity === 1 ? '' : 's'}`} mapped &middot; sheet {String(sheetPreview.sheetNumber).padStart(2, '0')}</span>
@@ -8871,7 +8886,6 @@ export default function Home() {
                     </div>;
                     })}
                     </div>
-                    {coroSheetPreviews.length > 1 ? <div className="absolute bottom-7 left-1/2 z-30 -translate-x-1/2 rounded-full border border-[#38bdf8]/25 bg-[#06111d]/90 px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-[#9be8ff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">Sheet {activeCoroSheetIndex + 1} of {coroSheetPreviews.length}</div> : null}
                     {coroSheetPreviews.length > 1 ? <button type="button" onClick={() => setActiveCoroSheetIndex((current) => Math.min(coroSheetPreviews.length - 1, current + 1))} disabled={activeCoroSheetIndex >= coroSheetPreviews.length - 1} className="absolute right-[365px] z-30 flex h-14 w-14 items-center justify-center rounded-full border border-[#38bdf8]/45 bg-[#071827]/88 text-3xl font-black text-white shadow-[0_0_30px_rgba(14,165,233,0.34),0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur hover:border-[#67d8ff] hover:bg-[#0b263d] disabled:cursor-not-allowed disabled:opacity-30">›</button> : null}
                     {!hasCoroSheetArtwork && layers.length === 0 ? <button type="button" onClick={() => setShowImageZone(true)} className="hue-sheet-upload group absolute z-10 flex w-44 flex-col items-center rounded-2xl border border-white/25 bg-[#1686c9] px-4 py-4 text-center text-white shadow-[0_18px_44px_rgba(3,105,161,0.42),0_0_32px_rgba(56,189,248,0.28)] hover:-translate-y-0.5 hover:bg-[#0e74b4]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xl transition group-hover:scale-105">+</span><span className="mt-2 text-xs font-black uppercase tracking-[0.08em]">Add your artwork</span><span className="mt-1 text-[9px] font-medium text-[#c8f2ff]">Upload or choose from library</span></button> : null}
                   </div> : <div className={`relative flex items-center justify-center ${isProductionBuilder && activeCoroOptionPanel === 'images' ? 'ml-[360px]' : ''}`} style={signPreviewBoxStyle}>
@@ -9636,9 +9650,11 @@ export default function Home() {
             </div>
             {cartStatus ? <p className="mt-3 rounded border border-[#0ea5e9]/20 bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-300">{cartStatus}</p> : null}
             {cartCheckoutIssue ? <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-3 text-xs leading-5 text-amber-100">
-              <p className="font-black uppercase tracking-[0.14em] text-amber-200">Cart needs refresh</p>
+              <p className="font-black uppercase tracking-[0.14em] text-amber-200">{cartNeedsAccountSignIn ? 'Sign in to continue' : 'Cart needs refresh'}</p>
               <p className="mt-1">{cartCheckoutIssue}</p>
-              <button type="button" onClick={() => { setCartItems([]); setCartStatus('Stale cart cleared. Please add the product and artwork again before checkout.'); }} className="mt-2 rounded border border-amber-200/40 bg-amber-300/10 px-3 py-2 text-[11px] font-black uppercase text-amber-100 hover:bg-amber-300/20">Clear stale cart</button>
+              {cartNeedsAccountSignIn
+                ? <button type="button" onClick={() => { setShowCart(false); setCustomerAuthMode('signin'); setCartStatus('Your cart is saved and will remain here while you sign in.'); openCustomerAccount(); }} className="mt-2 rounded border border-[#38bdf8]/40 bg-[#0b263d] px-3 py-2 text-[11px] font-black uppercase text-[#b7ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Sign in — keep my cart</button>
+                : <button type="button" onClick={() => { setCartItems([]); setCartStatus('Stale cart cleared. Please add the product and artwork again before checkout.'); }} className="mt-2 rounded border border-amber-200/40 bg-amber-300/10 px-3 py-2 text-[11px] font-black uppercase text-amber-100 hover:bg-amber-300/[0.2]">Clear stale cart</button>}
             </div> : null}
             {testOrders[0] ? <p className="mt-2 text-xs text-slate-400">Latest test order: <span className="font-bold text-[#9be6ff]">{testOrders[0].orderNumber}</span></p> : null}
           </div>
