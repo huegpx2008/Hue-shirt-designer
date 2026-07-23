@@ -4229,15 +4229,42 @@ export default function Home() {
       setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? { ...entry, width: preview.width, height: preview.height, dpi: preview.dpi, signWidth: preview.signWidth, signHeight: preview.signHeight } : entry));
       return sizedItem;
     }
-    const size = item.width > 0 && item.height > 0 && refreshedUrl === item.dataUrl
-      ? { width: item.width, height: item.height }
-      : await getImageNaturalSize(refreshedUrl);
-    const backSize = refreshedBackUrl
-      ? refreshedBackUrl === item.backDataUrl && item.backWidth && item.backHeight
-        ? { width: item.backWidth, height: item.backHeight }
-        : await getImageNaturalSize(refreshedBackUrl).catch(() => ({ width: item.backWidth, height: item.backHeight }))
-      : null;
-    const sizedItem = { ...item, dataUrl: refreshedUrl, backDataUrl: refreshedBackUrl, storageUrl: item.storageUrl, width: size.width, height: size.height, backWidth: backSize?.width, backHeight: backSize?.height };
+    let designerUrl = refreshedUrl;
+    let size: { width: number; height: number };
+    try {
+      size = item.width > 0 && item.height > 0 && designerUrl === item.dataUrl
+        ? { width: item.width, height: item.height }
+        : await getImageNaturalSize(designerUrl);
+    } catch (error) {
+      // A freshly uploaded file already has a working browser preview. If the
+      // authenticated medium preview is still propagating or cannot be decoded,
+      // keep the current preview usable instead of blocking artwork placement.
+      if (!item.dataUrl || designerUrl === item.dataUrl) throw error;
+      designerUrl = item.dataUrl;
+      size = item.width > 0 && item.height > 0
+        ? { width: item.width, height: item.height }
+        : await getImageNaturalSize(designerUrl);
+    }
+
+    let designerBackUrl = refreshedBackUrl;
+    let backSize: { width?: number; height?: number } | null = null;
+    if (designerBackUrl) {
+      try {
+        backSize = designerBackUrl === item.backDataUrl && item.backWidth && item.backHeight
+          ? { width: item.backWidth, height: item.backHeight }
+          : await getImageNaturalSize(designerBackUrl);
+      } catch {
+        if (item.backDataUrl && designerBackUrl !== item.backDataUrl) {
+          designerBackUrl = item.backDataUrl;
+          backSize = item.backWidth && item.backHeight
+            ? { width: item.backWidth, height: item.backHeight }
+            : await getImageNaturalSize(designerBackUrl).catch(() => null);
+        } else {
+          designerBackUrl = undefined;
+        }
+      }
+    }
+    const sizedItem = { ...item, dataUrl: designerUrl, backDataUrl: designerBackUrl, storageUrl: item.storageUrl, width: size.width, height: size.height, backWidth: backSize?.width, backHeight: backSize?.height };
     // Preserve the 480px thumbnails used by Image Zone while updating dimensions.
     setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? { ...entry, width: size.width, height: size.height, backWidth: backSize?.width, backHeight: backSize?.height } : entry));
     return sizedItem;
