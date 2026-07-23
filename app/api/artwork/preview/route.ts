@@ -16,13 +16,23 @@ const getBearerToken = (request: Request) => {
   return authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7).trim() : '';
 };
 
-const ownsCustomerPreview = (storagePath: string, userId: string) => {
+const mimeTypeFromPath = (storagePath: string) => {
+  const extension = storagePath.split('.').pop()?.toLowerCase();
+  if (extension === 'png') return 'image/png';
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'gif') return 'image/gif';
+  if (extension === 'pdf') return 'application/pdf';
+  if (extension === 'json') return 'application/json';
+  return null;
+};
+
+const ownsCustomerArtwork = (storagePath: string, userId: string) => {
   if (!storagePath || storagePath.includes('..') || storagePath.includes('\\')) return false;
   const parts = storagePath.split('/');
   return parts[0] === 'customers'
     && (parts[1] === userId || parts[2] === userId)
-    && parts.includes('previews')
-    && /-preview\.webp$/i.test(parts.at(-1) || '');
+    && Boolean(mimeTypeFromPath(storagePath));
 };
 
 export async function GET(request: NextRequest) {
@@ -35,16 +45,21 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Sign in to load this artwork preview.' }, { status: 401 });
 
   const storagePath = request.nextUrl.searchParams.get('path') || '';
-  if (!ownsCustomerPreview(storagePath, user.id)) return NextResponse.json({ error: 'That preview does not belong to this account.' }, { status: 403 });
+  const mimeType = mimeTypeFromPath(storagePath);
+  if (!mimeType || !ownsCustomerArtwork(storagePath, user.id)) return NextResponse.json({ error: 'That artwork file does not belong to this account.' }, { status: 403 });
 
   try {
     const { data, error } = await getSupabaseAdminClient().storage.from(getStorageBucket()).download(storagePath);
     if (error || !data) throw new Error(error?.message || 'The preview file could not be downloaded.');
     return new NextResponse(await data.arrayBuffer(), {
       headers: {
-        'Content-Type': 'image/webp',
+        // The extension is authoritative. Some older uploads have stale
+        // Supabase object metadata, which can make a browser reject a valid
+        // image when the stored Content-Type is used.
+        'Content-Type': mimeType,
         'Cache-Control': 'private, max-age=300',
         'Content-Disposition': 'inline',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (error) {

@@ -799,7 +799,7 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(blob);
 });
 
-const loadPrivateArtworkPreview = async (storagePath: string, accessToken: string) => {
+const loadPrivateArtworkFile = async (storagePath: string, accessToken: string) => {
   const response = await fetch(`/api/artwork/preview?path=${encodeURIComponent(storagePath)}`, {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -2335,9 +2335,16 @@ export default function Home() {
             const originalUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
             const isImageFile = Boolean(file.mimeType?.startsWith('image/') || isLikelyImagePath(file.name));
             const isPdfFile = file.mimeType === 'application/pdf' || /\.pdf$/i.test(file.name);
-            const previewUrl = isImageFile && file.previewStoragePath
-              ? await loadPrivateArtworkPreview(file.previewStoragePath, customerSession.access_token).catch(() => file.previewUrl || originalUrl)
-              : file.previewUrl || originalUrl;
+            // Always read persisted artwork through the authenticated same-origin
+            // endpoint after login. Generated thumbnails are preferred, while the
+            // original remains a secure fallback when a preview was not created or
+            // was not discovered in storage. This avoids relying on public bucket
+            // URLs or browser handling of expiring cross-origin signed URLs.
+            const privatePreviewPath = isImageFile && file.previewStoragePath
+              ? file.previewStoragePath
+              : storagePath;
+            const previewUrl = await loadPrivateArtworkFile(privatePreviewPath, customerSession.access_token)
+              .catch(() => file.previewUrl || originalUrl);
             const pdfPreview = isPdfFile ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
             const imageSize = pdfPreview
@@ -4159,7 +4166,10 @@ export default function Home() {
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
     if (item.source === 'archive') throw new Error('Restore this archived artwork before using it.');
     const refreshedUrl = item.source === 'supabase' && item.storagePath
-      ? await getSignedImageZoneUrl(item.storagePath)
+      ? customerSession?.access_token
+        ? await loadPrivateArtworkFile(item.storagePath, customerSession.access_token)
+            .catch(() => getSignedImageZoneUrl(item.storagePath!))
+        : await getSignedImageZoneUrl(item.storagePath)
       : item.dataUrl;
     const isPdfItem = item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name);
     if (isPdfItem) {
