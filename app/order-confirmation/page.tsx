@@ -55,7 +55,7 @@ export default function OrderConfirmationPage() {
 
   if (!order) return <main className="flex min-h-screen items-center justify-center bg-[#030a12] p-5 text-white">
     <section className="w-full max-w-xl rounded-3xl border border-[#38bdf8]/25 bg-[#071522] p-8 text-center shadow-[0_35px_120px_rgba(0,0,0,0.7)]">
-      <img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="mx-auto h-16 w-16 rounded-xl border border-[#38bdf8]/30" />
+      <img src="/brand/hue-graphics-mark.webp" alt="Hue Graphics" width={512} height={512} className="mx-auto h-16 w-16 rounded-xl border border-[#38bdf8]/30" />
       <h1 className="mt-5 text-3xl font-black">Order confirmation unavailable</h1>
       <p className="mt-3 text-sm leading-6 text-slate-400">This browser no longer has the submitted order details. The order may still be available in your Hue account or the Studio Admin dashboard.</p>
       <a href="/" className="mt-6 inline-flex rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white">Return to Hue Studio</a>
@@ -65,7 +65,7 @@ export default function OrderConfirmationPage() {
   const address = order.fulfillment.address;
   return <main className="min-h-screen bg-[#030a12] text-white print:bg-white print:text-black">
     <header className="border-b border-white/10 bg-[#07111f] px-5 py-4 print:border-slate-300 print:bg-white md:px-8">
-      <div className="mx-auto flex max-w-[1280px] items-center gap-4"><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-12 w-12 rounded-lg border border-[#38bdf8]/30" /><div><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff] print:text-sky-700">Hue Graphics / Est. 2008</p><p className="text-xl font-black">Hue Studio</p></div><p className="ml-auto hidden text-xs font-bold uppercase tracking-[0.18em] text-slate-500 sm:block">Order confirmation</p></div>
+      <div className="mx-auto flex max-w-[1280px] items-center gap-4"><img src="/brand/hue-graphics-mark.webp" alt="Hue Graphics" width={512} height={512} className="h-12 w-12 rounded-lg border border-[#38bdf8]/30" /><div><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff] print:text-sky-700">Hue Graphics / Est. 2008</p><p className="text-xl font-black">Hue Studio</p></div><p className="ml-auto hidden text-xs font-bold uppercase tracking-[0.18em] text-slate-500 sm:block">Order confirmation</p></div>
     </header>
 
     <div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-8">

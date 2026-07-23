@@ -12,10 +12,11 @@ import {
   sanitizeDriveName,
   uploadDriveFileIfMissing,
 } from '@/lib/server/google-drive';
+import { CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, SUPABASE_ORIGINAL_RETENTION_DAYS } from '@/lib/server/artwork-retention';
+import { getArtworkDisplayName } from '@/lib/server/artwork-storage-name';
 import { getStorageBucket, getSupabaseAdminClient, getStorageSignedUrl } from '@/lib/server/supabase-admin';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SUPABASE_ORIGINAL_RETENTION_DAYS = 30;
 const RASTER_MIME = /^image\/(png|jpe?g|webp|gif|tiff?|avif)$/i;
 
 export type ArtworkArchiveRecord = {
@@ -97,7 +98,7 @@ type StorageListEntry = {
   name: string;
   created_at?: string | null;
   updated_at?: string | null;
-  metadata?: { size?: number | string } | null;
+  metadata?: ({ size?: number | string } & Record<string, unknown>) | null;
 };
 
 const listStorageFilesRecursively = async (prefix: string, maxFiles = 2000) => {
@@ -308,12 +309,13 @@ const existingArchivePaths = async () => {
 };
 
 export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number; limit?: number } = {}) => {
+  const configuredMaxAgeDays = options.maxAgeDays ?? CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS;
   if (!isGoogleDriveArchiveConfigured()) {
-    return { archivedFiles: 0, archivedBytes: 0, skipped: ['Google Drive archive is not configured.'], maxAgeDays: options.maxAgeDays || 30 };
+    return { archivedFiles: 0, archivedBytes: 0, skipped: ['Google Drive archive is not configured.'], maxAgeDays: configuredMaxAgeDays };
   }
   const client = getSupabaseAdminClient();
   const bucket = getStorageBucket();
-  const maxAgeDays = Math.max(options.maxAgeDays || 30, 7);
+  const maxAgeDays = Math.max(configuredMaxAgeDays, 7);
   const cutoff = Date.now() - maxAgeDays * DAY_MS;
   const limit = Math.min(Math.max(options.limit || 25, 1), 100);
   const registered = await existingArchivePaths();
@@ -347,6 +349,7 @@ export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number
       if (error || !data) throw new Error(error?.message || 'Could not download the Supabase original.');
       const bytes = await data.arrayBuffer();
       const mimeType = data.type || 'application/octet-stream';
+      const originalName = getArtworkDisplayName(file.name, file.metadata);
       const ownerFolder = await ensureDriveFolder(libraryRoot.id, sanitizeDriveName(ownerEmail || owner.ownerUserId, owner.ownerUserId));
       const driveFile = await uploadDriveFileIfMissing({
         parentId: ownerFolder.id,
@@ -357,7 +360,7 @@ export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number
       if (!driveFile.id) throw new Error('Google Drive did not return a file id.');
       await recordVerifiedDriveArchive({
         storagePath: file.path,
-        originalName: file.name,
+        originalName,
         kind: 'library',
         bytes,
         mimeType,
@@ -376,13 +379,18 @@ export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number
   return { archivedFiles, archivedBytes, skipped, maxAgeDays };
 };
 
+const effectiveCleanupTime = (row: Pick<ArtworkArchiveRecord, 'cleanup_eligible_at' | 'drive_verified_at'>) => Math.max(
+  new Date(row.cleanup_eligible_at || 0).getTime() || 0,
+  (new Date(row.drive_verified_at || 0).getTime() || 0) + SUPABASE_ORIGINAL_RETENTION_DAYS * DAY_MS,
+);
+
 export const getArtworkArchiveStats = async () => {
   const client = getSupabaseAdminClient();
-  const { data, error } = await client.from('hue_artwork_archive').select('file_size,archive_status,supabase_deleted_at,cleanup_eligible_at');
+  const { data, error } = await client.from('hue_artwork_archive').select('file_size,archive_status,supabase_deleted_at,cleanup_eligible_at,drive_verified_at');
   if (error) throw new Error(error.message);
   const rows = data || [];
   const active = rows.filter((row) => !row.supabase_deleted_at);
-  const eligible = active.filter((row) => row.archive_status === 'verified' && row.cleanup_eligible_at && new Date(row.cleanup_eligible_at).getTime() <= Date.now());
+  const eligible = active.filter((row) => row.archive_status === 'verified' && effectiveCleanupTime(row) <= Date.now());
   return {
     trackedFiles: rows.length,
     activeOriginals: active.length,
@@ -432,6 +440,7 @@ export const cleanupVerifiedSupabaseArtwork = async (options: { emergency?: bool
   const skipped: string[] = [];
   for (const raw of data || []) {
     const row = raw as ArtworkArchiveRecord;
+    if (!options.emergency && effectiveCleanupTime(row) > Date.now()) continue;
     try {
       if (!row.drive_file_id || !row.preview_storage_path) throw new Error('Missing verified Drive file or preview.');
       const drive = await getDriveFileMetadata(row.drive_file_id);

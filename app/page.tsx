@@ -6,6 +6,7 @@ import QRCode from 'qrcode';
 import PayPalCheckoutButton from '@/components/paypal-checkout-button';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
+import { CUSTOM_ORDER_ACKNOWLEDGMENT_STATEMENT, createCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
 import { recommendPrintMethodByCost } from '@/lib/pricing/recommend-print-method';
 import { calculateScreenPrintPricing } from '@/lib/pricing/screen-print-pricing';
@@ -25,7 +26,6 @@ import {
   type SmartTemplateFamilyId,
   type SmartTemplateStyle
 } from '@/lib/templates/template-catalog';
-import generatedSanMarCatalog from '@/public/data/catalog/t-shirts.generated.json';
 import fallbackSanMarPreview from '@/public/data/catalog-preview-25.json';
 import catalogAuditData from '@/public/data/catalog/catalog-audit.generated.json';
 
@@ -40,7 +40,7 @@ type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -106,6 +106,7 @@ type TestOrder = {
     method: CheckoutFulfillment;
     address?: { line1: string; line2: string; city: string; state: string; postalCode: string };
   };
+  checkoutAcknowledgment: CheckoutAcknowledgment;
   items: CartItem[];
   subtotal: number;
   promotion?: { code: string; description: string; discountAmount: number };
@@ -445,7 +446,10 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
   });
   const { error: uploadError } = await supabase.storage
     .from(SUPABASE_STORAGE_BUCKET)
-    .uploadToSignedUrl(ticket.storagePath, ticket.token, file, { contentType: ticket.mimeType || file.type });
+    .uploadToSignedUrl(ticket.storagePath, ticket.token, file, {
+      contentType: ticket.mimeType || file.type,
+      metadata: { originalName: file.name },
+    });
   if (uploadError) throw new Error(uploadError.message || 'The artwork could not be uploaded to secure storage.');
 
   const verifyResponse = await fetch('/api/artwork/upload', {
@@ -653,15 +657,15 @@ const STORE_CATEGORIES: { id: StoreCategoryId; label: string; description: strin
   { id: 'misc', label: 'More', description: 'Additional print-ready products' }
 ];
 const STORE_PRODUCTS: StoreProductCard[] = [
-  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Premium vinyl scrim', description: 'Stunningly vibrant indoor/outdoor banners available in 13 oz, 15 oz, and 18 oz vinyl weights.', mode: 'signage', signProductId: 'banner', badge: 'Online order', image: '/banners.png', initialSignValues: { material: '13-single', sides: 'single' } },
-  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: '8 oz coated polyester mesh', description: 'Durable mesh banner material with 37% airflow perforation for fences and windy outdoor locations.', mode: 'signage', signProductId: 'mesh-banner', badge: 'Mesh', image: '/mesh.png', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
-  { id: 'coro-sheet', category: 'coro', title: 'CORO', subtitle: '48 x 96 sheet-based signs', description: 'Choose a cut size, upload finished art, and see sheet usage before ordering.', mode: 'signage', signProductId: 'yard-sign', badge: 'Sheet price', image: '/coro.png' },
-  { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: '3/16\" rigid plastic', description: 'Printed directly on the back with a white underbase for a polished, dimensional appearance.', mode: 'signage', signProductId: 'acrylic', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 0, row: 0 } },
-  { id: 'rigid-acm', category: 'rigid', title: 'ACM / Aluminum Composite', subtitle: '3mm or 6mm composite panels', description: 'Smooth aluminum faces bonded to a durable polyethylene core for professional indoor or outdoor signs.', mode: 'signage', signProductId: 'acm', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 1, row: 0 } },
-  { id: 'rigid-pvc', category: 'rigid', title: 'PVC Signs', subtitle: '3mm or 6mm smooth PVC', description: 'Smooth-finish PVC panels with sheet pricing. Add more pieces to fill the 48 x 96 production sheet and lower the price per piece.', mode: 'signage', signProductId: 'pvc', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 2, row: 0 } },
-  { id: 'rigid-foamcore', category: 'rigid', title: 'Foamcore', subtitle: '3/16\" smooth foam board', description: 'Sturdy, durable foam board with a smooth finish for indoor displays, presentations, and temporary signage.', mode: 'signage', signProductId: 'foamcore', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 0, row: 1 } },
-  { id: 'rigid-polystyrene', category: 'rigid', title: 'Polystyrene', subtitle: '0.03\" lightweight plastic', description: 'Lightweight, flexible plastic with a smooth finish and visual sheet usage for efficient per-piece pricing.', mode: 'signage', signProductId: 'polystyrene', badge: 'Sheet price', image: '/rigid-products.png', imageSprite: { column: 1, row: 1 } },
-  { id: 'rigid-aluminum', category: 'rigid', title: 'Aluminum', subtitle: '.040 or .080 metal signage', description: 'Durable metal sign panels with a glossy finish for long-lasting professional signage.', mode: 'signage', signProductId: 'aluminum', badge: 'Online order', image: '/rigid-products.png', imageSprite: { column: 2, row: 1 } },
+  { id: 'banner-vinyl', category: 'banners', title: 'Vinyl Banner', subtitle: 'Premium vinyl scrim', description: 'Stunningly vibrant indoor/outdoor banners available in 13 oz, 15 oz, and 18 oz vinyl weights.', mode: 'signage', signProductId: 'banner', badge: 'Online order', image: '/banners.webp', initialSignValues: { material: '13-single', sides: 'single' } },
+  { id: 'banner-mesh', category: 'banners', title: 'Mesh Banner', subtitle: '8 oz coated polyester mesh', description: 'Durable mesh banner material with 37% airflow perforation for fences and windy outdoor locations.', mode: 'signage', signProductId: 'mesh-banner', badge: 'Mesh', image: '/mesh.webp', initialSignValues: { material: 'mesh-single', sides: 'single', webbing: false, rope: false, windSlits: false } },
+  { id: 'coro-sheet', category: 'coro', title: 'CORO', subtitle: '48 x 96 sheet-based signs', description: 'Choose a cut size, upload finished art, and see sheet usage before ordering.', mode: 'signage', signProductId: 'yard-sign', badge: 'Sheet price', image: '/coro.webp' },
+  { id: 'rigid-acrylic', category: 'rigid', title: 'Acrylic Signs', subtitle: '3/16\" rigid plastic', description: 'Printed directly on the back with a white underbase for a polished, dimensional appearance.', mode: 'signage', signProductId: 'acrylic', badge: 'Online order', image: '/rigid-products.webp', imageSprite: { column: 0, row: 0 } },
+  { id: 'rigid-acm', category: 'rigid', title: 'ACM / Aluminum Composite', subtitle: '3mm or 6mm composite panels', description: 'Smooth aluminum faces bonded to a durable polyethylene core for professional indoor or outdoor signs.', mode: 'signage', signProductId: 'acm', badge: 'Online order', image: '/rigid-products.webp', imageSprite: { column: 1, row: 0 } },
+  { id: 'rigid-pvc', category: 'rigid', title: 'PVC Signs', subtitle: '3mm or 6mm smooth PVC', description: 'Smooth-finish PVC panels with sheet pricing. Add more pieces to fill the 48 x 96 production sheet and lower the price per piece.', mode: 'signage', signProductId: 'pvc', badge: 'Sheet price', image: '/rigid-products.webp', imageSprite: { column: 2, row: 0 } },
+  { id: 'rigid-foamcore', category: 'rigid', title: 'Foamcore', subtitle: '3/16\" smooth foam board', description: 'Sturdy, durable foam board with a smooth finish for indoor displays, presentations, and temporary signage.', mode: 'signage', signProductId: 'foamcore', badge: 'Sheet price', image: '/rigid-products.webp', imageSprite: { column: 0, row: 1 } },
+  { id: 'rigid-polystyrene', category: 'rigid', title: 'Polystyrene', subtitle: '0.03\" lightweight plastic', description: 'Lightweight, flexible plastic with a smooth finish and visual sheet usage for efficient per-piece pricing.', mode: 'signage', signProductId: 'polystyrene', badge: 'Sheet price', image: '/rigid-products.webp', imageSprite: { column: 1, row: 1 } },
+  { id: 'rigid-aluminum', category: 'rigid', title: 'Aluminum', subtitle: '.040 or .080 metal signage', description: 'Durable metal sign panels with a glossy finish for long-lasting professional signage.', mode: 'signage', signProductId: 'aluminum', badge: 'Online order', image: '/rigid-products.webp', imageSprite: { column: 2, row: 1 } },
   { id: 'decals-vinyl', category: 'decals', title: 'Adhesive Vinyl', subtitle: 'Decals and window graphics', description: 'Upload-ready decal ordering with fit checks.', mode: 'signage', signProductId: 'vinyl', badge: 'Online order', image: '/vinyl-roll.webp' },
   { id: 'magnets-vehicle', category: 'magnets', title: 'Vehicle Magnet', subtitle: 'Mobile advertising, premium weight', description: 'Standard vehicle magnet ordering with size and artwork checks.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Premium', image: '/magnet-vehicle.webp' },
   { id: 'magnets-custom', category: 'magnets', title: 'Custom Magnet', subtitle: 'Custom sizes and contour cuts', description: 'Upload custom magnet art, set size, and price through Hue API.', mode: 'signage', signProductId: 'vehicle-magnet', badge: 'Custom', image: '/magnet-custom.webp', initialSignValues: { customCut: true, contourCut: true, size: 'custom', width: '0', height: '0' } },
@@ -1936,8 +1940,21 @@ export default function Home() {
   const [zoom, setZoom] = useState(1);
   const [layers, setLayers] = useState<LayerItem[]>([]);
   const fallbackPreviewCatalog = useMemo<SanMarPreviewItem[]>(() => {
-    const generated = (generatedSanMarCatalog as SanMarPreviewItem[]);
-    return generated.length > 0 ? generated : (fallbackSanMarPreview as unknown as SanMarPreviewItem[]);
+    const rows = (fallbackSanMarPreview as unknown as { rows?: Array<Record<string, unknown>> }).rows || [];
+    return rows.map((row) => ({
+      styleNumber: String(row.styleNumber || ''),
+      productName: String(row.productName || ''),
+      brand: String(row.brand || ''),
+      category: String(row.category || '').trim(),
+      colorName: String(row.color || ''),
+      availableSizes: [],
+      frontModelImageUrl: String(row.frontModelImageUrl || '').trim(),
+      backModelImageUrl: String(row.backModelImageUrl || '').trim(),
+      frontFlatImageUrl: String(row.frontFlatImageUrl || '').trim(),
+      backFlatImageUrl: String(row.backFlatImageUrl || '').trim(),
+      productImageUrl: String(row.productImage || '').trim(),
+      colorSwatchImageUrl: '',
+    }));
   }, []);
   const [previewCatalog, setPreviewCatalog] = useState<SanMarPreviewItem[]>(fallbackPreviewCatalog);
   const [globalCatalog, setGlobalCatalog] = useState<SanMarPreviewItem[]>(fallbackPreviewCatalog);
@@ -2122,6 +2139,7 @@ export default function Home() {
   const [checkoutStatus, setCheckoutStatus] = useState('');
   const [checkoutContact, setCheckoutContact] = useState({ name: '', organization: '', email: '', phone: '', notes: '' });
   const [checkoutTaxExempt, setCheckoutTaxExempt] = useState(false);
+  const [checkoutAcknowledged, setCheckoutAcknowledged] = useState(false);
   const [checkoutPromoInput, setCheckoutPromoInput] = useState('');
   const [checkoutPromo, setCheckoutPromo] = useState<AppliedPromo | null>(null);
   const [isCheckoutPromoLoading, setIsCheckoutPromoLoading] = useState(false);
@@ -2376,6 +2394,7 @@ export default function Home() {
               uploadedAt: file.updatedAt || file.createdAt || 'Supabase',
               storagePath,
               storageUrl: originalUrl,
+              previewStoragePath: file.previewStoragePath || undefined,
               source: 'supabase' as const,
               mimeType: file.mimeType,
               signWidth: inferredPrintSize?.width,
@@ -2398,13 +2417,13 @@ export default function Home() {
             const designId = designMatch[1];
             const back = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-back\\.png$`, 'i').test(entry.name));
             const project = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-project\\.json$`, 'i').test(entry.name));
-            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
+            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backPreviewStoragePath: back?.previewStoragePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
           }
           const pairMatch = item.name.match(/-huepair-(\d+)-(front|back)\.png$/i);
           if (!pairMatch) return [item];
           if (pairMatch[2].toLowerCase() === 'back') return [];
           const back = pairedSides.get(pairMatch[1])?.back;
-          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
+          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backPreviewStoragePath: back?.previewStoragePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
         });
         let archivedItems: ImageZoneItem[] = [];
         try {
@@ -2928,6 +2947,7 @@ export default function Home() {
     setCheckoutStatus('');
     setCheckoutPromoInput('');
     setCheckoutPromo(null);
+    setCheckoutAcknowledged(false);
     setPaypalCheckoutAvailable(null);
     setPendingPayPalFinalization(false);
     pendingPayPalCheckoutRef.current = null;
@@ -2970,6 +2990,11 @@ export default function Home() {
         setCheckoutStep('fulfillment');
         return null;
       }
+    }
+    if (!checkoutAcknowledged) {
+      setCheckoutStatus('Please confirm the custom-order acknowledgment before submitting your order.');
+      setCheckoutStep('review');
+      return null;
     }
 
     const timestamp = Date.now();
@@ -3017,6 +3042,7 @@ export default function Home() {
           postalCode: checkoutAddress.postalCode.trim()
         } : undefined
       },
+      checkoutAcknowledgment: createCheckoutAcknowledgment(),
       items: cartItems,
       subtotal: cartSubtotal,
       promotion: checkoutPromo ? { code: checkoutPromo.code, description: checkoutPromo.description, discountAmount: checkoutDiscountAmount } : undefined,
@@ -4136,7 +4162,7 @@ export default function Home() {
         }
         const storageFolder = item.storagePath.includes('/') ? item.storagePath.slice(0, item.storagePath.lastIndexOf('/')) : '';
         const derivedBackPath = item.backName && storageFolder ? `${storageFolder}/${item.backName}` : undefined;
-        const storagePaths = Array.from(new Set([item.storagePath, item.backStoragePath || derivedBackPath, item.projectStoragePath].filter(Boolean) as string[]));
+        const storagePaths = Array.from(new Set([item.storagePath, item.previewStoragePath, item.backStoragePath || derivedBackPath, item.backPreviewStoragePath, item.projectStoragePath].filter(Boolean) as string[]));
         for (const storagePath of storagePaths) {
           let response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(storagePath)}`, {
             method: 'DELETE',
@@ -4168,33 +4194,52 @@ export default function Home() {
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
     if (item.source === 'archive') throw new Error('Restore this archived artwork before using it.');
     const isPdfItem = item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name);
-    const hasInlineImagePreview = !isPdfItem && item.dataUrl.startsWith('data:image/');
-    const refreshedUrl = item.source === 'supabase' && item.storagePath && !hasInlineImagePreview
-      ? customerSession?.access_token
-        ? await loadPrivateArtworkFile(item.storagePath, customerSession.access_token)
-            .catch(() => getSignedImageZoneUrl(item.storagePath!))
-        : await getSignedImageZoneUrl(item.storagePath)
-      : item.dataUrl;
+    const designerStoragePath = isPdfItem ? item.storagePath : item.previewStoragePath || item.storagePath;
+    const loadStoredPreview = async (storagePath: string, fallbackUrl?: string) => (customerSession?.access_token
+      ? loadPrivateArtworkFile(storagePath, customerSession.access_token)
+          .catch(() => getSignedImageZoneUrl(storagePath))
+      : getSignedImageZoneUrl(storagePath))
+      .catch((error) => {
+        if (fallbackUrl) return fallbackUrl;
+        throw error;
+      });
+    const backDesignerStoragePath = item.backPreviewStoragePath || item.backStoragePath;
+    const [refreshedUrl, refreshedBackUrl] = await Promise.all([
+      item.source === 'supabase' && designerStoragePath
+        ? loadStoredPreview(designerStoragePath, isPdfItem ? undefined : item.dataUrl)
+        : Promise.resolve(item.dataUrl),
+      item.source === 'supabase' && backDesignerStoragePath
+        ? loadStoredPreview(backDesignerStoragePath, item.backDataUrl)
+        : Promise.resolve(item.backDataUrl),
+    ]);
+    if (!refreshedUrl) throw new Error(`Could not load ${item.name}.`);
     if (isPdfItem) {
       const preview = await renderPdfFirstPage(refreshedUrl);
       const sizedItem = {
         ...item,
         dataUrl: preview.dataUrl,
-        storageUrl: item.storagePath && refreshedUrl !== item.dataUrl ? refreshedUrl : item.storageUrl,
+        backDataUrl: refreshedBackUrl,
+        storageUrl: item.storageUrl,
         width: preview.width,
         height: preview.height,
         dpi: preview.dpi,
         signWidth: preview.signWidth,
         signHeight: preview.signHeight
       };
-      setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
+      setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? { ...entry, width: preview.width, height: preview.height, dpi: preview.dpi, signWidth: preview.signWidth, signHeight: preview.signHeight } : entry));
       return sizedItem;
     }
     const size = item.width > 0 && item.height > 0 && refreshedUrl === item.dataUrl
       ? { width: item.width, height: item.height }
       : await getImageNaturalSize(refreshedUrl);
-    const sizedItem = { ...item, dataUrl: refreshedUrl, storageUrl: item.storagePath && refreshedUrl !== item.dataUrl ? refreshedUrl : item.storageUrl, width: size.width, height: size.height };
-    setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? sizedItem : entry));
+    const backSize = refreshedBackUrl
+      ? refreshedBackUrl === item.backDataUrl && item.backWidth && item.backHeight
+        ? { width: item.backWidth, height: item.backHeight }
+        : await getImageNaturalSize(refreshedBackUrl).catch(() => ({ width: item.backWidth, height: item.backHeight }))
+      : null;
+    const sizedItem = { ...item, dataUrl: refreshedUrl, backDataUrl: refreshedBackUrl, storageUrl: item.storageUrl, width: size.width, height: size.height, backWidth: backSize?.width, backHeight: backSize?.height };
+    // Preserve the 480px thumbnails used by Image Zone while updating dimensions.
+    setImageZoneItems((prev) => prev.map((entry) => entry.id === item.id ? { ...entry, width: size.width, height: size.height, backWidth: backSize?.width, backHeight: backSize?.height } : entry));
     return sizedItem;
   };
 
@@ -4266,6 +4311,7 @@ export default function Home() {
         backDataUrl: undefined,
         backName: undefined,
         backStoragePath: undefined,
+        backPreviewStoragePath: undefined,
         backWidth: undefined,
         backHeight: undefined,
         backCopiedFromFront: true,
@@ -5733,7 +5779,7 @@ export default function Home() {
       let savedItem = item;
       if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
-        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.storageUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', backDataUrl: backStorageInfo?.storageUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, projectStoragePath: projectStorageInfo.storagePath };
+        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.previewUrl || item.dataUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, previewStoragePath: storageInfo.previewStoragePath, source: 'supabase', backDataUrl: backStorageInfo?.previewUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, backPreviewStoragePath: backStorageInfo?.previewStoragePath, projectStoragePath: projectStorageInfo.storagePath };
         setImageZoneItems((previous) => [savedItem, ...previous]);
         setSelectedImageZoneId(storageInfo.storagePath);
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
@@ -6054,6 +6100,7 @@ export default function Home() {
           id: storageInfo.storagePath,
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
+          previewStoragePath: storageInfo.previewStoragePath,
           source: 'supabase'
         };
       }
@@ -6292,6 +6339,7 @@ export default function Home() {
           id: storageInfo.storagePath,
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
+          previewStoragePath: storageInfo.previewStoragePath,
           source: 'supabase'
         } : entry));
         setSelectedImageZoneId(storageInfo.storagePath);
@@ -6313,7 +6361,7 @@ export default function Home() {
     }
   };
 
-  const useImageZoneItem = async (item: ImageZoneItem) => {
+  const applyImageZoneItem = async (item: ImageZoneItem) => {
     setSelectedImageZoneId(item.id);
     let imageItem: ImageZoneItem;
     try {
@@ -6380,7 +6428,7 @@ export default function Home() {
       setSignEstimate(null);
       setImageLibraryStatus(`${imageItem.name} placed on the back. Double-sided pricing is now active.`);
       setShowImageZone(false);
-      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
       return;
     }
     if (isCoroBuilder) {
@@ -6416,7 +6464,7 @@ export default function Home() {
       setPendingBannerPlacement({ dataUrl: imageItem.dataUrl, name: imageItem.name, width: imageItem.width, height: imageItem.height, printWidth: printSize.width, printHeight: printSize.height, targetWidth: guidedTargetSize?.width, targetHeight: guidedTargetSize?.height });
       setImageLibraryStatus(`${imageItem.name} selected for the ${isAutoSidedRigidBuilder ? 'front' : 'banner'}.`);
       setShowImageZone(false);
-      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
       return;
     }
     if (!fabricCanvasRef.current) {
@@ -6426,7 +6474,7 @@ export default function Home() {
       setStoreCategory(targetProductId === 'banner' ? 'banners' : 'coro');
       setStoreView('builder');
       setShowImageZone(false);
-      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
       return;
     }
     try {
@@ -6474,6 +6522,7 @@ export default function Home() {
           uploadedAt: new Date().toLocaleString(),
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
+          previewStoragePath: storageInfo.previewStoragePath,
           source: customerSession?.access_token ? 'supabase' : 'local',
           mimeType: storageInfo.mimeType || file.type,
           signWidth: detectedPrintSize?.width,
@@ -6629,6 +6678,7 @@ export default function Home() {
             dataUrl: entry.dataUrl || savedPreviewUrl,
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
+            previewStoragePath: storageInfo.previewStoragePath,
             source: 'supabase',
             mimeType: storageInfo.mimeType || entry.mimeType,
             width: Number(storageInfo.width || entry.width),
@@ -6639,6 +6689,7 @@ export default function Home() {
             id: storageInfo.storagePath,
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
+            previewStoragePath: storageInfo.previewStoragePath,
             source: 'supabase'
           } : entry));
           setRigidBackArtwork((prev) => prev?.id === localItemId ? {
@@ -6646,6 +6697,7 @@ export default function Home() {
             id: storageInfo.storagePath,
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
+            previewStoragePath: storageInfo.previewStoragePath,
             source: 'supabase'
           } : prev);
           setSelectedImageZoneId(storageInfo.storagePath);
@@ -6715,6 +6767,7 @@ export default function Home() {
 
 
   useEffect(() => {
+    if (productMode !== 'apparel') return;
     let canceled = false;
 
     Promise.all(ALL_CATEGORY_SLUGS.map(async (slug) => {
@@ -6735,7 +6788,7 @@ export default function Home() {
     return () => {
       canceled = true;
     };
-  }, [fallbackPreviewCatalog]);
+  }, [fallbackPreviewCatalog, productMode]);
 
   useEffect(() => {
     const slug = categoryFilter as CategoryChunkSlug;
@@ -7547,7 +7600,7 @@ export default function Home() {
     return option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query.replace(/\s/g, ''));
   });
 
-  const useCompactBuilderLayout = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+  const isCompactBuilderLayout = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
 
   const openStoreCategory = (categoryId: StoreCategoryId) => {
     const categoryChanged = categoryId !== storeCategory;
@@ -7566,7 +7619,7 @@ export default function Home() {
       setProductMode('signage');
       setSignProductId('yard-sign');
       setStoreView('builder');
-      setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+      setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
       return;
     }
     if (categoryId === 'apparel') {
@@ -7606,7 +7659,7 @@ export default function Home() {
       setSignEstimate(null);
     }
     setStoreView('builder');
-    if (product.signProductId) setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+    if (product.signProductId) setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
   };
 
   const openGuidedTour = () => {
@@ -7705,7 +7758,7 @@ export default function Home() {
       setSignEstimate(null);
     }
     setStoreView('builder');
-    setActiveCoroOptionPanel(useCompactBuilderLayout() ? null : 'images');
+    setActiveCoroOptionPanel(isCompactBuilderLayout() ? null : 'images');
     setShowGuidedTour(false);
     setBuilderWalkthroughStep(0);
     setShowBuilderWalkthrough(true);
@@ -7743,7 +7796,7 @@ export default function Home() {
     if (!item || product.disabled) return;
     setImageZoneProductChoice(null);
     setShowImageZone(false);
-    if (useCompactBuilderLayout()) setActiveCoroOptionPanel(null);
+    if (isCompactBuilderLayout()) setActiveCoroOptionPanel(null);
     setStoreCategory(product.category);
     setQueuedImageZonePlacementAttempt(0);
     setQueuedImageZonePlacement({ item, product });
@@ -7768,7 +7821,7 @@ export default function Home() {
       return () => window.clearTimeout(timer);
     }
     setQueuedImageZonePlacement(null);
-    void useImageZoneItem(item);
+    void applyImageZoneItem(item);
   }, [queuedImageZonePlacement, queuedImageZonePlacementAttempt, storeView, productMode, signProductId]);
 
   const selectSignProductForBuilder = (nextProductId: SignProductId) => {
@@ -7782,7 +7835,7 @@ export default function Home() {
     setSignProductId(nextProductId);
     if (nextProduct) setSignValues(getDefaultSignValues(nextProduct));
     setSignEstimate(null);
-    setActiveCoroOptionPanel(nextProductId === 'yard-sign' || nextProduct?.preview === 'banner' ? (useCompactBuilderLayout() ? null : 'images') : null);
+    setActiveCoroOptionPanel(nextProductId === 'yard-sign' || nextProduct?.preview === 'banner' ? (isCompactBuilderLayout() ? null : 'images') : null);
   };
 
   const updateSignOption = (name: string, value: string | boolean) => {
@@ -7975,7 +8028,7 @@ export default function Home() {
         <div className={`hue-site-header-inner mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 ${isProductionBuilder ? 'justify-between' : ''}`}>
           <div className="hue-mobile-brand flex min-w-0 flex-1 items-center gap-3">
             <div className={`hue-mobile-logo ${isProductionBuilder ? 'h-14 w-[300px] rounded-md border border-white/20 shadow-[0_0_28px_rgba(22,120,184,0.20)] md:w-[360px]' : 'h-16 w-[340px] rounded-lg border-[3px]'} flex shrink-0 items-center justify-center overflow-hidden border-[#1678b8] bg-transparent shadow-sm`}>
-              <img src="/brand/hue-studio-logo.png" alt="Hue Studio - Design, Upload, Order" className="h-full w-full object-contain" />
+              <img src="/brand/hue-studio-logo.webp" alt="Hue Studio - Design, Upload, Order" width={1200} height={342} fetchPriority="high" decoding="async" className="h-full w-full object-contain" />
             </div>
             <div className="sr-only">
               <p className={`text-xs font-black uppercase tracking-[0.24em] ${isProductionBuilder ? 'text-[#57c8ff]' : 'text-[#1f73be]'}`}>Hue Graphics / Est. 2008</p>
@@ -8315,7 +8368,7 @@ export default function Home() {
                 </div>
                 <div className="relative mx-auto mt-7 h-[490px] max-w-[560px] overflow-hidden rounded-[28px] border border-[#38bdf8]/20 bg-[#e8edf1] shadow-[0_28px_45px_rgba(0,0,0,0.48)]">
                   <div className="absolute inset-y-0 left-1/2 w-[80%] -translate-x-1/2 overflow-hidden">
-                    <img src={dtgColor === '#ffffff' ? '/dtg-bc3001-white.png' : '/dtg-bc3001-black.png'} alt={`Bella+Canvas BC3001 ${dtgColor === '#ffffff' ? 'white' : 'black'} ${dtgSide} shirt`} className={`pointer-events-none absolute top-0 h-full w-auto max-w-none select-none ${dtgColor === '#ffffff' ? 'mix-blend-multiply contrast-110' : ''}`} style={{ left: '50%', transform: `translateX(${dtgSide === 'front' ? '-25%' : '-75%'})` }} />
+                    <img src={dtgColor === '#ffffff' ? '/dtg-bc3001-white.webp' : '/dtg-bc3001-black.webp'} alt={`Bella+Canvas BC3001 ${dtgColor === '#ffffff' ? 'white' : 'black'} ${dtgSide} shirt`} loading="lazy" decoding="async" className={`pointer-events-none absolute top-0 h-full w-auto max-w-none select-none ${dtgColor === '#ffffff' ? 'mix-blend-multiply contrast-110' : ''}`} style={{ left: '50%', transform: `translateX(${dtgSide === 'front' ? '-25%' : '-75%'})` }} />
                   </div>
                   <div className="absolute top-[31%] z-10 aspect-[12.5/15.7] w-[27%] -translate-x-1/2 border border-dashed border-[#168dce]/65 bg-white/[0.025]" style={{ left: dtgColor === '#ffffff' ? '47.5%' : '55.5%' }}>
                     <span className="absolute -top-6 left-1/2 whitespace-nowrap rounded bg-[#07131e]/90 px-2 py-1 text-[8px] font-black uppercase tracking-wide text-[#67d8ff] shadow-sm">Max print area 12.5&quot; × 15.7&quot;</span>
@@ -8345,6 +8398,7 @@ export default function Home() {
           </div>
         </section>
       ) : storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart && !showNewArtworkDialog && !showArtworkEditor ? (
+        <>
         <section className="hue-store-shell mx-auto w-full min-w-0 max-w-[1800px] px-4 py-3 md:px-6">
           <div className="hue-store-layout grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className={`hue-mobile-product-nav rounded-lg p-4 shadow-[0_18px_48px_rgba(7,17,31,0.08)] lg:sticky lg:top-24 ${isProductionBuilder ? 'border border-white/25 bg-[#07111f]/82 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur' : 'border border-white/80 bg-white/92'}`}>
@@ -8423,6 +8477,16 @@ export default function Home() {
             </section>
           </div>
         </section>
+        <footer className="mx-auto mt-5 flex w-[calc(100%-2rem)] max-w-[1750px] flex-col gap-4 border-t border-white/10 px-1 py-6 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+          <p>Hue Studio by Hue Graphics · Custom printing in Bethlehem, Georgia</p>
+          <nav aria-label="Hue Studio information" className="flex flex-wrap gap-x-5 gap-y-2 font-bold text-slate-300">
+            <a href="/products" className="hover:text-[#67d8ff]">Products</a>
+            <a href="/help" className="hover:text-[#67d8ff]">Help</a>
+            <a href="https://www.huegraphics.cc" className="hover:text-[#67d8ff]">Hue Graphics</a>
+            <a href="https://www.huegraphics.cc/contact" className="hover:text-[#67d8ff]">Contact</a>
+          </nav>
+        </footer>
+        </>
       ) : (
       <>
       <div className={`mx-auto grid gap-4 xl:items-start ${isProductionBuilder ? 'min-h-0 w-full flex-1 max-w-none px-0 py-0 xl:grid-cols-1' : 'max-w-[1800px] px-4 py-4 md:px-6 xl:grid-cols-[300px_minmax(520px,1fr)_360px]'}`}>
@@ -8542,7 +8606,7 @@ export default function Home() {
               </div> : null}
               {productMode === 'signage' ? <div className={`hue-builder-summary absolute z-10 grid items-start gap-3 text-slate-700 ${isProductionBuilder ? isCoroBuilder ? `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[6vw]'} right-4 top-4 lg:grid-cols-[minmax(260px,380px)_minmax(0,1fr)_minmax(260px,330px)]` : `${activeCoroOptionPanel === 'images' ? 'left-[380px]' : 'left-[8vw]'} right-[5vw] top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(320px,480px)_minmax(180px,240px)]` : 'inset-x-6 top-4 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.1fr)_minmax(160px,0.6fr)_160px]'}`}>
                 <div className={`hue-builder-product-card flex items-start gap-3 ${builderTourHighlightClass('product')} ${isProductionBuilder ? `${isCoroBuilder ? 'lg:col-start-1 lg:row-span-2' : ''} max-w-sm rounded-xl border border-white/10 bg-[#06111d]/54 px-4 py-2.5 shadow-[0_0_38px_rgba(14,165,233,0.12)] backdrop-blur` : ''}`}>
-                  <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.png" alt="Hue Graphics" className="h-full w-full object-cover" /></div>
+                  <div className={`${isProductionBuilder ? 'hidden' : 'hidden h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-[#1678b8] bg-[#05090b] sm:block'}`}><img src="/brand/hue-graphics-mark.webp" alt="Hue Graphics" width={512} height={512} className="h-full w-full object-cover" /></div>
                   <div>
                     <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${isProductionBuilder ? 'text-[#62d4ff]' : 'text-[#1678b8]'}`}>Order Builder</p>
                     <p className={`${isProductionBuilder ? 'text-3xl font-normal tracking-tight text-white' : 'text-2xl font-black tracking-tight text-slate-950'}`}>{selectedSignProduct.id === 'vehicle-magnet' ? magnetDisplayName : isBannerBuilder ? bannerDisplayName : selectedSignProduct.name}</p>
@@ -8792,7 +8856,7 @@ export default function Home() {
               {isProductionBuilder && !isCoroBuilder && !isBannerBuilder && activeCoroOptionPanel === 'images' ? <aside className={`hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)] ${builderTourHighlightClass('artwork')}`}>
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3">
-                    <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+                    <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span>
                     <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Order Builder</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p></div>
                   </div>
                   <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
@@ -8817,13 +8881,13 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await applyImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
               {isBannerBuilder && !isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className={`hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)] ${builderTourHighlightClass('artwork')}`}>
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-                  <div className="flex items-center gap-3"><span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Order Builder</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p></div></div>
+                  <div className="flex items-center gap-3"><span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Order Builder</p><p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p></div></div>
                   <p className="mt-3 text-xs leading-5 text-slate-300">Build and review every print-ready artwork set.</p>
                 </div>
                 {savedBannerItemsBeforeActive.length > 0 ? <div className="mb-3 space-y-3">
@@ -8881,14 +8945,14 @@ export default function Home() {
                 {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600">{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
-                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
+                  <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await applyImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
                 </div>
                 <button type="button" onClick={() => setActiveCoroOptionPanel(null)} className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-xs font-bold text-slate-400 hover:border-white/20 hover:bg-white/[0.04] hover:text-white">View Production Canvas</button>
               </aside> : null}
               {isCoroBuilder && activeCoroOptionPanel === 'images' ? <aside className={`hue-artwork-panel hue-mobile-artwork-panel absolute bottom-20 left-4 top-20 z-20 w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[22px] border border-white/10 bg-[#07111f] p-3 text-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.58),0_0_50px_rgba(14,165,233,0.18)] ${builderTourHighlightClass('artwork')}`}>
                 <div className="hue-artwork-header mb-3 overflow-hidden rounded-2xl border border-[#38bdf8]/20 bg-[#081827] px-4 py-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center gap-3">
-                    <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+                    <span className="hue-artwork-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span>
                     <div className="min-w-0">
                       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Graphics</p>
                       <p className="mt-0.5 text-[17px] font-black tracking-tight text-white">Artwork Setup</p>
@@ -9021,7 +9085,7 @@ export default function Home() {
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">
                     {imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
-                      return <button key={item.id} type="button" onClick={async () => { await useImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
+                      return <button key={item.id} type="button" onClick={async () => { await applyImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
                         {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
@@ -9752,11 +9816,26 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+              <label className={`flex cursor-pointer gap-3 rounded-xl border p-4 transition-colors ${checkoutAcknowledged ? 'border-emerald-400/40 bg-emerald-400/10' : 'border-amber-300/35 bg-amber-300/[0.08]'}`}>
+                <input
+                  type="checkbox"
+                  checked={checkoutAcknowledged}
+                  onChange={(event) => {
+                    setCheckoutAcknowledged(event.target.checked);
+                    if (event.target.checked) setCheckoutStatus('');
+                  }}
+                  className="mt-1 h-5 w-5 shrink-0 accent-emerald-500"
+                />
+                <span>
+                  <span className="block text-sm font-black text-white">Custom-order acknowledgment</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-300">{CUSTOM_ORDER_ACKNOWLEDGMENT_STATEMENT}</span>
+                </span>
+              </label>
               <div className="rounded-xl border border-[#62d4ff]/25 bg-[#0ea5e9]/10 p-4">
                 {paypalCheckoutAvailable === false ? <p className="text-sm text-[#c8f2ff]">PayPal Checkout is currently disabled or not configured. You can still submit this as a no-payment test order.</p> : <div className="space-y-3">
                   <p className="text-sm font-bold text-[#c8f2ff]">Pay securely with PayPal to submit this order.</p>
                   <PayPalCheckoutButton
-                    disabled={isSubmittingTestOrder}
+                    disabled={isSubmittingTestOrder || !checkoutAcknowledged}
                     createOrder={createPayPalCheckoutOrder}
                     onApprove={approvePayPalCheckoutOrder}
                     onCancel={() => setCheckoutStatus('PayPal checkout was cancelled. Your cart is still here.')}
@@ -9838,7 +9917,7 @@ export default function Home() {
               {checkoutStep === 'contact' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('fulfillment'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Continue</button> : null}
               {checkoutStep === 'fulfillment' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('review'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Review Order</button> : null}
               {checkoutStep === 'review' && pendingPayPalFinalization ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void finalizeCapturedPayPalOrder()} className="rounded bg-amber-500 px-4 py-3 text-xs font-black uppercase text-slate-950 hover:bg-amber-400 disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing...' : 'Finalize Paid Order'}</button> : null}
-              {checkoutStep === 'review' && paypalCheckoutAvailable === false ? <button type="button" disabled={isSubmittingTestOrder} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : 'Submit Test Order'}</button> : null}
+              {checkoutStep === 'review' && paypalCheckoutAvailable === false ? <button type="button" disabled={isSubmittingTestOrder || !checkoutAcknowledged} onClick={() => void submitTestOrder()} className="rounded bg-[#22c55e] px-4 py-3 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait disabled:opacity-60">{isSubmittingTestOrder ? 'Finalizing Order...' : checkoutAcknowledged ? 'Submit Test Order' : 'Confirm Above to Submit'}</button> : null}
               {checkoutStep === 'complete' ? <button type="button" onClick={() => setShowTestCheckout(false)} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Done</button> : null}
             </div>
           </div>
@@ -9849,7 +9928,7 @@ export default function Home() {
         <section className="w-[min(600px,94vw)] overflow-hidden rounded-[22px] border border-[#38bdf8]/30 bg-[#07111f] text-white shadow-[0_36px_120px_rgba(0,0,0,0.76),0_0_70px_rgba(14,165,233,0.20)]">
           <div className="relative border-b border-white/10 bg-[#081827] px-6 py-5">
             <div className="flex items-center gap-3">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span>
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Graphics / Artwork check</p>
                 <h2 id="acrylic-artwork-notice-title" className="mt-1 text-xl font-black tracking-tight">Transparent PNG required</h2>
@@ -10209,7 +10288,7 @@ export default function Home() {
         <section className="hue-image-library flex h-full w-full flex-col overflow-hidden border border-[#38bdf8]/25 bg-[#07111f] text-slate-950 shadow-[0_36px_120px_rgba(0,0,0,0.72),0_0_60px_rgba(14,165,233,0.16)] sm:h-[min(800px,90vh)] sm:w-[min(1380px,96vw)] sm:rounded-[22px]">
           <div className="hue-image-library-header relative flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#071522]/95 px-5 py-4 text-white">
             <div className="hue-image-library-brand mr-auto flex min-w-[280px] items-center gap-3">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span>
               <div className="min-w-0 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Studio</p><h2 className="mt-0.5 text-xl font-black tracking-tight">Image Zone</h2><p className="mt-0.5 text-xs text-slate-400">Your saved artwork library</p></div>
               <button type="button" aria-label="Close Image Zone" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="hue-image-library-mobile-close hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] text-lg font-bold text-slate-300">×</button>
             </div>
@@ -10275,7 +10354,7 @@ export default function Home() {
                     <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
                     <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'archive' ? 'Hue Vault saved' : item.source === 'supabase' ? 'Hue Library ready' : 'Session preview'}</p>
                     <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
-                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await useImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">{item.source === 'archive' ? 'Restore & Use' : 'Use'}</button>{item.source !== 'archive' ? <button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button> : null}</div>
+                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await applyImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">{item.source === 'archive' ? 'Restore & Use' : 'Use'}</button>{item.source !== 'archive' ? <button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button> : null}</div>
                   </div>
                 </article>;
               })}
@@ -10290,7 +10369,7 @@ export default function Home() {
               <button type="button" disabled={!selectedImageZoneId} onClick={async () => {
                 const item = imageZoneItems.find((entry) => entry.id === selectedImageZoneId);
                 if (!item) return;
-                await useImageZoneItem(item);
+                await applyImageZoneItem(item);
               }} className="rounded-xl bg-[#1686c9] px-6 py-2.5 text-sm font-black uppercase text-white shadow-[0_12px_28px_rgba(14,165,233,0.22)] hover:bg-[#0f6da8] disabled:cursor-not-allowed disabled:opacity-35">{showArtworkEditor ? 'Add to Design' : 'Use Selected Artwork'}</button>
             </div>
           </div>
@@ -10301,7 +10380,7 @@ export default function Home() {
         <section className="flex h-full w-full flex-col overflow-hidden bg-[#071522] text-white">
           <header className="shrink-0 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_34%),#081827] px-5 py-4 md:px-8">
             <div className="mx-auto flex max-w-[1600px] items-center gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.png" alt="" className="h-full w-full object-cover" /></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#38bdf8]/35 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#67d8ff]">Hue Studio + Canva</p>
                 <h2 className="mt-1 text-2xl font-black tracking-tight md:text-3xl">Choose a Canva design</h2>

@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { archiveStaleCustomerArtwork, cleanupExpiredGuestUploads, cleanupVerifiedSupabaseArtwork, getArtworkArchiveStats } from '@/lib/server/artwork-archive';
+import { CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, GUEST_UPLOAD_RETENTION_HOURS, ORDER_DRIVE_ARCHIVE_DELAY_DAYS } from '@/lib/server/artwork-retention';
 import { isGoogleDriveArchiveConfigured } from '@/lib/server/google-drive';
 import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/order-drive-archive';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const ORDER_DRIVE_ARCHIVE_DELAY_DAYS = 1;
-const GUEST_UPLOAD_RETENTION_HOURS = 24 * 7;
 
 const authorized = (request: NextRequest) => {
   const secret = process.env.CRON_SECRET || '';
@@ -29,7 +28,7 @@ export async function GET(request: NextRequest) {
         archiveResults.push({ orderNumber: order.order_number, ok: result.ok });
       }
     }
-    const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: 30, limit: 25 });
+    const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, limit: 25 });
     const cleanup = await cleanupVerifiedSupabaseArtwork({ limit: 100 });
     const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: GUEST_UPLOAD_RETENTION_HOURS, limit: 100 });
     return NextResponse.json({ ok: true, staleArchive, cleanup, guestCleanup, archiveResults, stats: await getArtworkArchiveStats() });

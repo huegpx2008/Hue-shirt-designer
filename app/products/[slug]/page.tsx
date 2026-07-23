@@ -39,7 +39,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
     <main className="seo-shell">
       <header className="seo-header">
         <Link href="/" className="seo-brand" aria-label="Hue Studio home">
-          <img src="/brand/hue-graphics-mark.png" alt="" />
+          <img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} />
           <span><small>Hue Graphics / Est. 2008</small><strong>Hue Studio</strong></span>
         </Link>
         <Link href="/products" className="seo-header-link">All products</Link>

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { hasValidCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { applyAuthoritativeOrderPricing, type ServerPricedOrderItem } from '@/lib/server/order-pricing';
 import { createPayPalOrder, createPayPalToken, getPayPalConfig } from '@/lib/server/paypal';
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
@@ -7,6 +8,7 @@ import { hasSupabaseAdminConfig, supabaseAdminFetch, verifySupabaseAccessToken }
 type CheckoutOrder = {
   id?: string;
   customer?: { email?: string; userId?: string; taxExempt?: boolean };
+  checkoutAcknowledgment?: CheckoutAcknowledgment;
   fulfillment?: { method?: 'pickup' | 'direct_ship'; address?: { state?: string } };
   items?: ServerPricedOrderItem[];
   promotion?: { code?: string; description?: string; discountAmount?: number };
@@ -41,6 +43,7 @@ export async function POST(request: Request) {
     const submissionKey = validSubmissionKey(order?.id);
     const customerEmail = String(order?.customer?.email || '').trim().toLowerCase();
     if (!order || !submissionKey || !customerEmail || !order.items?.length) throw new Error('The checkout information is incomplete.');
+    if (!hasValidCheckoutAcknowledgment(order.checkoutAcknowledgment)) throw new Error('Confirm the custom-order acknowledgment before paying.');
 
     const accessToken = getBearerToken(request);
     const verifiedUser = accessToken ? await verifySupabaseAccessToken(accessToken) : null;

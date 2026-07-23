@@ -34,6 +34,7 @@ required('QUOTE_FROM_EMAIL');
 required('NEXT_PUBLIC_SITE_URL');
 minLength('ADMIN_DASHBOARD_SECRET', 24);
 minLength('ADMIN_SESSION_SECRET', 32);
+minLength('CRON_SECRET', 32);
 
 if (value('NEXT_PUBLIC_SUPABASE_URL') && !validHttpsUrl(value('NEXT_PUBLIC_SUPABASE_URL'))) failures.push('NEXT_PUBLIC_SUPABASE_URL must be a valid HTTPS URL.');
 if (value('NEXT_PUBLIC_SITE_URL') && !validHttpsUrl(value('NEXT_PUBLIC_SITE_URL'))) failures.push('NEXT_PUBLIC_SITE_URL must be the deployed HTTPS origin.');
@@ -43,6 +44,15 @@ if (value('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY') && value('SUPABASE_SERVICE_ROL
 if (value('ADMIN_DASHBOARD_SECRET') && value('ADMIN_SESSION_SECRET') && value('ADMIN_DASHBOARD_SECRET') === value('ADMIN_SESSION_SECRET')) failures.push('ADMIN_SESSION_SECRET must differ from ADMIN_DASHBOARD_SECRET.');
 if (!value('ARTWORK_LINK_SECRET')) warnings.push('ARTWORK_LINK_SECRET is missing; private artwork links fall back to the service-role key. A dedicated 32+ character secret is recommended.');
 else if (value('ARTWORK_LINK_SECRET').length < 32) warnings.push('ARTWORK_LINK_SECRET should be at least 32 characters.');
+
+const indexingValue = (value('ALLOW_INDEXING') || value('NEXT_PUBLIC_ALLOW_INDEXING')).toLowerCase();
+if (!['true', 'false'].includes(indexingValue)) failures.push('ALLOW_INDEXING must be explicitly set to true or false.');
+if (value('NEXT_PUBLIC_SITE_URL') && validHttpsUrl(value('NEXT_PUBLIC_SITE_URL'))) {
+  const siteHostname = new URL(value('NEXT_PUBLIC_SITE_URL')).hostname.toLowerCase();
+  if (siteHostname === 'studio.huegraphics.cc' && indexingValue !== 'true') failures.push('ALLOW_INDEXING must be true on the production Hue Studio domain.');
+  if ((siteHostname.endsWith('.vercel.app') || siteHostname === 'localhost' || siteHostname === '127.0.0.1') && indexingValue === 'true') failures.push('ALLOW_INDEXING must stay false on preview and local deployments.');
+}
+if (!value('GOOGLE_SITE_VERIFICATION')) warnings.push('GOOGLE_SITE_VERIFICATION is not configured; add it after connecting Google Search Console.');
 
 const checkoutValue = value('CHECKOUT_ENABLED').toLowerCase();
 if (!checkoutValue) warnings.push('CHECKOUT_ENABLED is unset and therefore defaults to true. Set it explicitly for launch.');

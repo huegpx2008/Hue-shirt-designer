@@ -29,7 +29,7 @@ export default async function CatalogDebugPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl p-6">
       <h1 className="mb-2 text-2xl font-semibold">Catalog Debug Preview</h1>
-      <p className="mb-6 text-sm text-slate-600">Showing first {items.length} usable rows parsed from SanMar_SDL_N_main_downsize.xlsx.</p>
+      <p className="mb-6 text-sm text-slate-600">Showing the first {items.length} usable rows from the generated catalog preview.</p>
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full text-left text-sm">
           <thead className="bg-slate-100">

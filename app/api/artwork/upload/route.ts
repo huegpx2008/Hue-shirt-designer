@@ -71,12 +71,11 @@ const getPreviewPath = (storagePath: string) => {
   return `${folder ? `${folder}/` : ''}previews/${previewName}-preview.webp`;
 };
 
-const createFlattenedImagePreview = async (buffer: Buffer, mimeType: string) => {
+const createDesignerImagePreview = async (buffer: Buffer, mimeType: string) => {
   if (!mimeType.startsWith('image/') || mimeType === 'image/gif') return null;
   const preview = await sharp(buffer, { limitInputPixels: false })
     .rotate()
     .resize({ width: PREVIEW_MAX_DIMENSION, height: PREVIEW_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
-    .flatten({ background: '#ffffff' })
     .webp({ quality: 82, effort: 4 })
     .toBuffer({ resolveWithObject: true });
   return {
@@ -150,18 +149,18 @@ export async function POST(request: Request) {
         let previewUrl: string | undefined;
         let previewWidth: number | undefined;
         let previewHeight: number | undefined;
-        const flattenedPreview = await createFlattenedImagePreview(buffer, validated.mimeType).catch(() => null);
-        if (flattenedPreview) {
+        const designerPreview = await createDesignerImagePreview(buffer, validated.mimeType).catch(() => null);
+        if (designerPreview) {
           previewStoragePath = getPreviewPath(storagePath);
-          const { error: previewError } = await storage.upload(previewStoragePath, flattenedPreview.bytes, {
-            contentType: flattenedPreview.mimeType,
+          const { error: previewError } = await storage.upload(previewStoragePath, designerPreview.bytes, {
+            contentType: designerPreview.mimeType,
             cacheControl: '604800',
             upsert: true,
           });
           if (!previewError) {
             previewUrl = await getStorageSignedUrl(previewStoragePath, 3600);
-            previewWidth = flattenedPreview.width;
-            previewHeight = flattenedPreview.height;
+            previewWidth = designerPreview.width;
+            previewHeight = designerPreview.height;
           }
         }
         const storageUrl = await getStorageSignedUrl(storagePath, 3600);

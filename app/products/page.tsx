@@ -1,3 +1,16 @@
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Custom Printing Products',
+  description: 'Browse custom banners, yard signs, rigid signs, decals, magnets, posters, business cards and apparel options available from Hue Graphics.',
+  alternates: { canonical: '/products' },
+  openGraph: {
+    title: 'Custom Printing Products | Hue Studio',
+    description: 'Browse custom printing products and choose the right material and ordering path for your project.',
+    url: '/products',
+  },
+};
+
 type CatalogProduct = {
   title: string;
   subtitle: string;

@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-XLSX_PATH = Path('public/data/SanMar_SDL_N_main_downsize.xlsx')
+XLSX_PATH = Path('data/source/SanMar_SDL_N_main_downsize.xlsx')
 CATALOG_DIR = Path('public/data/catalog')
 AUDIT_PATH = CATALOG_DIR / 'catalog-audit.generated.json'
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'

@@ -1,3 +1,16 @@
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Hue Studio Help',
+  description: 'Learn how to choose a product, add artwork, review production details, get pricing and submit a custom printing order through Hue Studio.',
+  alternates: { canonical: '/help' },
+  openGraph: {
+    title: 'Hue Studio Help',
+    description: 'A quick guide to designing, uploading and ordering custom printing through Hue Studio.',
+    url: '/help',
+  },
+};
+
 export default function HelpPage() {
   return (
     <main className="min-h-screen bg-[#050b12] px-5 py-8 text-slate-100 md:px-8">

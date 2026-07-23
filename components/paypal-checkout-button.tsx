@@ -53,7 +53,10 @@ export default function PayPalCheckoutButton({ createOrder, onApprove, onCancel,
   const callbacksRef = useRef({ createOrder, onApprove, onCancel, onError, onAvailabilityChange });
   const [environment, setEnvironment] = useState<'sandbox' | 'live'>('sandbox');
   const [loading, setLoading] = useState(true);
-  callbacksRef.current = { createOrder, onApprove, onCancel, onError, onAvailabilityChange };
+
+  useEffect(() => {
+    callbacksRef.current = { createOrder, onApprove, onCancel, onError, onAvailabilityChange };
+  }, [createOrder, onApprove, onCancel, onError, onAvailabilityChange]);
 
   useEffect(() => {
     let active = true;

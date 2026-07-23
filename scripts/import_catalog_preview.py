@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-XLSX_PATH = Path('public/data/SanMar_SDL_N_main_downsize.xlsx')
+XLSX_PATH = Path('data/source/SanMar_SDL_N_main_downsize.xlsx')
 OUTPUT_PATH = Path('public/data/sanmar-catalog.sample.generated.json')
 CATALOG_DIR = Path('public/data/catalog')
 MAX_ROWS_DEFAULT = 500

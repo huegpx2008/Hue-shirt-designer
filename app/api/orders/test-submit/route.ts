@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { hasValidCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
 import { verifyPayPalToken, type PayPalPaymentToken } from "@/lib/server/paypal";
@@ -50,6 +51,7 @@ type TestOrderEmailPayload = {
     orderNumber?: string;
     createdAt?: string;
     currency?: string;
+    checkoutAcknowledgment?: CheckoutAcknowledgment;
     customer?: {
       name?: string;
       organization?: string;
@@ -191,7 +193,7 @@ type HueContactInfo = {
   address?: string;
 };
 
-const HUE_STUDIO_LOGO_PATH = '/brand/hue-studio-logo.png';
+const HUE_STUDIO_LOGO_PATH = '/brand/hue-studio-logo-email.png';
 
 const buildAbsoluteUrl = (origin: string, path: string) => new URL(path, origin).toString();
 
@@ -589,6 +591,10 @@ export async function POST(request: Request) {
   if (!order?.customer?.email || !order.items?.length) {
     return NextResponse.json({ error: "Customer email and at least one item are required." }, { status: 400 });
   }
+  if (!hasValidCheckoutAcknowledgment(order.checkoutAcknowledgment)) {
+    return NextResponse.json({ error: 'Confirm the custom-order acknowledgment before submitting this order.' }, { status: 400 });
+  }
+  const checkoutAcknowledgment = order.checkoutAcknowledgment;
   if (!hasSupabaseAdminConfig()) {
     return NextResponse.json({ error: 'Checkout is temporarily unavailable because secure order storage is not configured.' }, { status: 503 });
   }
@@ -629,6 +635,7 @@ export async function POST(request: Request) {
       if (!existing.order_data?.customer || !existing.order_data.items?.length) throw new Error('The stored order data is incomplete.');
       storedRecord = existing;
       order = existing.order_data;
+      order.checkoutAcknowledgment = checkoutAcknowledgment;
       verifiedPayment = await verifyCompletedPayPalPayment(order, submissionKey, payload.paymentToken);
       order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
       validateOrderArtworkOwnership(order, { existingOrderNumber: existing.order_number });

@@ -8,6 +8,7 @@ import {
   hasSupabaseAdminConfig,
   verifySupabaseAccessToken,
 } from '@/lib/server/supabase-admin';
+import { getArtworkDisplayName } from '@/lib/server/artwork-storage-name';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -17,7 +18,7 @@ type StorageListEntry = {
   name: string;
   created_at?: string | null;
   updated_at?: string | null;
-  metadata?: { size?: number | string; mimetype?: string; mimeType?: string } | null;
+  metadata?: ({ size?: number | string; mimetype?: string; mimeType?: string } & Record<string, unknown>) | null;
 };
 
 const getBearerToken = (request: Request) => {
@@ -63,7 +64,7 @@ const isRasterImage = (name: string, mimeType?: string) => Boolean(
   || /\.(png|jpe?g|webp|gif)$/i.test(name)
 );
 
-type InlinePreview = { dataUrl: string; width: number; height: number };
+type InlinePreview = { dataUrl: string; width: number; height: number; sourcePath: string };
 
 const createInlinePreview = async (storagePath: string) => {
   const storage = getSupabaseAdminClient().storage.from(getStorageBucket());
@@ -79,6 +80,7 @@ const createInlinePreview = async (storagePath: string) => {
     dataUrl: `data:image/webp;base64,${preview.data.toString('base64')}`,
     width: preview.info.width,
     height: preview.info.height,
+    sourcePath: storagePath,
   } satisfies InlinePreview;
 };
 
@@ -185,13 +187,14 @@ export async function GET(request: NextRequest) {
       const mimeType = mimeTypeFromName(file.name) || file.metadata?.mimetype || file.metadata?.mimeType || undefined;
       const previewPath = getPreviewPath(file.path);
       const inlinePreview = inlinePreviews.get(file.path);
+      const hasStoredPreview = previewPaths.has(previewPath) || inlinePreview?.sourcePath === previewPath;
       return {
         id: file.id || file.path,
-        name: file.name,
+        name: getArtworkDisplayName(file.name, file.metadata),
         storagePath: file.path,
         storageUrl: await getStorageSignedUrl(file.path, 3600).catch(() => null),
-        previewStoragePath: previewPaths.has(previewPath) ? previewPath : null,
-        previewUrl: previewPaths.has(previewPath) ? await getStorageSignedUrl(previewPath, 3600).catch(() => null) : null,
+        previewStoragePath: hasStoredPreview ? previewPath : null,
+        previewUrl: hasStoredPreview ? await getStorageSignedUrl(previewPath, 3600).catch(() => null) : null,
         previewDataUrl: inlinePreview?.dataUrl || null,
         previewWidth: inlinePreview?.width,
         previewHeight: inlinePreview?.height,

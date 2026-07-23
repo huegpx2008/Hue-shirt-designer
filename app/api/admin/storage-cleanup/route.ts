@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { archiveStaleCustomerArtwork, cleanupExpiredGuestUploads, getArtworkArchiveStats, cleanupVerifiedSupabaseArtwork } from '@/lib/server/artwork-archive';
+import { CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, GUEST_UPLOAD_RETENTION_HOURS, ORDER_DRIVE_ARCHIVE_DELAY_DAYS } from '@/lib/server/artwork-retention';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
 import { isGoogleDriveArchiveConfigured } from '@/lib/server/google-drive';
 import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/order-drive-archive';
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
-const GUEST_UPLOAD_RETENTION_HOURS = 24 * 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-const recentUnarchivedOrders = async () => {
+const eligibleUnarchivedOrders = async (emergency = false) => {
   const orders = await supabaseAdminFetch(
     '/rest/v1/hue_orders?select=*&order=created_at.desc&limit=100',
   ) as DriveArchiveOrder[];
-  return orders.filter((order) => order.drive_archive_status !== 'archived').slice(0, 25);
+  const archiveCutoff = Date.now() - ORDER_DRIVE_ARCHIVE_DELAY_DAYS * DAY_MS;
+  return orders.filter((order) => order.drive_archive_status !== 'archived'
+    && (emergency || new Date(order.created_at || 0).getTime() <= archiveCutoff)).slice(0, 25);
 };
 
 export async function GET(request: NextRequest) {
@@ -43,7 +46,7 @@ export async function POST(request: NextRequest) {
     const before = await getArtworkArchiveStats();
     const archiveResults: Array<{ orderNumber: string; ok: boolean; error?: string }> = [];
     if (isGoogleDriveArchiveConfigured()) {
-      for (const order of await recentUnarchivedOrders()) {
+      for (const order of await eligibleUnarchivedOrders(emergency)) {
         const result = await archiveOrderToDriveBestEffort(order, { force: true });
         archiveResults.push({
           orderNumber: order.order_number,
@@ -52,7 +55,10 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: 30, limit: 25 });
+    const staleArchive = await archiveStaleCustomerArtwork({
+      maxAgeDays: emergency ? 7 : CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS,
+      limit: 25,
+    });
     const cleanup = await cleanupVerifiedSupabaseArtwork({ emergency, limit: 100 });
     const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: GUEST_UPLOAD_RETENTION_HOURS, limit: 100 });
     const after = await getArtworkArchiveStats();
