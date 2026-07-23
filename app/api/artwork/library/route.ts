@@ -116,6 +116,7 @@ export async function GET(request: NextRequest) {
         name: file.name,
         storagePath: file.path,
         storageUrl: await getStorageSignedUrl(file.path, 3600).catch(() => null),
+        previewStoragePath: previewPaths.has(previewPath) ? previewPath : null,
         previewUrl: previewPaths.has(previewPath) ? await getStorageSignedUrl(previewPath, 3600).catch(() => null) : null,
         mimeType,
         createdAt: file.created_at,

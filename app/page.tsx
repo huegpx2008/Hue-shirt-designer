@@ -799,6 +799,15 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(blob);
 });
 
+const loadPrivateArtworkPreview = async (storagePath: string, accessToken: string) => {
+  const response = await fetch(`/api/artwork/preview?path=${encodeURIComponent(storagePath)}`, {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+  return blobToDataUrl(await response.blob());
+};
+
 const loadImageElement = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
   const image = new Image();
   image.onload = () => resolve(image);
@@ -2316,7 +2325,7 @@ export default function Home() {
           cache: 'no-store',
           headers: { Authorization: `Bearer ${customerSession.access_token}` },
         });
-        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewUrl?: string | null; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
+        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
         if (!libraryResponse.ok) throw new Error(libraryPayload.error || 'Could not load Image Zone files.');
         if (!mounted) return;
         const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all((libraryPayload.items || [])
@@ -2324,9 +2333,11 @@ export default function Home() {
           .map(async (file) => {
             const storagePath = file.storagePath;
             const originalUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
-            const previewUrl = file.previewUrl || originalUrl;
             const isImageFile = Boolean(file.mimeType?.startsWith('image/') || isLikelyImagePath(file.name));
             const isPdfFile = file.mimeType === 'application/pdf' || /\.pdf$/i.test(file.name);
+            const previewUrl = isImageFile && file.previewStoragePath
+              ? await loadPrivateArtworkPreview(file.previewStoragePath, customerSession.access_token).catch(() => file.previewUrl || originalUrl)
+              : file.previewUrl || originalUrl;
             const pdfPreview = isPdfFile ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
             const imageSize = pdfPreview
