@@ -78,7 +78,13 @@ export async function GET(request: Request) {
       );
     }
 
-    const rows = (await Promise.all(requests)).flat();
+    const results = await Promise.allSettled(requests);
+    const rows = results.flatMap((result) => result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : []);
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (!rows.length && failures.length) {
+      const firstFailure = failures[0] as PromiseRejectedResult;
+      throw firstFailure.reason instanceof Error ? firstFailure.reason : new Error('Unable to load order history.');
+    }
     const uniqueRows = new Map<string, StoredOrderRow>();
     rows.forEach((row) => {
       const key = String(row.order_number || row.id || '');

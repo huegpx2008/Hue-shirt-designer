@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
         originalName: row.original_name || 'Archived artwork',
         mimeType: row.mime_type || 'application/octet-stream',
         storagePath: row.storage_path,
-        previewUrl: row.previewUrl,
+        previewUrl: row.previewDataUrl || row.previewUrl,
         archivedAt: row.supabase_deleted_at || row.created_at,
       })),
     });

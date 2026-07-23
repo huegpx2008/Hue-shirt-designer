@@ -207,6 +207,17 @@ const ensureArchivePreview = async (row: ArtworkArchiveRecord) => {
   }
 };
 
+const getArchivePreviewDataUrl = async (previewStoragePath?: string | null) => {
+  if (!previewStoragePath) return null;
+  const client = getSupabaseAdminClient();
+  const bucket = getStorageBucket();
+  const { data, error } = await client.storage.from(bucket).download(previewStoragePath);
+  if (error || !data) return null;
+  const bytes = Buffer.from(await data.arrayBuffer());
+  const mimeType = data.type || 'image/webp';
+  return `data:${mimeType};base64,${bytes.toString('base64')}`;
+};
+
 export const recordVerifiedDriveArchive = async (args: {
   storagePath: string;
   originalName: string;
@@ -490,7 +501,12 @@ export const listArchivedArtworkForUser = async (identity: { userId: string; ema
   }
   const data = [...rows.values()].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
   return Promise.all(data.map(async (row) => {
-    return { ...row, previewUrl: row.preview_storage_path ? await getStorageSignedUrl(row.preview_storage_path, 3600) : null };
+    const previewDataUrl = await getArchivePreviewDataUrl(row.preview_storage_path).catch(() => null);
+    return {
+      ...row,
+      previewUrl: row.preview_storage_path ? await getStorageSignedUrl(row.preview_storage_path, 3600).catch(() => null) : null,
+      previewDataUrl,
+    };
   }));
 };
 
