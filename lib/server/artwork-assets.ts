@@ -48,6 +48,12 @@ export const getArtworkAssetForUser = async (assetId: string, userId: string) =>
   return data as ArtworkAssetRecord | null;
 };
 
+export const getArtworkAssetById = async (assetId: string) => {
+  const { data, error } = await table().select('*').eq('id', assetId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as ArtworkAssetRecord | null;
+};
+
 export const getArtworkAssetByPreviewPath = async (previewStoragePath: string) => {
   const { data, error } = await table().select('*').eq('preview_storage_path', previewStoragePath).maybeSingle();
   if (error) {

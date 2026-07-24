@@ -18,6 +18,8 @@ type ArtworkAssetEntry = {
   mime_type: string;
   file_size: number;
   archive_status: string;
+  drive_file_id?: string | null;
+  drive_verified_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -134,6 +136,7 @@ export async function GET(request: NextRequest) {
       original_provider: asset.original_provider,
       archive_status: asset.archive_status,
       derivative_count: 2,
+      drive_recovery_ready: Boolean(asset.drive_file_id && asset.drive_verified_at),
       artifact_kind: registeredArtifactKind(asset.original_name),
     })));
     const files = [...registeredFiles, ...legacyFiles];
