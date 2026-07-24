@@ -10,11 +10,14 @@ import {
   getGoogleDriveRootFolderId,
   isGoogleDriveArchiveConfigured,
   sanitizeDriveName,
+  uploadDriveFileFromUrlIfMissing,
   uploadDriveFileIfMissing,
 } from '@/lib/server/google-drive';
-import { CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, SUPABASE_ORIGINAL_RETENTION_DAYS } from '@/lib/server/artwork-retention';
+import { B2_ORDER_SAFETY_RETENTION_DAYS, CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, SUPABASE_ORIGINAL_RETENTION_DAYS } from '@/lib/server/artwork-retention';
 import { getArtworkDisplayName } from '@/lib/server/artwork-storage-name';
 import { getStorageBucket, getSupabaseAdminClient, getStorageSignedUrl } from '@/lib/server/supabase-admin';
+import { createBackblazeDownloadUrl } from '@/lib/server/backblaze-b2';
+import { listArtworkAssetsReadyForLibraryArchive, updateArtworkAsset } from '@/lib/server/artwork-assets';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RASTER_MIME = /^image\/(png|jpe?g|webp|gif|tiff?|avif)$/i;
@@ -318,6 +321,59 @@ export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number
   const maxAgeDays = Math.max(configuredMaxAgeDays, 7);
   const cutoff = Date.now() - maxAgeDays * DAY_MS;
   const limit = Math.min(Math.max(options.limit || 25, 1), 100);
+  let archivedFiles = 0;
+  let archivedBytes = 0;
+  const skipped: string[] = [];
+  const ownerEmails = new Map<string, string | null>();
+  const libraryRoot = await ensureDriveFolder(getGoogleDriveRootFolderId(), 'CUSTOMER LIBRARIES');
+  const getOwnerEmail = async (ownerUserId: string) => {
+    let ownerEmail = ownerEmails.get(ownerUserId);
+    if (ownerEmail === undefined) {
+      const { data: authData, error: authError } = await client.auth.admin.getUserById(ownerUserId);
+      if (authError) throw new Error(`Could not look up the customer account: ${authError.message}`);
+      ownerEmail = authData.user?.email || null;
+      ownerEmails.set(ownerUserId, ownerEmail);
+    }
+    return ownerEmail;
+  };
+
+  const b2Candidates = await listArtworkAssetsReadyForLibraryArchive(new Date(cutoff).toISOString(), limit);
+  for (const asset of b2Candidates) {
+    try {
+      const ownerEmail = await getOwnerEmail(asset.owner_user_id);
+      const ownerFolder = await ensureDriveFolder(libraryRoot.id, sanitizeDriveName(ownerEmail || asset.owner_user_id, asset.owner_user_id));
+      const sourceUrl = await createBackblazeDownloadUrl(asset.original_object_key, 30 * 60);
+      const driveFile = await uploadDriveFileFromUrlIfMissing({
+        parentId: ownerFolder.id,
+        name: `${asset.production_reference}__${asset.original_name}`,
+        mimeType: asset.mime_type || 'application/octet-stream',
+        sourceUrl,
+        size: Number(asset.file_size),
+      });
+      const verified = await getDriveFileMetadata(driveFile.id);
+      const driveSize = Number(verified.size || 0);
+      if (verified.trashed || !verified.id || (driveSize && driveSize !== Number(asset.file_size))) {
+        throw new Error('The Drive copy did not match the B2 production original.');
+      }
+      const verifiedAt = new Date();
+      await updateArtworkAsset(asset.id, {
+        archive_status: 'archived',
+        drive_file_id: verified.id,
+        drive_folder_id: ownerFolder.id,
+        drive_web_view_link: verified.webViewLink || driveFile.webViewLink || null,
+        drive_verified_at: verifiedAt.toISOString(),
+        cleanup_eligible_at: new Date(verifiedAt.getTime() + B2_ORDER_SAFETY_RETENTION_DAYS * DAY_MS).toISOString(),
+        error: null,
+      });
+      archivedFiles += 1;
+      archivedBytes += Number(asset.file_size || 0);
+    } catch (archiveError) {
+      const message = archiveError instanceof Error ? archiveError.message : 'B2 library archive failed.';
+      skipped.push(`${asset.production_reference}: ${message}`);
+      await updateArtworkAsset(asset.id, { error: message.slice(0, 1000) }).catch(() => undefined);
+    }
+  }
+
   const registered = await existingArchivePaths();
   const files = await listStorageFilesRecursively('customers', 5000);
   const candidates = files.filter((file) => {
@@ -327,25 +383,15 @@ export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number
       && !registered.has(file.path)
       && !file.path.includes('/restored/')
       && !file.path.includes('/previews/')
+      && !file.path.includes('/thumbnails/')
+      && !file.path.includes('/order-proofs/')
       && !file.name.endsWith('.emptyFolderPlaceholder');
   }).slice(0, limit);
-
-  let archivedFiles = 0;
-  let archivedBytes = 0;
-  const skipped: string[] = [];
-  const ownerEmails = new Map<string, string | null>();
-  const libraryRoot = await ensureDriveFolder(getGoogleDriveRootFolderId(), 'CUSTOMER LIBRARIES');
   for (const file of candidates) {
     try {
       const owner = inferOwner(file.path);
       if (!owner.ownerUserId) throw new Error('Could not determine the customer owner.');
-      let ownerEmail = ownerEmails.get(owner.ownerUserId);
-      if (ownerEmail === undefined) {
-        const { data: authData, error: authError } = await client.auth.admin.getUserById(owner.ownerUserId);
-        if (authError) throw new Error(`Could not look up the customer account: ${authError.message}`);
-        ownerEmail = authData.user?.email || null;
-        ownerEmails.set(owner.ownerUserId, ownerEmail);
-      }
+      const ownerEmail = await getOwnerEmail(owner.ownerUserId);
       const { data, error } = await client.storage.from(bucket).download(file.path);
       if (error || !data) throw new Error(error?.message || 'Could not download the Supabase original.');
       const bytes = await data.arrayBuffer();

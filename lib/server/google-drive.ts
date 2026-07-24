@@ -193,6 +193,37 @@ export const uploadDriveFileFromStreamIfMissing = async (args: {
   return finish.json() as Promise<DriveFile>;
 };
 
+export const copyDriveFileIfMissing = async (args: {
+  sourceFileId: string;
+  parentId: string;
+  name: string;
+}) => {
+  const name = sanitizeDriveName(args.name, 'artwork-file');
+  const existing = await findChild(args.parentId, name);
+  if (existing) return existing;
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(args.sourceFileId)}/copy?supportsAllDrives=true&fields=id,name,size,webViewLink`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parents: [args.parentId] }),
+  });
+  return response.json() as Promise<DriveFile>;
+};
+
+export const openDriveFileStream = async (fileId: string) => {
+  if (!fileId) throw new Error('A Google Drive file id is required.');
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`);
+  if (!response.body) throw new Error('Google Drive did not return a file stream.');
+  return response.body;
+};
+
+export const readDriveFileRange = async (fileId: string, start: number, end: number) => {
+  if (!fileId) throw new Error('A Google Drive file id is required.');
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, {
+    headers: { Range: `bytes=${Math.max(0, Math.round(start))}-${Math.max(0, Math.round(end))}` },
+  });
+  return new Uint8Array(await response.arrayBuffer());
+};
+
 export const getDriveFileMetadata = async (fileId: string): Promise<DriveFile> => {
   if (!fileId) throw new Error('A Google Drive file id is required.');
   const params = new URLSearchParams({

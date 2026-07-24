@@ -70,6 +70,22 @@ export const listArtworkAssetsForUser = async (userId: string) => {
   return (data || []) as ArtworkAssetRecord[];
 };
 
+export const listArtworkAssetsReadyForLibraryArchive = async (cutoffIso: string, limit = 100) => {
+  const { data, error } = await table()
+    .select('*')
+    .eq('original_provider', 'b2')
+    .eq('archive_status', 'active')
+    .is('source_deleted_at', null)
+    .lte('created_at', cutoffIso)
+    .order('created_at', { ascending: true })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) {
+    if (/relation .*hue_artwork_assets.* does not exist|schema cache/i.test(error.message)) return [];
+    throw new Error(error.message);
+  }
+  return (data || []) as ArtworkAssetRecord[];
+};
+
 export const listArtworkAssetsEligibleForSourceCleanup = async (limit = 100) => {
   const { data, error } = await table()
     .select('*')

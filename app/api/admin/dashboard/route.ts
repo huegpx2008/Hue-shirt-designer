@@ -4,7 +4,8 @@ import { getStorageBucket, getStorageSignedUrl, hasSupabaseAdminConfig, supabase
 import { DEFAULT_SHEET_PRICING, STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
 import { enforceRateLimit } from '@/lib/server/request-security';
 
-type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string };
+type AdminArtifactKind = 'customer-original' | 'legacy-original' | 'order-artifact';
+type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string; artifact_kind?: AdminArtifactKind };
 type ArtworkAssetEntry = {
   id: string;
   owner_user_id: string;
@@ -22,6 +23,16 @@ type ArtworkAssetEntry = {
 };
 
 const canPreviewImage = (entry: StorageEntry) => String(entry.metadata?.mimetype || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(entry.name || '');
+const isInternalDerivative = (path?: string) => Boolean(path && (
+  path.startsWith('archive-previews/')
+  || /\/(?:previews|thumbnails)\//i.test(path)
+));
+const storageArtifactKind = (path?: string): AdminArtifactKind => path?.startsWith('orders/') || /\/order-proofs\//i.test(path || '')
+  ? 'order-artifact'
+  : 'legacy-original';
+const registeredArtifactKind = (name: string): AdminArtifactKind => /^(?:FINAL-PRODUCTION|APPROVED-PROOF)-/i.test(name.trim())
+  ? 'order-artifact'
+  : 'customer-original';
 
 const listAllOrders = async () => {
   const pageSize = 1000;
@@ -98,6 +109,8 @@ export async function GET(request: NextRequest) {
     const rawFiles = results[2].status === 'fulfilled'
       ? results[2].value.filter((file) => file.name !== '.emptyFolderPlaceholder' && !file.path?.endsWith('/.emptyFolderPlaceholder'))
         .filter((file) => !file.path || !managedDerivativePaths.has(file.path))
+        .filter((file) => !isInternalDerivative(file.path))
+        .map((file) => ({ ...file, artifact_kind: storageArtifactKind(file.path) }))
       : [];
     const legacyFiles = await Promise.all(rawFiles.map(async (file) => {
       if (!file.path || !canPreviewImage(file)) return file;
@@ -121,6 +134,7 @@ export async function GET(request: NextRequest) {
       original_provider: asset.original_provider,
       archive_status: asset.archive_status,
       derivative_count: 2,
+      artifact_kind: registeredArtifactKind(asset.original_name),
     })));
     const files = [...registeredFiles, ...legacyFiles];
     const promos = results[3].status === 'fulfilled' ? results[3].value : [];

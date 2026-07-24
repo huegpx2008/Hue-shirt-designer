@@ -4,7 +4,7 @@ import { recordVerifiedDriveArchive } from '@/lib/server/artwork-archive';
 import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
 import { createBackblazeDownloadUrl, readBackblazeObjectRange } from '@/lib/server/backblaze-b2';
 import { B2_ORDER_SAFETY_RETENTION_DAYS } from '@/lib/server/artwork-retention';
-import { driveFolderUrl, ensureDriveFolder, getDriveFileMetadata, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, sanitizeDriveName, uploadDriveFileFromStreamIfMissing, uploadDriveFileFromUrlIfMissing, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
+import { copyDriveFileIfMissing, driveFolderUrl, ensureDriveFolder, getDriveFileMetadata, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, openDriveFileStream, readDriveFileRange, sanitizeDriveName, uploadDriveFileFromStreamIfMissing, uploadDriveFileFromUrlIfMissing, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
 import { getStorageSignedUrl, supabaseAdminFetch } from '@/lib/server/supabase-admin';
 import { isProductionArtworkRecipe, type ProductionArtworkRecipe } from '@/lib/production-artwork';
 import { createJpegPlacementPdfStream, readJpegInfo } from '@/lib/server/jpeg-placement-pdf';
@@ -66,6 +66,7 @@ const collectArchiveFiles = (order: DriveArchiveOrder): ArchiveFile[] => {
 
 type DownloadedStorageFile =
   | { kind: 'b2'; asset: NonNullable<Awaited<ReturnType<typeof getArtworkAssetByPreviewPath>>>; sourceUrl: string; size: number; mimeType: string }
+  | { kind: 'drive'; asset: NonNullable<Awaited<ReturnType<typeof getArtworkAssetByPreviewPath>>>; driveFileId: string; size: number; mimeType: string }
   | { kind: 'supabase'; asset: null; bytes: ArrayBuffer; mimeType: string };
 
 const downloadStorageFile = async (path: string): Promise<DownloadedStorageFile> => {
@@ -75,6 +76,15 @@ const downloadStorageFile = async (path: string): Promise<DownloadedStorageFile>
       kind: 'b2',
       asset,
       sourceUrl: await createBackblazeDownloadUrl(asset.original_object_key, 30 * 60),
+      size: Number(asset.file_size),
+      mimeType: asset.mime_type || 'application/octet-stream',
+    };
+  }
+  if (asset?.original_provider === 'drive' && asset.drive_file_id) {
+    return {
+      kind: 'drive',
+      asset,
+      driveFileId: asset.drive_file_id,
       size: Number(asset.file_size),
       mimeType: asset.mime_type || 'application/octet-stream',
     };
@@ -101,19 +111,27 @@ const safeToken = (value: string, fallback: string) => value
 const createProductionPdf = async (recipe: ProductionArtworkRecipe, parentId: string) => {
   const asset = await getArtworkAssetByPreviewPath(recipe.sourceStoragePath);
   if (!asset) throw new Error(`${recipe.customerFileName}: the original asset registry entry was not found.`);
-  if (asset.original_provider !== 'b2' || !asset.original_object_key || asset.source_deleted_at) {
-    throw new Error(`${recipe.customerFileName}: the secure B2 original is not available for automatic production.`);
-  }
   if (asset.mime_type !== 'image/jpeg') {
     throw new Error(`${recipe.customerFileName}: ${asset.mime_type || 'this file type'} requires manual production from the original; no preview-based final was created.`);
   }
   const headerEnd = Math.min(Math.max(0, Number(asset.file_size) - 1), 1024 * 1024 - 1);
-  const jpegInfo = readJpegInfo(await readBackblazeObjectRange(asset.original_object_key, `bytes=0-${headerEnd}`));
-  const sourceUrl = await createBackblazeDownloadUrl(asset.original_object_key, 30 * 60);
-  const source = await fetch(sourceUrl, { cache: 'no-store' });
-  if (!source.ok || !source.body) throw new Error(`${recipe.customerFileName}: the production original could not be opened (${source.status}).`);
+  let header: Uint8Array;
+  let sourceStream: ReadableStream<Uint8Array>;
+  if (asset.original_provider === 'b2' && asset.original_object_key && !asset.source_deleted_at) {
+    header = await readBackblazeObjectRange(asset.original_object_key, `bytes=0-${headerEnd}`);
+    const sourceUrl = await createBackblazeDownloadUrl(asset.original_object_key, 30 * 60);
+    const source = await fetch(sourceUrl, { cache: 'no-store' });
+    if (!source.ok || !source.body) throw new Error(`${recipe.customerFileName}: the B2 production original could not be opened (${source.status}).`);
+    sourceStream = source.body;
+  } else if (asset.original_provider === 'drive' && asset.drive_file_id) {
+    header = await readDriveFileRange(asset.drive_file_id, 0, headerEnd);
+    sourceStream = await openDriveFileStream(asset.drive_file_id);
+  } else {
+    throw new Error(`${recipe.customerFileName}: the archived production original is not available.`);
+  }
+  const jpegInfo = readJpegInfo(header);
   const pdf = createJpegPlacementPdfStream({
-    jpegStream: source.body,
+    jpegStream: sourceStream,
     jpegSize: Number(asset.file_size),
     jpeg: jpegInfo,
     recipe,
@@ -189,6 +207,12 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
           sourceUrl: downloaded.sourceUrl,
           size: downloaded.size,
         })
+        : downloaded.kind === 'drive'
+          ? await copyDriveFileIfMissing({
+            sourceFileId: downloaded.driveFileId,
+            parentId,
+            name: driveName,
+          })
         : await uploadDriveFileIfMissing({
           parentId,
           name: driveName,
@@ -203,13 +227,28 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
             throw new Error(`Drive verification failed for ${downloaded.asset.original_name}.`);
           }
           const verifiedAt = new Date();
+          const existingArchiveIsVerified = Boolean(downloaded.asset.drive_file_id && downloaded.asset.drive_verified_at);
           await updateArtworkAsset(downloaded.asset.id, {
             archive_status: 'archived',
-            drive_file_id: verifiedDriveFile.id,
-            drive_folder_id: parentId,
-            drive_web_view_link: verifiedDriveFile.webViewLink || driveFile.webViewLink || null,
-            drive_verified_at: verifiedAt.toISOString(),
-            cleanup_eligible_at: new Date(verifiedAt.getTime() + B2_ORDER_SAFETY_RETENTION_DAYS * DAY_MS).toISOString(),
+            drive_file_id: existingArchiveIsVerified ? downloaded.asset.drive_file_id : verifiedDriveFile.id,
+            drive_folder_id: existingArchiveIsVerified ? downloaded.asset.drive_folder_id : parentId,
+            drive_web_view_link: existingArchiveIsVerified ? downloaded.asset.drive_web_view_link : verifiedDriveFile.webViewLink || driveFile.webViewLink || null,
+            drive_verified_at: existingArchiveIsVerified ? downloaded.asset.drive_verified_at : verifiedAt.toISOString(),
+            cleanup_eligible_at: existingArchiveIsVerified && downloaded.asset.cleanup_eligible_at
+              ? downloaded.asset.cleanup_eligible_at
+              : new Date(verifiedAt.getTime() + B2_ORDER_SAFETY_RETENTION_DAYS * DAY_MS).toISOString(),
+            last_used_at: verifiedAt.toISOString(),
+            error: null,
+          });
+        } else if (downloaded.kind === 'drive') {
+          const verifiedDriveFile = await getDriveFileMetadata(driveFile.id);
+          const driveSize = Number(verifiedDriveFile.size || 0);
+          if (verifiedDriveFile.trashed || (driveSize && driveSize !== Number(downloaded.asset.file_size))) {
+            throw new Error(`Drive order copy verification failed for ${downloaded.asset.original_name}.`);
+          }
+          await updateArtworkAsset(downloaded.asset.id, {
+            archive_status: 'archived',
+            last_used_at: new Date().toISOString(),
             error: null,
           });
         } else {
