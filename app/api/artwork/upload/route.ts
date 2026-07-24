@@ -245,6 +245,10 @@ export async function POST(request: Request) {
           storageUrl: previewUrl,
           previewStoragePath: asset.preview_storage_path,
           previewUrl,
+          // Give the current browser an immediately usable working preview.
+          // Supabase can briefly return a signed URL before an upserted object is
+          // readable at every edge, which made a successful upload look blank.
+          previewDataUrl: `data:image/webp;base64,${generated.preview.toString('base64')}`,
           thumbnailStoragePath: asset.thumbnail_storage_path,
           thumbnailUrl,
           mimeType: validated.mimeType,
