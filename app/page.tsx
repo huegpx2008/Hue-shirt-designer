@@ -7,6 +7,7 @@ import PayPalCheckoutButton from '@/components/paypal-checkout-button';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 import { CUSTOM_ORDER_ACKNOWLEDGMENT_STATEMENT, createCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
+import type { ProductionArtworkRecipe, ProductionPlacement } from '@/lib/production-artwork';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
 import { recommendPrintMethodByCost } from '@/lib/pricing/recommend-print-method';
 import { calculateScreenPrintPricing } from '@/lib/pricing/screen-print-pricing';
@@ -76,7 +77,7 @@ type GuidedTourChoice = {
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; studioPricing?: { sheetPricing?: { filledSheetTotal?: number | string } }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
-type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; previewUrl?: string; productionReference?: string };
+type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; previewUrl?: string; productionReference?: string; artifactKind?: 'original' | 'approved-proof' };
 type CartProductionArtwork = { id: string; label: string; quantity: number; sizeLabel: string; sheetLabel?: string; frontName: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
 type CartItem = {
   id: string;
@@ -91,6 +92,7 @@ type CartItem = {
   pricingRequest: { apiSlug: string; payload: Record<string, string | number | boolean> };
   artworkFiles: CartArtworkFile[];
   productionBreakdown: CartProductionArtwork[];
+  productionRecipes?: ProductionArtworkRecipe[];
   productionSummary: string[];
   customer: { userId?: string; email?: string; checkoutMode: 'account' | 'quick' };
 };
@@ -574,6 +576,7 @@ const uploadArtworkFileToSupabase = async (
   file: File,
   session: CustomerSession | null,
   onProgress?: (progress: ArtworkUploadProgressUpdate) => void,
+  options: { artifactKind?: 'order-proof' } = {},
 ) => {
   if (!isSupabaseStorageConfigured) throw new Error('Supabase is not configured.');
   if (!session?.access_token || !session.user?.id) throw new Error('Create an account or sign in before uploading production artwork.');
@@ -594,6 +597,7 @@ const uploadArtworkFileToSupabase = async (
       fileSize: file.size,
       mimeType: file.type,
       guestSessionId,
+      artifactKind: options.artifactKind,
     }),
   });
   if (!ticketResponse.ok) {
@@ -1128,7 +1132,26 @@ const writePngResolution = async (blob: Blob, dpi: number) => {
   return new Blob([output], { type: 'image/png' });
 };
 
-const renderProductionArtwork = async (options: { dataUrl: string; name: string; width: number; height: number; fitState: ArtworkFitState; sourceWidth?: number; sourceHeight?: number; transparentBackground?: boolean }) => {
+const writeJpegResolution = async (blob: Blob, dpi: number) => {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return blob;
+  const density = Math.max(1, Math.min(65535, Math.round(dpi)));
+  const jfif = new Uint8Array([
+    0xff, 0xe0, 0x00, 0x10,
+    0x4a, 0x46, 0x49, 0x46, 0x00,
+    0x01, 0x02, 0x01,
+    (density >> 8) & 0xff, density & 0xff,
+    (density >> 8) & 0xff, density & 0xff,
+    0x00, 0x00,
+  ]);
+  const output = new Uint8Array(bytes.length + jfif.length);
+  output.set(bytes.slice(0, 2), 0);
+  output.set(jfif, 2);
+  output.set(bytes.slice(2), 2 + jfif.length);
+  return new Blob([output], { type: 'image/jpeg' });
+};
+
+const renderApprovedArtworkProof = async (options: { dataUrl: string; name: string; width: number; height: number; fitState: ArtworkFitState; sourceWidth?: number; sourceHeight?: number; transparentBackground?: boolean }) => {
   const sourceUrl = options.dataUrl.startsWith('data:')
     ? options.dataUrl
     : await fetch(options.dataUrl).then((response) => {
@@ -1138,17 +1161,20 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
   const image = await loadImageElement(sourceUrl);
   const requestedWidth = Math.max(1, Math.round(options.width * BANNER_PREVIEW_DPI));
   const requestedHeight = Math.max(1, Math.round(options.height * BANNER_PREVIEW_DPI));
-  const outputScale = Math.min(
+  const safeScale = Math.min(
     1,
     GENERATED_ARTWORK_MAX_CANVAS_SIDE / requestedWidth,
     GENERATED_ARTWORK_MAX_CANVAS_SIDE / requestedHeight,
     Math.sqrt(GENERATED_ARTWORK_MAX_CANVAS_PIXELS / Math.max(1, requestedWidth * requestedHeight))
   );
+  // Use a whole-number effective DPI so width / DPI and height / DPI remain
+  // the exact ordered physical dimensions even when the safety cap applies.
+  const renderDpi = Math.max(1, Math.min(BANNER_PREVIEW_DPI, Math.floor(BANNER_PREVIEW_DPI * safeScale)));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(requestedWidth * outputScale));
-  canvas.height = Math.max(1, Math.round(requestedHeight * outputScale));
+  canvas.width = Math.max(1, Math.round(options.width * renderDpi));
+  canvas.height = Math.max(1, Math.round(options.height * renderDpi));
   const context = canvas.getContext('2d');
-  if (!context) throw new Error('The final production artwork could not be rendered.');
+  if (!context) throw new Error('The approved artwork proof could not be rendered.');
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   if (!options.transparentBackground) {
@@ -1159,22 +1185,33 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
   const outputRatio = canvas.width / Math.max(1, canvas.height);
   const ratioDifference = Math.abs(sourceRatio - outputRatio) / outputRatio;
   const isFullBleedMatch = ratioDifference <= 0.005;
+  let placement: ProductionPlacement;
   if (options.fitState === 'stretch') {
+    placement = { x: 0, y: 0, width: 1, height: 1 };
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
   } else if (options.fitState === 'fit' && options.sourceWidth && options.sourceHeight) {
     const drawWidth = Math.max(1, (options.sourceWidth / Math.max(1, options.width)) * canvas.width);
     const drawHeight = Math.max(1, (options.sourceHeight / Math.max(1, options.height)) * canvas.height);
-    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
+    const drawX = (canvas.width - drawWidth) / 2;
+    const drawY = (canvas.height - drawHeight) / 2;
+    placement = { x: drawX / canvas.width, y: drawY / canvas.height, width: drawWidth / canvas.width, height: drawHeight / canvas.height };
+    context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
   } else if (isFullBleedMatch) {
     const scale = Math.max(canvas.width / Math.max(1, image.naturalWidth), canvas.height / Math.max(1, image.naturalHeight));
     const drawWidth = image.naturalWidth * scale;
     const drawHeight = image.naturalHeight * scale;
-    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
+    const drawX = (canvas.width - drawWidth) / 2;
+    const drawY = (canvas.height - drawHeight) / 2;
+    placement = { x: drawX / canvas.width, y: drawY / canvas.height, width: drawWidth / canvas.width, height: drawHeight / canvas.height };
+    context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
   } else {
     const scale = Math.min(canvas.width / Math.max(1, image.naturalWidth), canvas.height / Math.max(1, image.naturalHeight));
     const drawWidth = image.naturalWidth * scale;
     const drawHeight = image.naturalHeight * scale;
-    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
+    const drawX = (canvas.width - drawWidth) / 2;
+    const drawY = (canvas.height - drawHeight) / 2;
+    placement = { x: drawX / canvas.width, y: drawY / canvas.height, width: drawWidth / canvas.width, height: drawHeight / canvas.height };
+    context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
   }
   const createScaledCanvas = (scale: number) => {
     if (scale === 1) return canvas;
@@ -1182,7 +1219,7 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
     scaledCanvas.width = Math.max(1, Math.round(canvas.width * scale));
     scaledCanvas.height = Math.max(1, Math.round(canvas.height * scale));
     const scaledContext = scaledCanvas.getContext('2d');
-    if (!scaledContext) throw new Error('The final production artwork could not be resized for storage.');
+    if (!scaledContext) throw new Error('The approved artwork proof could not be resized for storage.');
     scaledContext.imageSmoothingEnabled = true;
     scaledContext.imageSmoothingQuality = 'high';
     if (!options.transparentBackground) {
@@ -1203,36 +1240,44 @@ const renderProductionArtwork = async (options: { dataUrl: string; name: string;
   if (shouldPreferJpeg) {
     mimeType = 'image/jpeg';
     extension = 'jpg';
-    blob = await canvasToBlob(outputCanvas, mimeType, 0.95);
+    blob = await writeJpegResolution(await canvasToBlob(outputCanvas, mimeType, 0.95), renderDpi);
   } else {
-    blob = await writePngResolution(await canvasToBlob(outputCanvas, mimeType), BANNER_PREVIEW_DPI * outputScale);
+    blob = await writePngResolution(await canvasToBlob(outputCanvas, mimeType), renderDpi);
   }
 
   if (blob.size > GENERATED_ARTWORK_MAX_BYTES && !options.transparentBackground) {
     mimeType = 'image/jpeg';
     extension = 'jpg';
     for (const quality of [0.95, 0.92, 0.88, 0.84]) {
-      blob = await canvasToBlob(outputCanvas, mimeType, quality);
+      blob = await writeJpegResolution(await canvasToBlob(outputCanvas, mimeType, quality), renderDpi);
       if (blob.size <= GENERATED_ARTWORK_MAX_BYTES) break;
     }
   }
 
   for (const scale of [0.9, 0.8, 0.7, 0.6, 0.5]) {
     if (blob.size <= GENERATED_ARTWORK_MAX_BYTES) break;
-    storageScale = scale;
-    outputCanvas = createScaledCanvas(scale);
+    const storageDpi = Math.max(1, Math.floor(renderDpi * scale));
+    storageScale = storageDpi / renderDpi;
+    outputCanvas = createScaledCanvas(storageScale);
     blob = options.transparentBackground
-      ? await writePngResolution(await canvasToBlob(outputCanvas, 'image/png'), BANNER_PREVIEW_DPI * outputScale * storageScale)
-      : await canvasToBlob(outputCanvas, 'image/jpeg', 0.9);
+      ? await writePngResolution(await canvasToBlob(outputCanvas, 'image/png'), storageDpi)
+      : await writeJpegResolution(await canvasToBlob(outputCanvas, 'image/jpeg', 0.9), storageDpi);
   }
 
   if (blob.size > GENERATED_ARTWORK_MAX_BYTES) {
-    throw new Error('The finished artwork is still too large to save safely. Try a smaller source file or contact Hue Graphics for help.');
+    throw new Error('The approved proof is still too large to save safely. Try a smaller artboard or contact Hue Graphics for help.');
   }
   const baseName = options.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'artwork';
   const mode = options.fitState === 'stretch' ? 'FIT-STRETCHED' : options.fitState === 'fit' ? 'CENTERED' : isFullBleedMatch ? 'FULL-BLEED' : 'FIT';
-  const fileName = `FINAL-PRODUCTION-${baseName}-${options.width}x${options.height}-${mode}.${extension}`;
-  return { file: new File([blob], fileName, { type: mimeType }), width: outputCanvas.width, height: outputCanvas.height, name: fileName };
+  const fileName = `APPROVED-PROOF-${baseName}-${options.width}x${options.height}-${mode}.${extension}`;
+  return {
+    file: new File([blob], fileName, { type: mimeType }),
+    width: outputCanvas.width,
+    height: outputCanvas.height,
+    name: fileName,
+    mode: options.fitState === 'stretch' ? 'stretch' as const : options.fitState === 'fit' ? 'center' as const : isFullBleedMatch ? 'full-bleed' as const : 'contain' as const,
+    placement,
+  };
 };
 
 const normalizeGeneratedArtworkForStorage = async (dataUrl: string, fileName: string, printSize: { width: number; height: number }) => {
@@ -3201,7 +3246,8 @@ export default function Home() {
       if (!cartUserId && item.customer.checkoutMode === 'account' && cartEmail && sessionEmail && cartEmail !== sessionEmail) return 'This cart was created for a different signed-in email. Please clear the cart and rebuild it before checkout.';
       if (item.customer.checkoutMode === 'account' && !sessionUserId) return 'This cart belongs to your signed-in account. Sign in again to continue checkout; you do not need to rebuild it.';
       const missingArtworkReference = item.artworkFiles.some((file) => !file.storagePath)
-        || item.productionBreakdown.some((artwork) => !artwork.frontStoragePath || (artwork.backName && !artwork.backStoragePath));
+        || item.productionBreakdown.some((artwork) => !artwork.frontStoragePath || (artwork.backName && !artwork.backStoragePath))
+        || (item.productionRecipes || []).some((recipe) => !recipe.sourceStoragePath || !recipe.proofStoragePath);
       if (missingArtworkReference) return 'One or more artwork files in this cart only has a browser preview, not a secure production file. Please re-add the artwork before checkout.';
     }
     return '';
@@ -7388,13 +7434,45 @@ export default function Home() {
 
     const findArtworkSource = (name: string | undefined, dataUrl: string | null | undefined) => imageZoneItems.find((item) => (name && item.name === name) || (dataUrl && item.dataUrl === dataUrl));
     const artworkFiles: CartArtworkFile[] = [];
+    const productionRecipes: ProductionArtworkRecipe[] = [];
     setIsPreparingCartArtwork(true);
-    setCartStatus('Rendering the approved artwork exactly as shown and saving final production files...');
+    setCartStatus('Saving the approved proof and production placement recipe...');
     try {
-      const attachFinalProductionFile = async (options: { role: string; name: string; dataUrl: string; width: number; height: number; fitState: ArtworkFitState; sourceWidth?: number; sourceHeight?: number }) => {
-        const rendered = await renderProductionArtwork({ ...options, transparentBackground: selectedSignProduct.id === 'acrylic' });
-        const storageInfo = await uploadArtworkFileToSupabase(rendered.file, customerSession);
-        artworkFiles.push({ role: `FINAL PRODUCTION — ${options.role}`, name: rendered.name, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', previewUrl: storageInfo.storageUrl, productionReference: storageInfo.productionReference });
+      const attachApprovedProof = async (options: { role: string; name: string; dataUrl: string; width: number; height: number; fitState: ArtworkFitState; source?: ImageZoneItem; sourceWidth?: number; sourceHeight?: number }) => {
+        const source = options.source || findArtworkSource(options.name, options.dataUrl);
+        if (!source?.storagePath) throw new Error(`${options.name} is missing its secure original reference`);
+        const rendered = await renderApprovedArtworkProof({ ...options, transparentBackground: selectedSignProduct.id === 'acrylic' });
+        const storageInfo = await uploadArtworkFileToSupabase(rendered.file, customerSession, undefined, { artifactKind: 'order-proof' });
+        artworkFiles.push({
+          role: `APPROVED PROOF — ${options.role}`,
+          name: rendered.name,
+          storagePath: storageInfo.storagePath,
+          storageUrl: storageInfo.storageUrl,
+          source: 'supabase',
+          previewUrl: storageInfo.storageUrl,
+          productionReference: source.productionReference,
+          artifactKind: 'approved-proof',
+        });
+        productionRecipes.push({
+          version: 1,
+          id: globalThis.crypto.randomUUID(),
+          role: options.role,
+          customerFileName: source.name || options.name,
+          sourceStoragePath: source.storagePath,
+          sourceAssetId: source.assetId,
+          productionReference: source.productionReference,
+          sourceMimeType: source.mimeType,
+          sourcePixelWidth: source.width,
+          sourcePixelHeight: source.height,
+          sourceDpi: source.dpi,
+          artboardWidthInches: options.width,
+          artboardHeightInches: options.height,
+          fitMode: rendered.mode,
+          placement: rendered.placement,
+          proofStoragePath: storageInfo.storagePath,
+          proofFileName: rendered.name,
+          createdAt: new Date().toISOString(),
+        });
       };
 
       if (isCoroBuilder) {
@@ -7402,26 +7480,27 @@ export default function Home() {
           const item = coroSheetArtworkItems[index];
           const itemWidth = Number(item.signWidth || signWidth);
           const itemHeight = Number(item.signHeight || signHeight);
-          await attachFinalProductionFile({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: itemWidth, height: itemHeight, fitState: item.frontFitState || 'unresolved', sourceWidth: item.sourceSignWidth, sourceHeight: item.sourceSignHeight });
+          await attachApprovedProof({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: itemWidth, height: itemHeight, fitState: item.frontFitState || 'unresolved', source: item, sourceWidth: item.sourceSignWidth, sourceHeight: item.sourceSignHeight });
           if (item.backDataUrl) {
             const backSourceSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, item.dpi);
-            await attachFinalProductionFile({ role: `Artwork set ${index + 1} back`, name: item.backName || `${item.name}-back`, dataUrl: item.backDataUrl, width: itemWidth, height: itemHeight, fitState: item.backFitState || item.frontFitState || 'unresolved', sourceWidth: backSourceSize?.width, sourceHeight: backSourceSize?.height });
+            const backSource = item.backCopiedFromFront ? item : findArtworkSource(item.backName, item.backDataUrl);
+            await attachApprovedProof({ role: `Artwork set ${index + 1} back`, name: item.backName || `${item.name}-back`, dataUrl: item.backDataUrl, width: itemWidth, height: itemHeight, fitState: item.backFitState || item.frontFitState || 'unresolved', source: backSource, sourceWidth: backSourceSize?.width, sourceHeight: backSourceSize?.height });
           }
         }
       } else if (isBannerBuilder) {
         for (let index = 0; index < bannerOrderItems.length; index += 1) {
           const item = bannerOrderItems[index];
           const setNumber = item.setNumber || index + 1;
-          if (item.dataUrl) await attachFinalProductionFile({ role: `Artwork set ${setNumber} front`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState });
-          if (item.backArtwork) await attachFinalProductionFile({ role: `Artwork set ${setNumber} back`, name: item.backArtwork.name, dataUrl: item.backArtwork.dataUrl, width: item.width, height: item.height, fitState: item.backArtwork.backFitState || item.fitState });
+          if (item.dataUrl) await attachApprovedProof({ role: `Artwork set ${setNumber} front`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState, source: findArtworkSource(item.name, item.dataUrl) });
+          if (item.backArtwork) await attachApprovedProof({ role: `Artwork set ${setNumber} back`, name: item.backArtwork.name, dataUrl: item.backArtwork.dataUrl, width: item.width, height: item.height, fitState: item.backArtwork.backFitState || item.fitState, source: item.backArtwork });
         }
-        if (signArtworkPreviewUrl) await attachFinalProductionFile({ role: `Artwork set ${activeBannerSetNumber} front`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
-        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachFinalProductionFile({ role: `Artwork set ${activeBannerSetNumber} back`, name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: rigidBackArtwork.backFitState || bannerArtworkFitState });
+        if (signArtworkPreviewUrl) await attachApprovedProof({ role: `Artwork set ${activeBannerSetNumber} front`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState, source: findArtworkSource(bannerArtworkName, signArtworkPreviewUrl) });
+        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachApprovedProof({ role: `Artwork set ${activeBannerSetNumber} back`, name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: rigidBackArtwork.backFitState || bannerArtworkFitState, source: rigidBackArtwork });
       } else if (signArtworkPreviewUrl) {
-        await attachFinalProductionFile({ role: 'Artwork', name: bannerArtworkName || `${selectedSignProduct.name}-artwork`, dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState });
+        await attachApprovedProof({ role: 'Artwork', name: bannerArtworkName || `${selectedSignProduct.name}-artwork`, dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState, source: findArtworkSource(bannerArtworkName, signArtworkPreviewUrl) });
       }
     } catch (error) {
-      const message = `The item was not added because its final production artwork could not be saved: ${error instanceof Error ? error.message : 'unknown rendering error'}.`;
+      const message = `The item was not added because its approved artwork proof could not be saved: ${error instanceof Error ? error.message : 'unknown rendering error'}.`;
       setCartStatus(message);
       setSignEstimateStatus(message);
       setShowCart(false);
@@ -7518,8 +7597,8 @@ export default function Home() {
             const firstSheet = Math.floor(runningQuantity / Math.max(1, coroSheetLayout.signsPerSheet)) + 1;
             const lastSheet = Math.floor((runningQuantity + quantity - 1) / Math.max(1, coroSheetLayout.signsPerSheet)) + 1;
             runningQuantity += quantity;
-            const finalFront = artworkFiles.find((file) => file.role === `FINAL PRODUCTION — Artwork set ${index + 1} front`);
-            const finalBack = artworkFiles.find((file) => file.role === `FINAL PRODUCTION — Artwork set ${index + 1} back`);
+            const finalFront = artworkFiles.find((file) => file.role === `APPROVED PROOF — Artwork set ${index + 1} front`);
+            const finalBack = artworkFiles.find((file) => file.role === `APPROVED PROOF — Artwork set ${index + 1} back`);
             return {
               id: `${item.id}-${index}`,
               label: `Artwork set ${index + 1}`,
@@ -7541,19 +7620,19 @@ export default function Home() {
             label: 'Artwork set 1',
             quantity: designerQuantity,
             sizeLabel: `${signWidth}" x ${signHeight}"`,
-            frontName: artworkFiles.find((file) => file.role.includes('FINAL PRODUCTION') && file.role.toLowerCase().includes('front'))?.name || bannerArtworkName || `${selectedSignProduct.name} artwork`,
-            frontPreviewUrl: artworkFiles.find((file) => file.role.includes('FINAL PRODUCTION') && (file.role.toLowerCase().includes('front') || !rigidBackArtwork))?.storageUrl || signArtworkPreviewUrl,
-            frontStoragePath: artworkFiles.find((file) => file.role.includes('FINAL PRODUCTION') && (file.role.toLowerCase().includes('front') || !rigidBackArtwork))?.storagePath,
+            frontName: artworkFiles.find((file) => file.role.includes('APPROVED PROOF') && file.role.toLowerCase().includes('front'))?.name || bannerArtworkName || `${selectedSignProduct.name} artwork`,
+            frontPreviewUrl: artworkFiles.find((file) => file.role.includes('APPROVED PROOF') && (file.role.toLowerCase().includes('front') || !rigidBackArtwork))?.storageUrl || signArtworkPreviewUrl,
+            frontStoragePath: artworkFiles.find((file) => file.role.includes('APPROVED PROOF') && (file.role.toLowerCase().includes('front') || !rigidBackArtwork))?.storagePath,
             backName: rigidBackArtwork?.name,
-            backPreviewUrl: artworkFiles.find((file) => file.role === 'FINAL PRODUCTION — Back artwork')?.storageUrl || rigidBackArtwork?.dataUrl,
-            backStoragePath: artworkFiles.find((file) => file.role === 'FINAL PRODUCTION — Back artwork')?.storagePath || rigidBackArtwork?.storagePath
+            backPreviewUrl: artworkFiles.find((file) => file.role === 'APPROVED PROOF — Back artwork')?.storageUrl || rigidBackArtwork?.dataUrl,
+            backStoragePath: artworkFiles.find((file) => file.role === 'APPROVED PROOF — Back artwork')?.storagePath || rigidBackArtwork?.storagePath
           }]
         : [];
     if (isBannerBuilder && !isCoroBuilder) {
       productionBreakdown = [...bannerOrderItems.map((item, index) => {
         const setNumber = item.setNumber || index + 1;
-        const finalFront = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} front`) && file.role.includes('FINAL PRODUCTION'));
-        const finalBack = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} back`) && file.role.includes('FINAL PRODUCTION'));
+        const finalFront = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} front`) && file.role.includes('APPROVED PROOF'));
+        const finalBack = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} back`) && file.role.includes('APPROVED PROOF'));
         return {
           id: `${item.id}-${index}`,
           label: `Artwork set ${setNumber}`,
@@ -7569,8 +7648,8 @@ export default function Home() {
       })];
       if (signArtworkPreviewUrl) {
         const setNumber = activeBannerSetNumber;
-        const finalFront = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} front`) && file.role.includes('FINAL PRODUCTION'));
-        const finalBack = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} back`) && file.role.includes('FINAL PRODUCTION'));
+        const finalFront = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} front`) && file.role.includes('APPROVED PROOF'));
+        const finalBack = artworkFiles.find((file) => file.role.includes(`Artwork set ${setNumber} back`) && file.role.includes('APPROVED PROOF'));
         productionBreakdown.push({
           id: `${selectedSignProduct.id}-artwork-${setNumber}`,
           label: `Artwork set ${setNumber}`,
@@ -7620,9 +7699,10 @@ export default function Home() {
       pricingRequest: { apiSlug: cartPricingApiSlug, payload: cartPricingPayload },
       artworkFiles,
       productionBreakdown,
+      productionRecipes,
       productionSummary: [
         signArtworkStatusOk ? 'Artwork fit approved' : 'Artwork needs review',
-        'Approved Fit/Center placement flattened into FINAL PRODUCTION artwork and securely saved to your Hue order',
+        'Customer-approved proof and exact placement recipe saved; print production is generated from the original source',
         isCoroBuilder ? `Sheet layout: ${coroSheetLayout.columns} across x ${coroSheetLayout.rows} down` : '',
         hasCoroDoubleSided ? `Double-sided ${selectedSignProduct.name}` : '',
         String(signValues.sides || 'single') === 'double' && isBannerBuilder && !isCoroBuilder ? 'Double-sided banner' : ''
@@ -7683,6 +7763,7 @@ export default function Home() {
             pricingRequest: { apiSlug: cartPricingApiSlug, payload: setPayload },
             artworkFiles: artworkFiles.filter((file) => file.role.includes(`Artwork set ${setNumber} `)),
             productionBreakdown: productionBreakdown.filter((item) => item.label === `Artwork set ${setNumber}`),
+            productionRecipes: productionRecipes.filter((recipe) => recipe.role.includes(`Artwork set ${setNumber} `)),
             productionSummary: [...cartItem.productionSummary, `Artwork set ${setNumber} of ${productionBreakdown.length}`]
           } satisfies CartItem;
         })
@@ -10697,10 +10778,10 @@ export default function Home() {
             </select>
             <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="hue-image-library-desktop-close h-10 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-xs font-bold uppercase text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Close Image Zone</button></div>
           </div>
-          <div className="hue-image-library-summary flex items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
+          <div className="hue-image-library-summary flex flex-wrap items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
             <button type="button" className="rounded-lg border border-[#38bdf8]/35 bg-[#0c2a40] px-4 py-2 font-black uppercase text-[#8be3ff] hover:bg-[#10364f]">Select all</button>
             <span className="font-semibold text-slate-300"><strong className="text-white">{imageZoneItems.length}</strong> item{imageZoneItems.length === 1 ? '' : 's'} in your artwork vault</span>
-            {imageLibraryStatus ? <span className="hidden max-w-xl truncate text-slate-400 lg:inline"><span className="mx-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
+            {imageLibraryStatus ? <span className="hue-image-library-status order-last block basis-full whitespace-normal break-words leading-5 text-slate-400"><span className="mr-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
             {selectedImageZoneId ? <span className="ml-auto rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 font-bold text-emerald-300">● Artwork selected</span> : null}
           </div>
           {imageUploadProgress ? <div role="status" aria-live="polite" className="border-b border-[#38bdf8]/25 bg-[linear-gradient(90deg,rgba(14,165,233,0.16),rgba(8,47,73,0.32))] px-4 py-3 sm:px-5">

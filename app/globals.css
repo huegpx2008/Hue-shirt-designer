@@ -1087,6 +1087,16 @@ body {
     white-space: nowrap;
   }
 
+  .hue-image-library-summary > .hue-image-library-status {
+    margin-left: 0;
+    max-width: none;
+    overflow: visible;
+    padding: 2px 0 0;
+    line-height: 1.45;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
   .hue-image-library-guest {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) auto;

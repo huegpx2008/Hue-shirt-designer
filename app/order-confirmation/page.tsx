@@ -75,7 +75,7 @@ export default function OrderConfirmationPage() {
           <p className="mt-5 text-xs font-black uppercase tracking-[0.24em] text-[#67d8ff] print:text-sky-700">Order successfully submitted</p>
           <h1 className="mt-2 text-3xl font-black sm:text-5xl">Thank you, {order.customer.name.split(' ')[0]}!</h1>
           <p className="mt-3 text-lg font-black text-[#9be8ff] print:text-sky-700">{order.orderNumber}</p>
-          <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300 print:text-slate-600">Your order details and final production artwork have been saved. Hue Graphics will contact you if anything needs attention before production.</p>
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300 print:text-slate-600">Your order details, approved artwork proof, and production instructions have been saved. Hue Graphics will contact you if anything needs attention before production.</p>
         </div>
 
         <div className="p-4 sm:p-6 lg:p-8">

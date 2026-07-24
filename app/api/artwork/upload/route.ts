@@ -45,6 +45,7 @@ type UploadRequest = {
   height?: number;
   dpiX?: number;
   dpiY?: number;
+  artifactKind?: 'order-proof';
 };
 
 const allowedTypes = new Map([
@@ -156,9 +157,10 @@ export async function POST(request: Request) {
       const prefix = user
         ? `customers/${safeFolder(user.email || 'customer', 'customer')}/${user.id}`
         : `guest-orders/${guestSessionId}`;
-      const storagePath = `${prefix}/${generatedName}`;
+      const isOrderProof = body.artifactKind === 'order-proof';
+      const storagePath = `${prefix}/${isOrderProof ? 'order-proofs/' : ''}${generatedName}`;
 
-      if (!isProject && hasBackblazeB2Config()) {
+      if (!isProject && !isOrderProof && hasBackblazeB2Config()) {
         const assetId = randomUUID();
         const originalName = fileName.trim().slice(0, 255);
         const objectKey = `customers/${user.id}/artwork/${assetId}/${generatedName}`;
@@ -316,7 +318,8 @@ export async function POST(request: Request) {
         let previewUrl: string | undefined;
         let previewWidth: number | undefined;
         let previewHeight: number | undefined;
-        const designerPreview = await createDesignerImagePreview(buffer, validated.mimeType).catch(() => null);
+        const isOrderProof = /\/order-proofs\//i.test(storagePath);
+        const designerPreview = isOrderProof ? null : await createDesignerImagePreview(buffer, validated.mimeType).catch(() => null);
         if (designerPreview) {
           previewStoragePath = getPreviewPath(storagePath);
           const { error: previewError } = await storage.upload(previewStoragePath, designerPreview.bytes, {
@@ -330,7 +333,7 @@ export async function POST(request: Request) {
             previewHeight = designerPreview.height;
           }
         }
-        if (validated.width && validated.height) {
+        if (!isOrderProof && validated.width && validated.height) {
           const metadataStoragePath = getMetadataPath(storagePath);
           await storage.upload(metadataStoragePath, JSON.stringify({
             version: 1,

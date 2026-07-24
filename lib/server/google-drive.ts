@@ -158,6 +158,41 @@ export const uploadDriveFileFromUrlIfMissing = async (args: {
   return finish.json() as Promise<DriveFile>;
 };
 
+export const uploadDriveFileFromStreamIfMissing = async (args: {
+  parentId: string;
+  name: string;
+  mimeType: string;
+  body: ReadableStream<Uint8Array>;
+  size: number;
+}) => {
+  const name = sanitizeDriveName(args.name, 'artwork-file');
+  const existing = await findChild(args.parentId, name);
+  if (existing) {
+    await args.body.cancel('The Drive production file already exists.').catch(() => undefined);
+    return existing;
+  }
+  if (!Number.isFinite(args.size) || args.size < 1) throw new Error('The streamed file size is required for a Drive transfer.');
+  const start = await driveFetch(`${DRIVE_UPLOAD_API}/files?uploadType=resumable&supportsAllDrives=true&fields=id,name,size,webViewLink`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Type': args.mimeType,
+      'X-Upload-Content-Length': String(args.size),
+    },
+    body: JSON.stringify({ name, mimeType: args.mimeType, parents: [args.parentId] }),
+  });
+  const uploadUrl = start.headers.get('location');
+  if (!uploadUrl) throw new Error('Google Drive did not return a resumable upload URL.');
+  const uploadRequest = {
+    method: 'PUT',
+    headers: { 'Content-Type': args.mimeType, 'Content-Length': String(args.size) },
+    body: args.body,
+    duplex: 'half',
+  } as RequestInit & { duplex: 'half' };
+  const finish = await driveFetch(uploadUrl, uploadRequest);
+  return finish.json() as Promise<DriveFile>;
+};
+
 export const getDriveFileMetadata = async (fileId: string): Promise<DriveFile> => {
   if (!fileId) throw new Error('A Google Drive file id is required.');
   const params = new URLSearchParams({

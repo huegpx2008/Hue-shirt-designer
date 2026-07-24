@@ -2,10 +2,12 @@ import 'server-only';
 
 import { recordVerifiedDriveArchive } from '@/lib/server/artwork-archive';
 import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
-import { createBackblazeDownloadUrl } from '@/lib/server/backblaze-b2';
+import { createBackblazeDownloadUrl, readBackblazeObjectRange } from '@/lib/server/backblaze-b2';
 import { B2_ORDER_SAFETY_RETENTION_DAYS } from '@/lib/server/artwork-retention';
-import { driveFolderUrl, ensureDriveFolder, getDriveFileMetadata, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, sanitizeDriveName, uploadDriveFileFromUrlIfMissing, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
+import { driveFolderUrl, ensureDriveFolder, getDriveFileMetadata, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, sanitizeDriveName, uploadDriveFileFromStreamIfMissing, uploadDriveFileFromUrlIfMissing, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
 import { getStorageSignedUrl, supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { isProductionArtworkRecipe, type ProductionArtworkRecipe } from '@/lib/production-artwork';
+import { createJpegPlacementPdfStream, readJpegInfo } from '@/lib/server/jpeg-placement-pdf';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -23,7 +25,7 @@ export type DriveArchiveOrder = {
   drive_archive_attempts?: number | null;
 };
 
-type ArchiveFile = { path: string; name: string; kind: 'original' | 'final' };
+type ArchiveFile = { path: string; name: string; kind: 'original' | 'proof' };
 
 const patchOrder = async (id: string, fields: Record<string, unknown>) => {
   await supabaseAdminFetch(`/rest/v1/hue_orders?id=eq.${encodeURIComponent(id)}`, {
@@ -50,12 +52,13 @@ const collectArchiveFiles = (order: DriveArchiveOrder): ArchiveFile[] => {
     const artworkFiles = Array.isArray(item.artworkFiles) ? item.artworkFiles as Record<string, unknown>[] : [];
     for (const file of artworkFiles) {
       const role = String(file.role || file.source || '').toLowerCase();
-      add(file.storagePath, file.name, role.includes('final') || role.includes('production') ? 'final' : 'original');
+      const artifactKind = String(file.artifactKind || '').toLowerCase();
+      add(file.storagePath, file.name, artifactKind === 'approved-proof' || role.includes('approved proof') || role.includes('final') || role.includes('production') ? 'proof' : 'original');
     }
     const breakdown = Array.isArray(item.productionBreakdown) ? item.productionBreakdown as Record<string, unknown>[] : [];
     for (const art of breakdown) {
-      add(art.frontStoragePath, art.frontName, 'final');
-      add(art.backStoragePath, art.backName, 'final');
+      add(art.frontStoragePath, art.frontName, 'proof');
+      add(art.backStoragePath, art.backName, 'proof');
     }
   }
   return [...new Map(files.map((file) => [`${file.kind}:${file.path}`, file])).values()];
@@ -82,6 +85,74 @@ const downloadStorageFile = async (path: string): Promise<DownloadedStorageFile>
   return { kind: 'supabase', asset: null, bytes: await response.arrayBuffer(), mimeType: response.headers.get('content-type') || 'application/octet-stream' };
 };
 
+const collectProductionRecipes = (order: DriveArchiveOrder) => {
+  const data = order.order_data && typeof order.order_data === 'object' ? order.order_data as Record<string, unknown> : {};
+  const items = Array.isArray(data.items) ? data.items as Record<string, unknown>[] : [];
+  return items.flatMap((item) => Array.isArray(item.productionRecipes) ? item.productionRecipes : []).filter(isProductionArtworkRecipe);
+};
+
+const safeToken = (value: string, fallback: string) => value
+  .replace(/\.[^.]+$/, '')
+  .replace(/[^a-z0-9._-]+/gi, '-')
+  .replace(/-+/g, '-')
+  .replace(/^-|-$/g, '')
+  .slice(0, 80) || fallback;
+
+const createProductionPdf = async (recipe: ProductionArtworkRecipe, parentId: string) => {
+  const asset = await getArtworkAssetByPreviewPath(recipe.sourceStoragePath);
+  if (!asset) throw new Error(`${recipe.customerFileName}: the original asset registry entry was not found.`);
+  if (asset.original_provider !== 'b2' || !asset.original_object_key || asset.source_deleted_at) {
+    throw new Error(`${recipe.customerFileName}: the secure B2 original is not available for automatic production.`);
+  }
+  if (asset.mime_type !== 'image/jpeg') {
+    throw new Error(`${recipe.customerFileName}: ${asset.mime_type || 'this file type'} requires manual production from the original; no preview-based final was created.`);
+  }
+  const headerEnd = Math.min(Math.max(0, Number(asset.file_size) - 1), 1024 * 1024 - 1);
+  const jpegInfo = readJpegInfo(await readBackblazeObjectRange(asset.original_object_key, `bytes=0-${headerEnd}`));
+  const sourceUrl = await createBackblazeDownloadUrl(asset.original_object_key, 30 * 60);
+  const source = await fetch(sourceUrl, { cache: 'no-store' });
+  if (!source.ok || !source.body) throw new Error(`${recipe.customerFileName}: the production original could not be opened (${source.status}).`);
+  const pdf = createJpegPlacementPdfStream({
+    jpegStream: source.body,
+    jpegSize: Number(asset.file_size),
+    jpeg: jpegInfo,
+    recipe,
+  });
+  const role = safeToken(recipe.role, 'ARTWORK');
+  const sourceName = safeToken(recipe.customerFileName, 'artwork');
+  const size = `${recipe.artboardWidthInches}x${recipe.artboardHeightInches}`;
+  const name = `${asset.production_reference}__FINAL-PRODUCTION__${role}__${sourceName}__${size}__${recipe.fitMode}.pdf`;
+  const driveFile = await uploadDriveFileFromStreamIfMissing({
+    parentId,
+    name,
+    mimeType: 'application/pdf',
+    body: pdf.stream,
+    size: pdf.size,
+  });
+  const verified = await getDriveFileMetadata(driveFile.id);
+  const verifiedSize = Number(verified.size || 0);
+  if (verified.trashed || (verifiedSize && verifiedSize !== pdf.size)) throw new Error(`${recipe.customerFileName}: generated production PDF failed Drive verification.`);
+  const placedWidthInches = recipe.placement.width * recipe.artboardWidthInches;
+  const placedHeightInches = recipe.placement.height * recipe.artboardHeightInches;
+  return {
+    recipeId: recipe.id,
+    role: recipe.role,
+    customerFileName: recipe.customerFileName,
+    productionReference: asset.production_reference,
+    finalFileName: name,
+    driveFileId: driveFile.id,
+    artboardWidthInches: recipe.artboardWidthInches,
+    artboardHeightInches: recipe.artboardHeightInches,
+    fitMode: recipe.fitMode,
+    placement: recipe.placement,
+    sourcePixels: { width: jpegInfo.width, height: jpegInfo.height },
+    effectiveDpi: {
+      x: placedWidthInches > 0 ? Number((jpegInfo.width / placedWidthInches).toFixed(2)) : null,
+      y: placedHeightInches > 0 ? Number((jpegInfo.height / placedHeightInches).toFixed(2)) : null,
+    },
+  };
+};
+
 export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, options: { force?: boolean } = {}) => {
   if (!order?.id || !order.order_number) return { ok: false, error: 'Order record is incomplete.' };
   if (!options.force && order.drive_archive_status === 'archived') return { ok: true, skipped: true };
@@ -98,13 +169,15 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
     const customerFolder = await ensureDriveFolder(rootId, customer.toLowerCase());
     const orderFolder = await ensureDriveFolder(customerFolder.id, `ORDER__${order.order_number}`);
     const originalsFolder = await ensureDriveFolder(orderFolder.id, 'ORIGINALS');
+    const proofsFolder = await ensureDriveFolder(orderFolder.id, 'APPROVED-PROOFS');
     const productionFolder = await ensureDriveFolder(orderFolder.id, 'FINAL-PRODUCTION');
     const archiveFiles = collectArchiveFiles(order);
+    const productionRecipes = collectProductionRecipes(order);
 
     const registryWarnings: string[] = [];
     for (const file of archiveFiles) {
       const downloaded = await downloadStorageFile(file.path);
-      const parentId = file.kind === 'final' ? productionFolder.id : originalsFolder.id;
+      const parentId = file.kind === 'proof' ? proofsFolder.id : originalsFolder.id;
       const driveName = downloaded.asset
         ? `${downloaded.asset.production_reference}__${downloaded.asset.original_name}`
         : file.name;
@@ -143,7 +216,7 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
           await recordVerifiedDriveArchive({
             storagePath: file.path,
             originalName: file.name,
-            kind: file.kind,
+            kind: file.kind === 'proof' ? 'final' : 'original',
             bytes: downloaded.bytes,
             mimeType: downloaded.mimeType,
             driveFileId: driveFile.id,
@@ -161,6 +234,28 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
       }
     }
 
+    const productionFiles: Awaited<ReturnType<typeof createProductionPdf>>[] = [];
+    const productionWarnings: string[] = [];
+    for (const recipe of productionRecipes) {
+      try {
+        productionFiles.push(await createProductionPdf(recipe, productionFolder.id));
+      } catch (productionError) {
+        productionWarnings.push(productionError instanceof Error ? productionError.message : `${recipe.customerFileName}: automatic production failed.`);
+      }
+    }
+
+    const productionManifest = {
+      version: 1,
+      orderNumber: order.order_number,
+      generatedAt: new Date().toISOString(),
+      warning: 'APPROVED-PROOFS are visual references only. Print from FINAL-PRODUCTION PDFs or prepare manually from ORIGINALS using the recorded recipe.',
+      recipes: productionRecipes,
+      generatedProductionFiles: productionFiles,
+      productionWarnings,
+    };
+    const productionManifestBytes = new TextEncoder().encode(JSON.stringify(productionManifest, null, 2));
+    await uploadDriveFileIfMissing({ parentId: orderFolder.id, name: 'production-manifest.json', mimeType: 'application/json', bytes: productionManifestBytes });
+
     const manifest = {
       orderNumber: order.order_number,
       customerEmail: order.customer_email || null,
@@ -171,6 +266,8 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
       source: 'Hue Studio secure storage',
       files: archiveFiles.map(({ path, name, kind }) => ({ previewStoragePath: path, customerFileName: name, kind })),
       registryWarnings,
+      productionFiles,
+      productionWarnings,
       order: order.order_data || {},
     };
     const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
@@ -182,9 +279,9 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
       drive_folder_id: orderFolder.id,
       drive_folder_url: folderUrl,
       drive_archived_at: new Date().toISOString(),
-      drive_archive_error: null,
+      drive_archive_error: productionWarnings.length ? `Production review required: ${productionWarnings.join(' ').slice(0, 900)}` : null,
     });
-    return { ok: true, folderUrl, registryWarnings };
+    return { ok: true, folderUrl, registryWarnings, productionWarnings };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown Google Drive archive error.';
     await patchOrder(order.id, { drive_archive_status: 'failed', drive_archive_error: message.slice(0, 1000) }).catch(() => undefined);

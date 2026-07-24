@@ -35,6 +35,8 @@ const getBearerToken = (request: Request) => {
 const safeFolder = (value: string, fallback: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || fallback;
 const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf|json)(\?.*)?$/i.test(value);
 const isManagedDerivativePath = (value: string) => /\/(?:previews|thumbnails)\//i.test(value);
+const isOrderArtifactPath = (value: string) => /\/order-proofs\//i.test(value);
+const isOrderProductionAsset = (name: string) => /^(?:FINAL-PRODUCTION|APPROVED-PROOF)-/i.test(name.trim());
 const mimeTypeFromName = (name: string) => {
   const extension = name.split('.').pop()?.toLowerCase();
   if (extension === 'png') return 'image/png';
@@ -216,7 +218,7 @@ export async function GET(request: NextRequest) {
     const allFiles = [...filesByPath.values()];
     const previewPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-preview\.webp$/i.test(file.path)).map((file) => file.path));
     const registeredPreviewPaths = new Set(registeredAssets.map((asset) => asset.preview_storage_path));
-    const originalFiles = allFiles.filter((file) => !isManagedDerivativePath(file.path) && !registeredPreviewPaths.has(file.path));
+    const originalFiles = allFiles.filter((file) => !isManagedDerivativePath(file.path) && !isOrderArtifactPath(file.path) && !registeredPreviewPaths.has(file.path));
     originalFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
     const metadataPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-metadata\.json$/i.test(file.path)).map((file) => file.path));
     const storedMetadataEntries = await Promise.all(originalFiles.map(async (file) => {
@@ -276,7 +278,10 @@ export async function GET(request: NextRequest) {
       };
     }));
 
-    const assetItems = await Promise.all(registeredAssets.map(async (asset) => {
+    // Flattened order-production files remain registered for Admin, Drive
+    // archival, and cleanup, but they are not reusable customer uploads.
+    const reusableAssets = registeredAssets.filter((asset) => !isOrderProductionAsset(asset.original_name));
+    const assetItems = await Promise.all(reusableAssets.map(async (asset) => {
       const signedPreviewUrl = await getStorageSignedUrl(asset.preview_storage_path, 3600).catch(() => null);
       const signedThumbnailUrl = await getStorageSignedUrl(asset.thumbnail_storage_path, 3600).catch(() => null);
       return {

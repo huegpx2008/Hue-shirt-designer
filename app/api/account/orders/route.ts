@@ -32,7 +32,8 @@ const hydrateOrder = (row: StoredOrderRow, user: { id: string; email?: string })
       return {
         ...storedItem,
         artworkFiles: Array.isArray(storedItem.artworkFiles) ? storedItem.artworkFiles : [],
-        productionBreakdown: Array.isArray(storedItem.productionBreakdown) ? storedItem.productionBreakdown : []
+        productionBreakdown: Array.isArray(storedItem.productionBreakdown) ? storedItem.productionBreakdown : [],
+        productionRecipes: Array.isArray(storedItem.productionRecipes) ? storedItem.productionRecipes : []
       };
     })
     : [];

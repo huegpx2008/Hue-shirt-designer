@@ -8,6 +8,7 @@ import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageO
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
 import { archiveOrderToDriveBestEffort } from '@/lib/server/order-drive-archive';
+import type { ProductionArtworkRecipe } from '@/lib/production-artwork';
 
 export const maxDuration = 60;
 
@@ -46,6 +47,7 @@ type OrderItem = {
   pricingRequest?: { apiSlug?: string; payload?: Record<string, string | number | boolean> };
   artworkFiles?: OrderArtworkFile[];
   productionBreakdown?: OrderProductionArtwork[];
+  productionRecipes?: ProductionArtworkRecipe[];
 };
 
 type TestOrderEmailPayload = {
@@ -536,6 +538,9 @@ const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPay
             file.storagePath = destinationPath;
             file.storageUrl = storageUrl || file.storageUrl;
           }
+          for (const recipe of item.productionRecipes || []) {
+            if (recipe.proofStoragePath === sourcePath) recipe.proofStoragePath = destinationPath;
+          }
         } catch (error) {
           const details = error instanceof Error ? error.message : 'Unknown storage error';
           warnings.push(`${artwork.label || artworkToken} ${side.toLowerCase()} could not be moved into the order folder: ${details}`);
@@ -573,6 +578,7 @@ const validateOrderArtworkOwnership = (
   const paths = order.items?.flatMap((item) => [
     ...(item.artworkFiles || []).map((file) => file.storagePath),
     ...(item.productionBreakdown || []).flatMap((artwork) => [artwork.frontStoragePath, artwork.backStoragePath]),
+    ...(item.productionRecipes || []).flatMap((recipe) => [recipe.sourceStoragePath, recipe.proofStoragePath]),
   ]).filter((path): path is string => Boolean(path)) || [];
 
   for (const path of paths) {
