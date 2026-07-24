@@ -43,7 +43,7 @@ type ArtworkUploadProgress = { fileName: string; phase: string; detail: string; 
 type ArtworkUploadProgressUpdate = Omit<ArtworkUploadProgress, 'fileName'>;
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backDpi?: number; backSourceSignWidth?: number; backSourceSignHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -2053,6 +2053,12 @@ const getArtworkSourcePrintSize = (
     ? getArtworkPrintSize(imageWidth, imageHeight, isUsableImageDpi(Number(dpi || 0)) ? { dpiX: Number(dpi), dpiY: Number(dpi) } : null)
     : null;
 
+const getBackArtworkSourceMetadata = (item: ImageZoneItem) => ({
+  dpi: item.backDpi || item.dpi,
+  detectedWidth: item.backSourceSignWidth || (item.backCopiedFromFront ? item.sourceSignWidth || item.signWidth : undefined),
+  detectedHeight: item.backSourceSignHeight || (item.backCopiedFromFront ? item.sourceSignHeight || item.signHeight : undefined),
+});
+
 const getCenteredArtworkStyle = (
   imageWidth: number | undefined,
   imageHeight: number | undefined,
@@ -2776,13 +2782,13 @@ export default function Home() {
             const designId = designMatch[1];
             const back = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-back\\.png$`, 'i').test(entry.name));
             const project = ungroupedRemoteItems.find((entry) => new RegExp(`-huedesign-${designId}-project\\.json$`, 'i').test(entry.name));
-            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backPreviewStoragePath: back?.previewStoragePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
+            return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backPreviewStoragePath: back?.previewStoragePath, backWidth: back?.width, backHeight: back?.height, backDpi: project?.editorProject?.dpi || back?.dpi, backSourceSignWidth: project?.editorProject?.signWidth || back?.sourceSignWidth || back?.signWidth, backSourceSignHeight: project?.editorProject?.signHeight || back?.sourceSignHeight || back?.signHeight, backCopiedFromFront: false, editorProject: project?.editorProject, projectStoragePath: project?.storagePath, signWidth: project?.editorProject?.signWidth, signHeight: project?.editorProject?.signHeight, dpi: project?.editorProject?.dpi || item.dpi }];
           }
           const pairMatch = item.name.match(/-huepair-(\d+)-(front|back)\.png$/i);
           if (!pairMatch) return [item];
           if (pairMatch[2].toLowerCase() === 'back') return [];
           const back = pairedSides.get(pairMatch[1])?.back;
-          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backPreviewStoragePath: back?.previewStoragePath, backWidth: back?.width, backHeight: back?.height, backCopiedFromFront: false }];
+          return [{ ...item, backDataUrl: back?.dataUrl, backName: back?.name, backStoragePath: back?.storagePath, backPreviewStoragePath: back?.previewStoragePath, backWidth: back?.width, backHeight: back?.height, backDpi: back?.dpi, backSourceSignWidth: back?.sourceSignWidth || back?.signWidth, backSourceSignHeight: back?.sourceSignHeight || back?.signHeight, backCopiedFromFront: false }];
         });
         let archivedItems: ImageZoneItem[] = [];
         try {
@@ -4816,6 +4822,9 @@ export default function Home() {
         backName: item.name,
         backWidth: item.width,
         backHeight: item.height,
+        backDpi: item.dpi,
+        backSourceSignWidth: item.sourceSignWidth || item.signWidth,
+        backSourceSignHeight: item.sourceSignHeight || item.signHeight,
         backCopiedFromFront: false,
         backFitState: 'unresolved'
       } : entry));
@@ -4839,6 +4848,9 @@ export default function Home() {
         backName: entry.backName,
         backWidth: entry.backWidth,
         backHeight: entry.backHeight,
+        backDpi: entry.backDpi,
+        backSourceSignWidth: entry.backSourceSignWidth,
+        backSourceSignHeight: entry.backSourceSignHeight,
         backCopiedFromFront: entry.backCopiedFromFront
       } : entry));
       setSignArtworkPreviewUrl(item.dataUrl);
@@ -4971,6 +4983,9 @@ export default function Home() {
       backName: item.name,
       backWidth: item.width,
       backHeight: item.height,
+      backDpi: item.dpi,
+      backSourceSignWidth: item.sourceSignWidth || item.signWidth,
+      backSourceSignHeight: item.sourceSignHeight || item.signHeight,
       backCopiedFromFront: true,
       backFitState: item.frontFitState || 'unresolved'
     } : item));
@@ -6163,7 +6178,7 @@ export default function Home() {
       const editorProject: ArtworkEditorProject = { version: 1, front: portableFrontSnapshot, back: portableBackSnapshot, width: normalizedFront.width, height: normalizedFront.height, signWidth: printSize.width, signHeight: printSize.height, dpi: Math.min(source.dpi || 300, GENERATED_ARTWORK_MAX_DPI), updatedAt: new Date().toISOString() };
       const projectFile = new File([JSON.stringify(editorProject)], projectFileName, { type: 'application/json' });
       const localId = `${Date.now()}-${normalizedFront.fileName}`;
-      const item: ImageZoneItem = { id: localId, name: normalizedFront.fileName, dataUrl: normalizedFront.dataUrl, width: normalizedFront.width, height: normalizedFront.height, dpi: Math.min(source.dpi || 300, GENERATED_ARTWORK_MAX_DPI), uploadedAt: new Date().toLocaleString(), source: 'local', mimeType: normalizedFront.mimeType, signWidth: printSize.width, signHeight: printSize.height, backDataUrl: normalizedBack?.dataUrl, backName: backFileName, backWidth: normalizedBack?.width, backHeight: normalizedBack?.height, backCopiedFromFront: false, editorProject };
+      const item: ImageZoneItem = { id: localId, name: normalizedFront.fileName, dataUrl: normalizedFront.dataUrl, width: normalizedFront.width, height: normalizedFront.height, dpi: Math.min(source.dpi || 300, GENERATED_ARTWORK_MAX_DPI), uploadedAt: new Date().toLocaleString(), source: 'local', mimeType: normalizedFront.mimeType, signWidth: printSize.width, signHeight: printSize.height, backDataUrl: normalizedBack?.dataUrl, backName: backFileName, backWidth: normalizedBack?.width, backHeight: normalizedBack?.height, backDpi: normalizedBack ? Math.min(source.backDpi || source.dpi || 300, GENERATED_ARTWORK_MAX_DPI) : undefined, backSourceSignWidth: normalizedBack ? printSize.width : undefined, backSourceSignHeight: normalizedBack ? printSize.height : undefined, backCopiedFromFront: false, editorProject };
       let savedItem = item;
       if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
@@ -7482,7 +7497,8 @@ export default function Home() {
           const itemHeight = Number(item.signHeight || signHeight);
           await attachApprovedProof({ role: `Artwork set ${index + 1} front`, name: item.name, dataUrl: item.dataUrl, width: itemWidth, height: itemHeight, fitState: item.frontFitState || 'unresolved', source: item, sourceWidth: item.sourceSignWidth, sourceHeight: item.sourceSignHeight });
           if (item.backDataUrl) {
-            const backSourceSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, item.dpi);
+            const backMetadata = getBackArtworkSourceMetadata(item);
+            const backSourceSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, backMetadata.dpi, backMetadata.detectedWidth, backMetadata.detectedHeight);
             const backSource = item.backCopiedFromFront ? item : findArtworkSource(item.backName, item.backDataUrl);
             await attachApprovedProof({ role: `Artwork set ${index + 1} back`, name: item.backName || `${item.name}-back`, dataUrl: item.backDataUrl, width: itemWidth, height: itemHeight, fitState: item.backFitState || item.frontFitState || 'unresolved', source: backSource, sourceWidth: backSourceSize?.width, sourceHeight: backSourceSize?.height });
           }
@@ -9246,12 +9262,13 @@ export default function Home() {
                             const cellRotated = Boolean(cell.rotated);
                             const logicalCellWidth = cellRotated ? cell.height : cell.width;
                             const logicalCellHeight = cellRotated ? cell.width : cell.height;
+                            const backMetadata = getBackArtworkSourceMetadata(cell.item);
                             const cellArtworkMatchesTarget = coroSheetViewSide === 'back'
-                              ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, logicalCellWidth, logicalCellHeight, cell.item.dpi)
+                              ? artworkPrintSizeMatchesTarget(cell.item.backWidth, cell.item.backHeight, logicalCellWidth, logicalCellHeight, backMetadata.dpi, backMetadata.detectedWidth, backMetadata.detectedHeight)
                               : artworkPrintSizeMatchesTarget(cell.item.width, cell.item.height, logicalCellWidth, logicalCellHeight, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight);
                             const centeredStyle = cellFitState === 'fit'
                               ? coroSheetViewSide === 'back'
-                                ? getCenteredArtworkStyle(cell.item.backWidth, cell.item.backHeight, logicalCellWidth, logicalCellHeight, cell.item.dpi)
+                                ? getCenteredArtworkStyle(cell.item.backWidth, cell.item.backHeight, logicalCellWidth, logicalCellHeight, backMetadata.dpi, backMetadata.detectedWidth, backMetadata.detectedHeight)
                                 : getCenteredArtworkStyle(cell.item.width, cell.item.height, logicalCellWidth, logicalCellHeight, cell.item.dpi, cell.item.sourceSignWidth, cell.item.sourceSignHeight)
                               : {};
                             const hasCenteredSize = Object.keys(centeredStyle).length > 0;
@@ -9266,14 +9283,15 @@ export default function Home() {
                             const cellImage = coroSheetViewSide === 'back' ? sheetItem?.backDataUrl || null : sheetItem?.dataUrl || signArtworkPreviewUrl;
                             const cellFitState = coroSheetViewSide === 'back' ? sheetItem?.backFitState : sheetItem?.frontFitState;
                             const cellRotated = Boolean(coroSheetLayout.rotated);
+                            const backMetadata = sheetItem ? getBackArtworkSourceMetadata(sheetItem) : null;
                             const cellArtworkMatchesTarget = sheetItem
                               ? coroSheetViewSide === 'back'
-                                ? artworkPrintSizeMatchesTarget(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
+                                ? artworkPrintSizeMatchesTarget(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, backMetadata?.dpi, backMetadata?.detectedWidth, backMetadata?.detectedHeight)
                                 : artworkPrintSizeMatchesTarget(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.sourceSignWidth, sheetItem.sourceSignHeight)
                               : false;
                             const centeredStyle = sheetItem && cellFitState === 'fit'
                               ? coroSheetViewSide === 'back'
-                                ? getCenteredArtworkStyle(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, sheetItem.dpi)
+                                ? getCenteredArtworkStyle(sheetItem.backWidth, sheetItem.backHeight, signWidth, signHeight, backMetadata?.dpi, backMetadata?.detectedWidth, backMetadata?.detectedHeight)
                                 : getCenteredArtworkStyle(sheetItem.width, sheetItem.height, signWidth, signHeight, sheetItem.dpi, sheetItem.sourceSignWidth, sheetItem.sourceSignHeight)
                               : {};
                             const hasCenteredSize = Object.keys(centeredStyle).length > 0;
@@ -9436,9 +9454,10 @@ export default function Home() {
                     const itemSignWidth = isCustomCoro ? Number(item.signWidth || signWidth || 0) : signWidth;
                     const itemSignHeight = isCustomCoro ? Number(item.signHeight || signHeight || 0) : signHeight;
                     const frontActualSize = getArtworkSourcePrintSize(item.width, item.height, item.dpi, item.sourceSignWidth, item.sourceSignHeight) || getFittedArtworkSize(item.width, item.height, itemSignWidth, itemSignHeight);
-                    const backActualSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, item.dpi) || getFittedArtworkSize(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight);
+                    const backMetadata = getBackArtworkSourceMetadata(item);
+                    const backActualSize = getArtworkSourcePrintSize(item.backWidth, item.backHeight, backMetadata.dpi, backMetadata.detectedWidth, backMetadata.detectedHeight) || getFittedArtworkSize(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight);
                     const frontSizeMatchesTarget = artworkPrintSizeMatchesTarget(item.width, item.height, itemSignWidth, itemSignHeight, item.dpi, item.sourceSignWidth, item.sourceSignHeight);
-                    const backSizeMatchesTarget = item.backDataUrl ? artworkPrintSizeMatchesTarget(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight, item.dpi) : false;
+                    const backSizeMatchesTarget = item.backDataUrl ? artworkPrintSizeMatchesTarget(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight, backMetadata.dpi, backMetadata.detectedWidth, backMetadata.detectedHeight) : false;
                     const rawFrontMismatch = aspectRatioMismatch(item.width, item.height, itemSignWidth, itemSignHeight);
                     const rawBackMismatch = hasCoroDoubleSided && item.backDataUrl ? aspectRatioMismatch(item.backWidth, item.backHeight, itemSignWidth, itemSignHeight) : false;
                     const frontMismatch = rawFrontMismatch && item.frontFitState !== 'fit' && item.frontFitState !== 'stretch';
