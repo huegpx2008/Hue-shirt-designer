@@ -15,6 +15,8 @@
     "audit:catalog": "python scripts/audit_catalog.py"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1094.0",
+    "@aws-sdk/s3-request-presigner": "^3.1094.0",
     "@supabase/supabase-js": "^2.110.7",
     "@types/qrcode": "^1.5.6",
     "fabric": "^7.4.0",

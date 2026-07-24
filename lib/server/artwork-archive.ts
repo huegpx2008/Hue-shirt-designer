@@ -326,6 +326,7 @@ export const archiveStaleCustomerArtwork = async (options: { maxAgeDays?: number
       && timestamp <= cutoff
       && !registered.has(file.path)
       && !file.path.includes('/restored/')
+      && !file.path.includes('/previews/')
       && !file.name.endsWith('.emptyFolderPlaceholder');
   }).slice(0, limit);
 

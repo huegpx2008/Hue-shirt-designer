@@ -1,8 +1,13 @@
 import 'server-only';
 
 import { recordVerifiedDriveArchive } from '@/lib/server/artwork-archive';
-import { driveFolderUrl, ensureDriveFolder, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, sanitizeDriveName, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
+import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
+import { createBackblazeDownloadUrl } from '@/lib/server/backblaze-b2';
+import { B2_ORDER_SAFETY_RETENTION_DAYS } from '@/lib/server/artwork-retention';
+import { driveFolderUrl, ensureDriveFolder, getDriveFileMetadata, getGoogleDriveRootFolderId, isGoogleDriveArchiveConfigured, sanitizeDriveName, uploadDriveFileFromUrlIfMissing, uploadDriveFileIfMissing } from '@/lib/server/google-drive';
 import { getStorageSignedUrl, supabaseAdminFetch } from '@/lib/server/supabase-admin';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type DriveArchiveOrder = {
   id: string;
@@ -56,11 +61,25 @@ const collectArchiveFiles = (order: DriveArchiveOrder): ArchiveFile[] => {
   return [...new Map(files.map((file) => [`${file.kind}:${file.path}`, file])).values()];
 };
 
-const downloadStorageFile = async (path: string) => {
+type DownloadedStorageFile =
+  | { kind: 'b2'; asset: NonNullable<Awaited<ReturnType<typeof getArtworkAssetByPreviewPath>>>; sourceUrl: string; size: number; mimeType: string }
+  | { kind: 'supabase'; asset: null; bytes: ArrayBuffer; mimeType: string };
+
+const downloadStorageFile = async (path: string): Promise<DownloadedStorageFile> => {
+  const asset = await getArtworkAssetByPreviewPath(path);
+  if (asset?.original_provider === 'b2' && asset.original_object_key && !asset.source_deleted_at) {
+    return {
+      kind: 'b2',
+      asset,
+      sourceUrl: await createBackblazeDownloadUrl(asset.original_object_key, 30 * 60),
+      size: Number(asset.file_size),
+      mimeType: asset.mime_type || 'application/octet-stream',
+    };
+  }
   const url = await getStorageSignedUrl(path, 900);
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) throw new Error(`Could not download ${basename(path)} from order storage (${response.status}).`);
-  return { bytes: await response.arrayBuffer(), mimeType: response.headers.get('content-type') || 'application/octet-stream' };
+  return { kind: 'supabase', asset: null, bytes: await response.arrayBuffer(), mimeType: response.headers.get('content-type') || 'application/octet-stream' };
 };
 
 export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, options: { force?: boolean } = {}) => {
@@ -86,27 +105,56 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
     for (const file of archiveFiles) {
       const downloaded = await downloadStorageFile(file.path);
       const parentId = file.kind === 'final' ? productionFolder.id : originalsFolder.id;
-      const driveFile = await uploadDriveFileIfMissing({
-        parentId,
-        name: file.name,
-        mimeType: downloaded.mimeType,
-        bytes: downloaded.bytes,
-      });
-      try {
-        await recordVerifiedDriveArchive({
-          storagePath: file.path,
-          originalName: file.name,
-          kind: file.kind,
-          bytes: downloaded.bytes,
+      const driveName = downloaded.asset
+        ? `${downloaded.asset.production_reference}__${downloaded.asset.original_name}`
+        : file.name;
+      const driveFile = downloaded.kind === 'b2'
+        ? await uploadDriveFileFromUrlIfMissing({
+          parentId,
+          name: driveName,
           mimeType: downloaded.mimeType,
-          driveFileId: driveFile.id,
-          driveFolderId: parentId,
-          driveWebViewLink: driveFile.webViewLink,
-          orderId: order.id,
-          orderNumber: order.order_number,
-          customerId: order.customer_user_id,
-          customerEmail: order.customer_email,
+          sourceUrl: downloaded.sourceUrl,
+          size: downloaded.size,
+        })
+        : await uploadDriveFileIfMissing({
+          parentId,
+          name: driveName,
+          mimeType: downloaded.mimeType,
+          bytes: downloaded.bytes,
         });
+      try {
+        if (downloaded.kind === 'b2') {
+          const verifiedDriveFile = await getDriveFileMetadata(driveFile.id);
+          const driveSize = Number(verifiedDriveFile.size || 0);
+          if (verifiedDriveFile.trashed || (driveSize && driveSize !== Number(downloaded.asset.file_size))) {
+            throw new Error(`Drive verification failed for ${downloaded.asset.original_name}.`);
+          }
+          const verifiedAt = new Date();
+          await updateArtworkAsset(downloaded.asset.id, {
+            archive_status: 'archived',
+            drive_file_id: verifiedDriveFile.id,
+            drive_folder_id: parentId,
+            drive_web_view_link: verifiedDriveFile.webViewLink || driveFile.webViewLink || null,
+            drive_verified_at: verifiedAt.toISOString(),
+            cleanup_eligible_at: new Date(verifiedAt.getTime() + B2_ORDER_SAFETY_RETENTION_DAYS * DAY_MS).toISOString(),
+            error: null,
+          });
+        } else {
+          await recordVerifiedDriveArchive({
+            storagePath: file.path,
+            originalName: file.name,
+            kind: file.kind,
+            bytes: downloaded.bytes,
+            mimeType: downloaded.mimeType,
+            driveFileId: driveFile.id,
+            driveFolderId: parentId,
+            driveWebViewLink: driveFile.webViewLink,
+            orderId: order.id,
+            orderNumber: order.order_number,
+            customerId: order.customer_user_id,
+            customerEmail: order.customer_email,
+          });
+        }
       } catch (registryError) {
         const message = registryError instanceof Error ? registryError.message : 'Archive registry update failed.';
         registryWarnings.push(`${file.name}: ${message}`);
@@ -121,7 +169,7 @@ export const archiveOrderToDriveBestEffort = async (order: DriveArchiveOrder, op
       currency: order.currency || 'USD',
       archivedAt: new Date().toISOString(),
       source: 'Hue Studio secure storage',
-      files: archiveFiles.map(({ path, name, kind }) => ({ storagePath: path, name, kind })),
+      files: archiveFiles.map(({ path, name, kind }) => ({ previewStoragePath: path, customerFileName: name, kind })),
       registryWarnings,
       order: order.order_data || {},
     };

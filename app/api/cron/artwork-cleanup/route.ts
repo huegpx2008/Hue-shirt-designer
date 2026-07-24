@@ -5,6 +5,7 @@ import { CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, GUEST_UPLOAD_RETENTION_HOURS
 import { isGoogleDriveArchiveConfigured } from '@/lib/server/google-drive';
 import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/order-drive-archive';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { cleanupVerifiedBackblazeArtwork } from '@/lib/server/b2-artwork-retention';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -30,8 +31,9 @@ export async function GET(request: NextRequest) {
     }
     const staleArchive = await archiveStaleCustomerArtwork({ maxAgeDays: CUSTOMER_LIBRARY_DRIVE_ARCHIVE_DELAY_DAYS, limit: 25 });
     const cleanup = await cleanupVerifiedSupabaseArtwork({ limit: 100 });
+    const b2Cleanup = await cleanupVerifiedBackblazeArtwork({ limit: 100 });
     const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: GUEST_UPLOAD_RETENTION_HOURS, limit: 100 });
-    return NextResponse.json({ ok: true, staleArchive, cleanup, guestCleanup, archiveResults, stats: await getArtworkArchiveStats() });
+    return NextResponse.json({ ok: true, staleArchive, cleanup, b2Cleanup, guestCleanup, archiveResults, stats: await getArtworkArchiveStats() });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Scheduled artwork cleanup failed.';
     return NextResponse.json({ error: message }, { status: 500 });

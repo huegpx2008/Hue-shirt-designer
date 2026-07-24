@@ -7,6 +7,7 @@ import { isGoogleDriveArchiveConfigured } from '@/lib/server/google-drive';
 import { archiveOrderToDriveBestEffort, DriveArchiveOrder } from '@/lib/server/order-drive-archive';
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { cleanupVerifiedBackblazeArtwork } from '@/lib/server/b2-artwork-retention';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -60,9 +61,10 @@ export async function POST(request: NextRequest) {
       limit: 25,
     });
     const cleanup = await cleanupVerifiedSupabaseArtwork({ emergency, limit: 100 });
+    const b2Cleanup = await cleanupVerifiedBackblazeArtwork({ limit: 100 });
     const guestCleanup = await cleanupExpiredGuestUploads({ maxAgeHours: GUEST_UPLOAD_RETENTION_HOURS, limit: 100 });
     const after = await getArtworkArchiveStats();
-    return NextResponse.json({ ok: true, emergency, before, after, staleArchive, cleanup, guestCleanup, archiveResults });
+    return NextResponse.json({ ok: true, emergency, before, after, staleArchive, cleanup, b2Cleanup, guestCleanup, archiveResults });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Storage cleanup failed.';
     return NextResponse.json({ error: message }, { status: 500 });

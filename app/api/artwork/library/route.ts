@@ -9,6 +9,12 @@ import {
   verifySupabaseAccessToken,
 } from '@/lib/server/supabase-admin';
 import { getArtworkDisplayName } from '@/lib/server/artwork-storage-name';
+import {
+  deleteArtworkAssetRecord,
+  getArtworkAssetForUser,
+  listArtworkAssetsForUser,
+} from '@/lib/server/artwork-assets';
+import { deleteBackblazeObject } from '@/lib/server/backblaze-b2';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -196,6 +202,7 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Sign in to view your Image Zone library.' }, { status: 401 });
 
   try {
+    const registeredAssets = await listArtworkAssetsForUser(user.id);
     const filesByPath = new Map<string, StorageListEntry & { path: string }>();
     for (const prefix of getCustomerLibraryPrefixes(user.id, user.email)) {
       const files = await listStorageFilesRecursively(prefix);
@@ -207,7 +214,8 @@ export async function GET(request: NextRequest) {
 
     const allFiles = [...filesByPath.values()];
     const previewPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-preview\.webp$/i.test(file.path)).map((file) => file.path));
-    const originalFiles = allFiles.filter((file) => !/\/previews\//i.test(file.path));
+    const registeredPreviewPaths = new Set(registeredAssets.map((asset) => asset.preview_storage_path));
+    const originalFiles = allFiles.filter((file) => !/\/previews\//i.test(file.path) && !registeredPreviewPaths.has(file.path));
     originalFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
     const metadataPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-metadata\.json$/i.test(file.path)).map((file) => file.path));
     const storedMetadataEntries = await Promise.all(originalFiles.map(async (file) => {
@@ -236,7 +244,7 @@ export async function GET(request: NextRequest) {
         };
       });
     const inlinePreviews = await createInlinePreviews(inlinePreviewCandidates);
-    const items = await Promise.all(originalFiles.map(async (file) => {
+    const legacyItems = await Promise.all(originalFiles.map(async (file) => {
       // The validated filename extension is authoritative. Some older signed
       // uploads were saved with stale storage metadata (for example PDF), which
       // made browsers reject an otherwise valid JPG thumbnail.
@@ -267,9 +275,66 @@ export async function GET(request: NextRequest) {
       };
     }));
 
-    return NextResponse.json({ items });
+    const assetItems = await Promise.all(registeredAssets.map(async (asset) => {
+      const signedPreviewUrl = await getStorageSignedUrl(asset.preview_storage_path, 3600).catch(() => null);
+      const signedThumbnailUrl = await getStorageSignedUrl(asset.thumbnail_storage_path, 3600).catch(() => null);
+      return {
+        id: asset.id,
+        assetId: asset.id,
+        name: asset.original_name,
+        storagePath: asset.preview_storage_path,
+        storageUrl: signedPreviewUrl,
+        previewStoragePath: asset.preview_storage_path,
+        previewUrl: signedPreviewUrl,
+        thumbnailStoragePath: asset.thumbnail_storage_path,
+        thumbnailUrl: signedThumbnailUrl,
+        width: Number(asset.width || 0) || undefined,
+        height: Number(asset.height || 0) || undefined,
+        dpiX: Number(asset.dpi_x || 0) || undefined,
+        dpiY: Number(asset.dpi_y || 0) || undefined,
+        mimeType: asset.mime_type,
+        createdAt: asset.created_at,
+        updatedAt: asset.updated_at,
+        size: Number(asset.file_size || 0) || undefined,
+        originalProvider: asset.original_provider,
+        productionReference: asset.production_reference,
+        archiveStatus: asset.archive_status,
+      };
+    }));
+
+    return NextResponse.json({ items: [...assetItems, ...legacyItems] });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not load your Image Zone library.';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  if (!hasSupabaseAdminConfig()) return NextResponse.json({ error: 'Artwork storage is temporarily unavailable.' }, { status: 503 });
+
+  const token = getBearerToken(request);
+  const user = token ? await verifySupabaseAccessToken(token) : null;
+  if (!user) return NextResponse.json({ error: 'Sign in to delete artwork.' }, { status: 401 });
+
+  try {
+    const body = await request.json() as { assetId?: string };
+    const assetId = String(body.assetId || '').trim();
+    if (!assetId) return NextResponse.json({ error: 'Artwork asset ID is required.' }, { status: 400 });
+    const asset = await getArtworkAssetForUser(assetId, user.id);
+    if (!asset) return NextResponse.json({ error: 'Artwork was not found.' }, { status: 404 });
+    if (asset.archive_status === 'archived' || asset.drive_verified_at) {
+      return NextResponse.json({ error: 'This production file is already preserved with an order and cannot be deleted from Image Zone.' }, { status: 409 });
+    }
+
+    if (asset.original_provider === 'b2' && asset.original_object_key && !asset.source_deleted_at) {
+      await deleteBackblazeObject(asset.original_object_key);
+    }
+    const storage = getSupabaseAdminClient().storage.from(getStorageBucket());
+    await storage.remove([asset.preview_storage_path, asset.thumbnail_storage_path]);
+    await deleteArtworkAssetRecord(asset.id, user.id);
+    return NextResponse.json({ deleted: true, assetId: asset.id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not delete artwork.';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

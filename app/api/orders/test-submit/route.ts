@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { hasValidCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
@@ -6,6 +6,10 @@ import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
 import { verifyPayPalToken, type PayPalPaymentToken } from "@/lib/server/paypal";
 import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
+import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
+import { archiveOrderToDriveBestEffort } from '@/lib/server/order-drive-archive';
+
+export const maxDuration = 60;
 
 type OrderArtworkFile = {
   role?: string;
@@ -13,6 +17,7 @@ type OrderArtworkFile = {
   storagePath?: string;
   storageUrl?: string;
   source?: string;
+  productionReference?: string;
 };
 
 type OrderProductionArtwork = {
@@ -108,7 +113,8 @@ const renderArtworkFiles = (files: OrderArtworkFile[] | undefined) => {
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;margin-top:8px;background:#f9fafb;">
       <p style="margin:0;color:#111827;font-size:13px;font-weight:800;">${escapeHtml(file.role || "Artwork")}: ${escapeHtml(file.name || "Unnamed file")}</p>
       <p style="margin:5px 0 0;color:#4b5563;font-size:12px;word-break:break-all;">Path: ${escapeHtml(file.storagePath || "Browser/local preview only")}</p>
-      ${file.storageUrl ? `<p style="margin:7px 0 0;font-size:12px;"><a href="${escapeHtml(file.storageUrl)}" style="color:#0369a1;font-weight:700;">Open production file</a></p>` : ""}
+      ${file.productionReference ? `<p style="margin:5px 0 0;color:#075985;font-size:12px;font-weight:800;">Production ref: ${escapeHtml(file.productionReference)}</p>` : ""}
+      ${file.storageUrl ? `<p style="margin:7px 0 0;font-size:12px;"><a href="${escapeHtml(file.storageUrl)}" style="color:#0369a1;font-weight:700;">Open artwork preview</a></p>` : ""}
     </div>
   `).join("")}</div>`;
 };
@@ -499,6 +505,16 @@ const organizeOrderProductionFiles = async (order: NonNullable<TestOrderEmailPay
       const organizeSide = async (side: 'FRONT' | 'BACK') => {
         const sourcePath = side === 'FRONT' ? artwork.frontStoragePath : artwork.backStoragePath;
         if (!sourcePath || sourcePath.startsWith(`orders/${orderToken}/`)) return;
+        const registeredAsset = await getArtworkAssetByPreviewPath(sourcePath);
+        if (registeredAsset) {
+          await updateArtworkAsset(registeredAsset.id, {
+            archive_status: 'ordered',
+            ordered_at: registeredAsset.ordered_at || new Date().toISOString(),
+            last_used_at: new Date().toISOString(),
+            error: null,
+          });
+          return;
+        }
         const extension = getStorageExtension(sourcePath);
         const fileName = `${orderToken}_${itemToken}_${productToken}_${artworkToken}_${quantityToken}_${sizeToken}_${side}.${extension}`;
         const destinationPath = `orders/${orderToken}/ITEM-${String(itemIndex + 1).padStart(2, '0')}/${fileName}`;
@@ -940,5 +956,20 @@ export async function POST(request: Request) {
   }
 
   await updateOrderState({ status: 'received', last_email_error: null, order_data: order });
+  after(async () => {
+    await archiveOrderToDriveBestEffort({
+      id: storedRecord.id,
+      order_number: order.orderNumber || storedRecord.order_number,
+      customer_email: order.customer?.email || null,
+      customer_user_id: order.customer?.userId || null,
+      customer_name: order.customer?.name || null,
+      created_at: order.createdAt || new Date().toISOString(),
+      total: Number(order.total || 0),
+      currency: order.currency || 'USD',
+      order_data: order,
+      drive_archive_status: storedRecord.drive_archive_status || 'pending',
+      drive_archive_attempts: storedRecord.drive_archive_attempts || 0,
+    });
+  });
   return NextResponse.json({ ok: true, duplicate: !isNewOrder, order });
 }

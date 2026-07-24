@@ -40,7 +40,7 @@ type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -74,7 +74,7 @@ type GuidedTourChoice = {
 type SignEstimate = { ok?: boolean; product?: string; currency?: string; price?: { retail?: number | string; each?: number | string }; studioPricing?: { sheetPricing?: { filledSheetTotal?: number | string } }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type ApparelApiEstimate = { ok?: boolean; currency?: string; price?: { retail?: number | string; each?: number | string }; summary?: Record<string, unknown>; warnings?: string[]; error?: { message?: string; fields?: Record<string, string> } };
 type CustomerSession = { access_token: string; refresh_token?: string; expires_at?: number; user?: { id?: string; email?: string } };
-type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; previewUrl?: string };
+type CartArtworkFile = { role: string; name: string; storagePath?: string; storageUrl?: string; source?: 'local' | 'supabase' | 'archive'; previewUrl?: string; productionReference?: string };
 type CartProductionArtwork = { id: string; label: string; quantity: number; sizeLabel: string; sheetLabel?: string; frontName: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
 type CartItem = {
   id: string;
@@ -256,7 +256,6 @@ const getCustomerLegacyLibraryPrefixes = (session: CustomerSession | null) => {
 };
 
 const CLIENT_ARTWORK_MAX_BYTES = 150 * 1024 * 1024;
-const CLIENT_SERVER_PREVIEW_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_CLIENT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const isPreviewableImageFile = (file: File) => SUPPORTED_CLIENT_IMAGE_TYPES.has(file.type.toLowerCase()) || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
 const validateClientArtworkFile = (file: File, options: { allowPdf?: boolean } = {}) => {
@@ -410,11 +409,84 @@ const refreshSupabaseSession = async (session: CustomerSession | null) => {
   };
 };
 
+const renderReducedArtworkPreview = async (file: File) => {
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  let sourceUrl = '';
+  let revokeSource = false;
+  let originalWidth = 0;
+  let originalHeight = 0;
+  let dpiX = 0;
+  let dpiY = 0;
+
+  if (isPdf) {
+    const pdfPreview = await renderPdfFirstPage(await file.arrayBuffer());
+    sourceUrl = pdfPreview.dataUrl;
+    originalWidth = pdfPreview.width;
+    originalHeight = pdfPreview.height;
+    dpiX = pdfPreview.dpi;
+    dpiY = pdfPreview.dpi;
+  } else {
+    sourceUrl = URL.createObjectURL(file);
+    revokeSource = true;
+    const embedded = await readEmbeddedImageResolution(file).catch(() => null);
+    dpiX = embedded?.dpiX || 0;
+    dpiY = embedded?.dpiY || 0;
+  }
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = () => reject(new Error('The browser could not create a reduced artwork preview.'));
+      next.src = sourceUrl;
+    });
+    originalWidth ||= image.naturalWidth;
+    originalHeight ||= image.naturalHeight;
+    const scale = Math.min(1, 2400 / Math.max(1, originalWidth, originalHeight));
+    const previewWidth = Math.max(1, Math.round(originalWidth * scale));
+    const previewHeight = Math.max(1, Math.round(originalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = previewWidth;
+    canvas.height = previewHeight;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('The browser could not prepare the artwork preview.');
+    context.drawImage(image, 0, 0, previewWidth, previewHeight);
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+      (value) => value ? resolve(value) : reject(new Error('The browser could not encode the artwork preview.')),
+      'image/webp',
+      0.82,
+    ));
+    const thumbnailScale = Math.min(1, 480 / Math.max(1, originalWidth, originalHeight));
+    const thumbnailCanvas = document.createElement('canvas');
+    thumbnailCanvas.width = Math.max(1, Math.round(originalWidth * thumbnailScale));
+    thumbnailCanvas.height = Math.max(1, Math.round(originalHeight * thumbnailScale));
+    const thumbnailContext = thumbnailCanvas.getContext('2d');
+    if (!thumbnailContext) throw new Error('The browser could not prepare the artwork thumbnail.');
+    thumbnailContext.drawImage(image, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+    const thumbnailBlob = await new Promise<Blob>((resolve, reject) => thumbnailCanvas.toBlob(
+      (value) => value ? resolve(value) : reject(new Error('The browser could not encode the artwork thumbnail.')),
+      'image/webp',
+      0.72,
+    ));
+    return {
+      file: new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'artwork'}-preview.webp`, { type: 'image/webp' }),
+      thumbnailFile: new File([thumbnailBlob], `${file.name.replace(/\.[^.]+$/, '') || 'artwork'}-thumbnail.webp`, { type: 'image/webp' }),
+      width: originalWidth,
+      height: originalHeight,
+      dpiX,
+      dpiY,
+    };
+  } finally {
+    if (revokeSource) URL.revokeObjectURL(sourceUrl);
+  }
+};
+
 const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession | null) => {
   if (!isSupabaseStorageConfigured) throw new Error('Supabase is not configured.');
+  if (!session?.access_token || !session.user?.id) throw new Error('Create an account or sign in before uploading production artwork.');
   const isProject = /json/i.test(file.type) || /-project\.json$/i.test(file.name);
   if (!isProject) validateClientArtworkFile(file, { allowPdf: true });
-  const guestSessionId = session?.user?.id ? '' : getGuestUploadSessionId();
+  const guestSessionId = '';
   const requestHeaders = {
     'Content-Type': 'application/json',
     ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
@@ -437,13 +509,96 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
     }
     throw new Error(message);
   }
-  const ticket = await ticketResponse.json() as { storagePath?: string; token?: string; mimeType?: string };
-  if (!ticket.storagePath || !ticket.token) throw new Error('Secure storage did not return an upload ticket.');
+  const ticket = await ticketResponse.json() as {
+    provider?: 'b2' | 'supabase';
+    storagePath?: string;
+    token?: string;
+    mimeType?: string;
+    assetId?: string;
+    productionReference?: string;
+    uploadUrl?: string;
+    previewStoragePath?: string;
+    previewToken?: string;
+    thumbnailStoragePath?: string;
+    thumbnailToken?: string;
+  };
 
   const { createClient } = await import('@supabase/supabase-js');
   const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  if (ticket.provider === 'b2') {
+    if (!ticket.assetId || !ticket.uploadUrl || !ticket.previewStoragePath || !ticket.previewToken || !ticket.thumbnailStoragePath || !ticket.thumbnailToken) {
+      throw new Error('Secure B2 storage did not return a complete upload ticket.');
+    }
+    try {
+      const preview = await renderReducedArtworkPreview(file);
+      const originalUpload = await fetch(ticket.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': ticket.mimeType || file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!originalUpload.ok) throw new Error(`Backblaze B2 could not save the production original (${originalUpload.status}).`);
+      const { error: previewUploadError } = await supabase.storage
+        .from(SUPABASE_STORAGE_BUCKET)
+        .uploadToSignedUrl(ticket.previewStoragePath, ticket.previewToken, preview.file, {
+          contentType: 'image/webp',
+          metadata: { originalName: file.name, hueAssetId: ticket.assetId },
+        });
+      if (previewUploadError) throw new Error(previewUploadError.message || 'The reduced artwork preview could not be saved.');
+      const { error: thumbnailUploadError } = await supabase.storage
+        .from(SUPABASE_STORAGE_BUCKET)
+        .uploadToSignedUrl(ticket.thumbnailStoragePath, ticket.thumbnailToken, preview.thumbnailFile, {
+          contentType: 'image/webp',
+          metadata: { originalName: file.name, hueAssetId: ticket.assetId },
+        });
+      if (thumbnailUploadError) throw new Error(thumbnailUploadError.message || 'The artwork thumbnail could not be saved.');
+      const verifyResponse = await fetch('/api/artwork/upload', {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify({
+          action: 'verify',
+          assetId: ticket.assetId,
+          width: preview.width,
+          height: preview.height,
+          dpiX: preview.dpiX,
+          dpiY: preview.dpiY,
+        }),
+      });
+      if (!verifyResponse.ok) throw new Error(await getErrorMessage(verifyResponse));
+      const result = await verifyResponse.json() as { storagePath?: string; storageUrl?: string; mimeType?: string; size?: number; width?: number; height?: number; dpiX?: number; dpiY?: number; previewStoragePath?: string; previewUrl?: string; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; provider?: 'b2' };
+      if (!result.storagePath || !result.storageUrl) throw new Error('Secure storage did not return the saved artwork preview location.');
+      return {
+        storagePath: result.storagePath,
+        storageUrl: result.storageUrl,
+        mimeType: result.mimeType,
+        size: result.size,
+        width: result.width,
+        height: result.height,
+        dpiX: result.dpiX,
+        dpiY: result.dpiY,
+        previewStoragePath: result.previewStoragePath,
+        previewUrl: result.previewUrl,
+        previewWidth: result.previewWidth,
+        previewHeight: result.previewHeight,
+        thumbnailStoragePath: result.thumbnailStoragePath,
+        thumbnailUrl: result.thumbnailUrl,
+        assetId: result.assetId || ticket.assetId,
+        productionReference: result.productionReference || ticket.productionReference,
+        originalProvider: 'b2' as const,
+      };
+    } catch (error) {
+      await fetch('/api/artwork/upload', {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify({ action: 'abort', assetId: ticket.assetId }),
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  if (!ticket.storagePath || !ticket.token) throw new Error('Secure storage did not return an upload ticket.');
   const { error: uploadError } = await supabase.storage
     .from(SUPABASE_STORAGE_BUCKET)
     .uploadToSignedUrl(ticket.storagePath, ticket.token, file, {
@@ -476,6 +631,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
     previewUrl: result.previewUrl,
     previewWidth: result.previewWidth,
     previewHeight: result.previewHeight,
+    originalProvider: 'supabase' as const,
   };
 };
 
@@ -2119,7 +2275,7 @@ export default function Home() {
   const [customerSession, setCustomerSession] = useState<CustomerSession | null>(null);
   const [showCustomerLogin, setShowCustomerLogin] = useState(false);
   const [showGuestArtworkWarning, setShowGuestArtworkWarning] = useState(false);
-  const [pendingGuestUploadStatus, setPendingGuestUploadStatus] = useState('Choose an image or PDF artwork file.');
+  const [, setPendingGuestUploadStatus] = useState('Choose an image or PDF artwork file.');
   const [customerAuthMode, setCustomerAuthMode] = useState<'signin' | 'signup'>('signin');
   const [customerAuthEmail, setCustomerAuthEmail] = useState('');
   const [customerAuthPassword, setCustomerAuthPassword] = useState('');
@@ -2365,7 +2521,7 @@ export default function Home() {
       setImageZoneItems((prev) => prev.filter((item) => item.source === 'local'));
       setSelectedImageZoneId(null);
       setIsImageLibraryLoading(false);
-      setImageLibraryStatus('Guest session: artwork stays in this browser until you sign in. Create an account or sign in to save a private cloud library.');
+      setImageLibraryStatus('Sign in or create an account to upload production artwork and open your private Image Zone library.');
       return;
     }
     if (!isSupabaseStorageConfigured) {
@@ -2380,7 +2536,7 @@ export default function Home() {
           cache: 'no-store',
           headers: { Authorization: `Bearer ${customerSession.access_token}` },
         });
-        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; width?: number; height?: number; dpiX?: number; dpiY?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null }>; error?: string };
+        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; assetId?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string | null; thumbnailUrl?: string | null; width?: number; height?: number; dpiX?: number; dpiY?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive' }>; error?: string };
         if (!libraryResponse.ok) throw new Error(libraryPayload.error || 'Could not load Image Zone files.');
         if (!mounted) return;
         const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all((libraryPayload.items || [])
@@ -2390,21 +2546,24 @@ export default function Home() {
             const originalUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
             const isImageFile = Boolean(file.mimeType?.startsWith('image/') || isLikelyImagePath(file.name));
             const isPdfFile = file.mimeType === 'application/pdf' || /\.pdf$/i.test(file.name);
+            const usesRasterCloudPreview = file.originalProvider === 'b2' || file.originalProvider === 'drive';
             // Always read persisted artwork through the authenticated same-origin
             // endpoint after login. Generated thumbnails are preferred, while the
             // original remains a secure fallback when a preview was not created or
             // was not discovered in storage. This avoids relying on public bucket
             // URLs or browser handling of expiring cross-origin signed URLs.
-            const privatePreviewPath = isImageFile && file.previewStoragePath
-              ? file.previewStoragePath
+            const privatePreviewPath = usesRasterCloudPreview && file.thumbnailStoragePath
+              ? file.thumbnailStoragePath
+              : (isImageFile || usesRasterCloudPreview) && file.previewStoragePath
+                ? file.previewStoragePath
               : storagePath;
             const previewUrl = file.previewDataUrl || await loadPrivateArtworkFile(privatePreviewPath, customerSession.access_token)
-              .catch(() => file.previewUrl || originalUrl);
-            const pdfPreview = isPdfFile ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
+              .catch(() => file.thumbnailUrl || file.previewUrl || originalUrl);
+            const pdfPreview = isPdfFile && !usesRasterCloudPreview ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
             const imageSize = pdfPreview
               ? { width: pdfPreview.width, height: pdfPreview.height }
-              : isImageFile
+              : isImageFile || usesRasterCloudPreview
                 ? file.width && file.height
                   ? { width: file.width, height: file.height }
                   : file.previewWidth && file.previewHeight
@@ -2414,7 +2573,7 @@ export default function Home() {
             const storedResolution = isUsableImageDpi(Number(file.dpiX || 0)) && isUsableImageDpi(Number(file.dpiY || 0))
               ? { dpiX: Number(file.dpiX), dpiY: Number(file.dpiY) }
               : null;
-            const embeddedResolution = isImageFile
+            const embeddedResolution = isImageFile || usesRasterCloudPreview
               ? storedResolution || await fetch(previewUrl).then((imageResponse) => imageResponse.ok ? imageResponse.blob() : Promise.reject(new Error('Image metadata unavailable'))).then(readEmbeddedImageResolution).catch(() => null)
               : null;
             const inferredPrintSize = pdfPreview
@@ -2437,6 +2596,9 @@ export default function Home() {
               storagePath,
               storageUrl: originalUrl,
               previewStoragePath: file.previewStoragePath || undefined,
+              assetId: file.assetId,
+              productionReference: file.productionReference,
+              originalProvider: file.originalProvider,
               source: 'supabase' as const,
               mimeType: file.mimeType,
               signWidth: inferredPrintSize?.width,
@@ -4108,12 +4270,6 @@ export default function Home() {
     artworkUploadInputRef.current?.click();
   };
 
-  const continueGuestArtworkUpload = () => {
-    setShowGuestArtworkWarning(false);
-    setImageLibraryStatus(pendingGuestUploadStatus);
-    window.setTimeout(() => artworkUploadInputRef.current?.click(), 0);
-  };
-
   const openAccountFromGuestArtworkWarning = () => {
     setShowGuestArtworkWarning(false);
     setCustomerAuthMode('signup');
@@ -4191,7 +4347,18 @@ export default function Home() {
     setDeletingImageZoneId(item.id);
     setImageLibraryStatus(`Deleting ${item.name}...`);
     try {
-      if (item.source === 'supabase' && item.storagePath) {
+      if (item.assetId) {
+        if (!customerSession?.access_token) throw new Error('Sign in to delete cloud-saved artwork from your Image Zone.');
+        const response = await fetch('/api/artwork/library', {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${customerSession.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ assetId: item.assetId }),
+        });
+        if (!response.ok) throw new Error(await getErrorMessage(response));
+      } else if (item.source === 'supabase' && item.storagePath) {
         if (!customerSession?.access_token) throw new Error('Sign in to delete cloud-saved artwork from your Image Zone.');
         let activeSession: CustomerSession | null = customerSession;
         if (activeSession.expires_at && (activeSession.expires_at * 1000) <= Date.now() + 60_000) {
@@ -4231,7 +4398,7 @@ export default function Home() {
 
   const hydrateImageZoneItemSize = async (item: ImageZoneItem) => {
     if (item.source === 'archive') throw new Error('Restore this archived artwork before using it.');
-    const isPdfItem = item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name);
+    const isPdfItem = (item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name)) && item.originalProvider !== 'b2' && item.originalProvider !== 'drive';
     const designerStoragePath = isPdfItem ? item.storagePath : item.previewStoragePath || item.storagePath;
     const loadStoredPreview = async (storagePath: string, fallbackUrl?: string) => (customerSession?.access_token
       ? loadPrivateArtworkFile(storagePath, customerSession.access_token)
@@ -5844,7 +6011,7 @@ export default function Home() {
       let savedItem = item;
       if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
-        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.previewUrl || item.dataUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, previewStoragePath: storageInfo.previewStoragePath, source: 'supabase', backDataUrl: backStorageInfo?.previewUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, backPreviewStoragePath: backStorageInfo?.previewStoragePath, projectStoragePath: projectStorageInfo.storagePath };
+        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.previewUrl || item.dataUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, previewStoragePath: storageInfo.previewStoragePath, assetId: storageInfo.assetId, productionReference: storageInfo.productionReference, originalProvider: storageInfo.originalProvider, source: 'supabase', backDataUrl: backStorageInfo?.previewUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, backPreviewStoragePath: backStorageInfo?.previewStoragePath, projectStoragePath: projectStorageInfo.storagePath };
         setImageZoneItems((previous) => [savedItem, ...previous]);
         setSelectedImageZoneId(storageInfo.storagePath);
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
@@ -6166,6 +6333,9 @@ export default function Home() {
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
           previewStoragePath: storageInfo.previewStoragePath,
+          assetId: storageInfo.assetId,
+          productionReference: storageInfo.productionReference,
+          originalProvider: storageInfo.originalProvider,
           source: 'supabase'
         };
       }
@@ -6405,6 +6575,9 @@ export default function Home() {
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
           previewStoragePath: storageInfo.previewStoragePath,
+          assetId: storageInfo.assetId,
+          productionReference: storageInfo.productionReference,
+          originalProvider: storageInfo.originalProvider,
           source: 'supabase'
         } : entry));
         setSelectedImageZoneId(storageInfo.storagePath);
@@ -6554,6 +6727,13 @@ export default function Home() {
   const onUploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!customerSession?.access_token) {
+      setImageLibraryStatus('Create an account or sign in before uploading production artwork. Your saved previews will remain available for future orders.');
+      setCustomerAuthMode('signup');
+      setShowCustomerLogin(true);
+      event.target.value = '';
+      return;
+    }
     try {
       validateClientArtworkFile(file, { allowPdf: true });
     } catch (error) {
@@ -6566,29 +6746,35 @@ export default function Home() {
     const isPdfFile = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     let canPlaceOnCanvas = Boolean(isImageFile && canvas);
     if (isImageFile && !canPlaceOnCanvas) setImageLibraryStatus(`Adding file to the library. Open the ${selectedSignProduct.name} builder to place it on the design.`);
-    if (isImageFile && file.size > CLIENT_SERVER_PREVIEW_BYTES && isSupabaseStorageConfigured) {
+    if ((isImageFile || isPdfFile) && isSupabaseStorageConfigured) {
       event.target.value = '';
       setArtworkAnalysis(null);
-      setArtworkAnalysisStatus(`${file.name} is a large file. Uploading original first, then Hue Studio will use a flattened preview.`);
-      setImageLibraryStatus(`Uploading large original file (${(file.size / 1024 / 1024).toFixed(1)} MB) and preparing preview...`);
+      setArtworkAnalysisStatus(`${file.name} is being saved securely. Hue Studio will use a reduced working preview.`);
+      setImageLibraryStatus(`Saving production original (${(file.size / 1024 / 1024).toFixed(1)} MB) and preparing a fast preview...`);
       try {
         const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
         const originalWidth = Math.max(0, Number(storageInfo.width || 0));
         const originalHeight = Math.max(0, Number(storageInfo.height || 0));
         const previewUrl = storageInfo.previewUrl || storageInfo.storageUrl;
-        const detectedPrintSize = originalWidth > 0 && originalHeight > 0 ? getArtworkPrintSize(originalWidth, originalHeight) : null;
+        const storedResolution = isUsableImageDpi(Number(storageInfo.dpiX || 0)) && isUsableImageDpi(Number(storageInfo.dpiY || 0))
+          ? { dpiX: Number(storageInfo.dpiX), dpiY: Number(storageInfo.dpiY) }
+          : null;
+        const detectedPrintSize = originalWidth > 0 && originalHeight > 0 ? getArtworkPrintSize(originalWidth, originalHeight, storedResolution) : null;
         const item: ImageZoneItem = {
           id: storageInfo.storagePath,
           name: file.name,
           dataUrl: previewUrl,
           width: originalWidth,
           height: originalHeight,
-          dpi: BANNER_PREVIEW_DPI,
+          dpi: storedResolution ? Math.round(Math.min(storedResolution.dpiX, storedResolution.dpiY)) : BANNER_PREVIEW_DPI,
           uploadedAt: new Date().toLocaleString(),
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
           previewStoragePath: storageInfo.previewStoragePath,
-          source: customerSession?.access_token ? 'supabase' : 'local',
+          assetId: storageInfo.assetId,
+          productionReference: storageInfo.productionReference,
+          originalProvider: storageInfo.originalProvider,
+          source: 'supabase',
           mimeType: storageInfo.mimeType || file.type,
           signWidth: detectedPrintSize?.width,
           signHeight: detectedPrintSize?.height
@@ -6625,9 +6811,7 @@ export default function Home() {
         } else if (canPlaceOnCanvas) {
           await placeImageOnDesign(previewUrl, file.name);
         }
-        setImageLibraryStatus(customerSession?.user?.email
-          ? `Large original saved to ${customerSession.user.email}'s library. Flattened preview is ready for ordering.`
-          : 'Large original saved for this guest session. Flattened preview is ready for ordering.');
+        setImageLibraryStatus(`${file.name} is securely saved to ${customerSession.user?.email || 'your account'}'s Image Zone. The fast preview is ready for ordering.`);
         return;
       } catch (error) {
         setImageLibraryStatus(`Large upload failed: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -6744,6 +6928,9 @@ export default function Home() {
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
             previewStoragePath: storageInfo.previewStoragePath,
+            assetId: storageInfo.assetId,
+            productionReference: storageInfo.productionReference,
+            originalProvider: storageInfo.originalProvider,
             source: 'supabase',
             mimeType: storageInfo.mimeType || entry.mimeType,
             width: Number(storageInfo.width || entry.width),
@@ -6755,6 +6942,9 @@ export default function Home() {
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
             previewStoragePath: storageInfo.previewStoragePath,
+            assetId: storageInfo.assetId,
+            productionReference: storageInfo.productionReference,
+            originalProvider: storageInfo.originalProvider,
             source: 'supabase'
           } : entry));
           setRigidBackArtwork((prev) => prev?.id === localItemId ? {
@@ -6763,19 +6953,18 @@ export default function Home() {
             storagePath: storageInfo.storagePath,
             storageUrl: storageInfo.storageUrl,
             previewStoragePath: storageInfo.previewStoragePath,
+            assetId: storageInfo.assetId,
+            productionReference: storageInfo.productionReference,
+            originalProvider: storageInfo.originalProvider,
             source: 'supabase'
           } : prev);
           setSelectedImageZoneId(storageInfo.storagePath);
-          setImageLibraryStatus(customerSession?.user?.email
-            ? `Saved original file to ${customerSession.user.email}'s library.`
-            : `Saved original file to guest library: ${storageInfo.storagePath}`);
+          setImageLibraryStatus(`Saved ${file.name} securely to ${customerSession.user?.email || 'your account'}'s Image Zone.`);
         } catch (error) {
-          setImageLibraryStatus(`Preview ready. Supabase upload failed: ${error instanceof Error ? error.message : 'unknown error'}. Check bucket policies.`);
+          setImageLibraryStatus(`Preview ready, but the secure upload failed: ${error instanceof Error ? error.message : 'unknown error'}.`);
         }
       } else {
-        setImageLibraryStatus(customerSession?.access_token
-          ? 'Local preview only. Cloud storage is not configured.'
-          : 'Guest session: artwork is available in this browser only. Sign in to save it to a private Image Zone library.');
+        setImageLibraryStatus('Local preview only. Cloud storage is not configured.');
       }
     };
     reader.onerror = () => {
@@ -7068,6 +7257,14 @@ export default function Home() {
       return;
     }
 
+    if (!customerSession?.access_token) {
+      setCartStatus('Create an account or sign in before adding production artwork to the cart.');
+      setCustomerAuthMode('signup');
+      setCustomerAuthStatus('Your account keeps production artwork secure and makes saved previews available for future orders.');
+      setShowCustomerLogin(true);
+      return;
+    }
+
     if (!isSupabaseStorageConfigured) {
       setCartStatus('Final production artwork cannot be prepared because Supabase storage is not configured.');
       setShowCart(true);
@@ -7082,7 +7279,7 @@ export default function Home() {
       const attachFinalProductionFile = async (options: { role: string; name: string; dataUrl: string; width: number; height: number; fitState: ArtworkFitState; sourceWidth?: number; sourceHeight?: number }) => {
         const rendered = await renderProductionArtwork({ ...options, transparentBackground: selectedSignProduct.id === 'acrylic' });
         const storageInfo = await uploadArtworkFileToSupabase(rendered.file, customerSession);
-        artworkFiles.push({ role: `FINAL PRODUCTION — ${options.role}`, name: rendered.name, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', previewUrl: storageInfo.storageUrl });
+        artworkFiles.push({ role: `FINAL PRODUCTION — ${options.role}`, name: rendered.name, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, source: 'supabase', previewUrl: storageInfo.storageUrl, productionReference: storageInfo.productionReference });
       };
 
       if (isCoroBuilder) {
@@ -7124,7 +7321,8 @@ export default function Home() {
           storagePath: item.storagePath,
           storageUrl: item.storageUrl,
           source: item.source,
-          previewUrl: item.dataUrl
+          previewUrl: item.dataUrl,
+          productionReference: item.productionReference
         });
         if (item.backDataUrl) {
           const backSource = item.backCopiedFromFront ? item : findArtworkSource(item.backName, item.backDataUrl);
@@ -7134,7 +7332,8 @@ export default function Home() {
             storagePath: backSource?.storagePath,
             storageUrl: backSource?.storageUrl,
             source: backSource?.source,
-            previewUrl: item.backDataUrl
+            previewUrl: item.backDataUrl,
+            productionReference: backSource?.productionReference
           });
         }
       });
@@ -7148,7 +7347,8 @@ export default function Home() {
           storagePath: source?.storagePath,
           storageUrl: source?.storageUrl,
           source: source?.source,
-          previewUrl: item.dataUrl || undefined
+          previewUrl: item.dataUrl || undefined,
+          productionReference: source?.productionReference
         });
         if (item.backArtwork) artworkFiles.push({
           role: `Artwork set ${setNumber} original back`,
@@ -7156,7 +7356,8 @@ export default function Home() {
           storagePath: item.backArtwork.storagePath,
           storageUrl: item.backArtwork.storageUrl,
           source: item.backArtwork.source,
-          previewUrl: item.backArtwork.dataUrl
+          previewUrl: item.backArtwork.dataUrl,
+          productionReference: item.backArtwork.productionReference
         });
       });
       if (signArtworkPreviewUrl) {
@@ -7168,7 +7369,8 @@ export default function Home() {
           storagePath: source?.storagePath,
           storageUrl: source?.storageUrl,
           source: source?.source,
-          previewUrl: signArtworkPreviewUrl
+          previewUrl: signArtworkPreviewUrl,
+          productionReference: source?.productionReference
         });
       }
       if (isAutoSidedRigidBuilder && rigidBackArtwork) artworkFiles.push({
@@ -7177,7 +7379,8 @@ export default function Home() {
         storagePath: rigidBackArtwork.storagePath,
         storageUrl: rigidBackArtwork.storageUrl,
         source: rigidBackArtwork.source,
-        previewUrl: rigidBackArtwork.dataUrl
+        previewUrl: rigidBackArtwork.dataUrl,
+        productionReference: rigidBackArtwork.productionReference
       });
     } else if (signArtworkPreviewUrl) {
       const source = findArtworkSource(bannerArtworkName, signArtworkPreviewUrl);
@@ -7187,7 +7390,8 @@ export default function Home() {
         storagePath: source?.storagePath,
         storageUrl: source?.storageUrl,
         source: source?.source,
-        previewUrl: signArtworkPreviewUrl
+        previewUrl: signArtworkPreviewUrl,
+        productionReference: source?.productionReference
       });
     }
 
@@ -7523,7 +7727,7 @@ export default function Home() {
     setIsGuestCheckout(true);
     setShowCustomerLogin(false);
     setCustomerAuthStatus('Continuing without an account.');
-    if (!customerSession) setImageLibraryStatus('Quick checkout: artwork previews work now, saved libraries need an account.');
+    if (!customerSession) setImageLibraryStatus('Guest browsing is active. Sign in or create an account before uploading or ordering custom artwork.');
   };
 
   const handleCustomerSignOut = async () => {
@@ -9620,17 +9824,16 @@ export default function Home() {
         <section className="w-[min(600px,94vw)] overflow-hidden rounded-2xl border border-amber-300/30 bg-[#07111f] text-slate-100 shadow-[0_36px_110px_rgba(0,0,0,0.76),0_0_58px_rgba(245,158,11,0.12)]">
           <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.20),transparent_42%),#071522] px-6 py-5">
             <p className="text-xs font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Image Zone</p>
-            <h3 className="mt-2 text-2xl font-black text-white">Keep your artwork safe</h3>
+            <h3 className="mt-2 text-2xl font-black text-white">Sign in to upload artwork</h3>
           </div>
           <div className="px-6 py-6">
             <div className="flex gap-4 rounded-xl border border-amber-300/25 bg-amber-300/[0.07] p-4">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-amber-300/40 bg-amber-300/10 text-xl font-black text-amber-200">!</span>
-              <div><p className="font-black text-amber-100">You are uploading as a guest.</p><p className="mt-2 text-sm leading-6 text-slate-300">Guest artwork is temporary and can be lost when this browser is refreshed or closed. We recommend creating an account or signing in so your files are saved securely and available for future orders.</p></div>
+              <div><p className="font-black text-amber-100">An account is required for production files.</p><p className="mt-2 text-sm leading-6 text-slate-300">Sign in or create a free account so the production original stays private while a fast preview remains available in your Image Zone for future orders.</p></div>
             </div>
-            <p className="mt-4 text-xs leading-5 text-slate-400">You may still continue as a guest and complete your order. Keep this browser open until checkout is finished.</p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <p className="mt-4 text-xs leading-5 text-slate-400">You can still browse and build as a guest. Uploading and ordering custom production artwork requires an account.</p>
+            <div className="mt-6">
               <button type="button" onClick={openAccountFromGuestArtworkWarning} className="rounded-xl bg-[#1686c9] px-5 py-3.5 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f6da8]">Create Account / Sign In</button>
-              <button type="button" onClick={continueGuestArtworkUpload} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3.5 text-sm font-bold text-slate-200 hover:border-white/30 hover:bg-white/[0.1]">Continue as Guest</button>
             </div>
             <button type="button" onClick={() => setShowGuestArtworkWarning(false)} className="mt-3 w-full rounded-xl px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-300">Cancel upload</button>
           </div>
@@ -10387,7 +10590,7 @@ export default function Home() {
           </div>
           {!customerSession?.access_token ? <div className="hue-image-library-guest flex flex-col gap-3 border-b border-amber-300/20 bg-[linear-gradient(90deg,rgba(245,158,11,0.13),rgba(14,165,233,0.06))] px-5 py-3 text-white sm:flex-row sm:items-center">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-300/35 bg-amber-300/10 text-base font-black text-amber-200">!</span>
-            <div className="min-w-0 flex-1"><p className="text-xs font-black uppercase tracking-[0.15em] text-amber-200">Guest artwork is temporary</p><p className="mt-1 text-xs leading-5 text-slate-300">Refreshing or closing this browser can remove uploaded artwork. Create an account or sign in to keep files securely in your private Image Zone library.</p></div>
+            <div className="min-w-0 flex-1"><p className="text-xs font-black uppercase tracking-[0.15em] text-amber-200">Sign in to upload artwork</p><p className="mt-1 text-xs leading-5 text-slate-300">Production files require an account so originals stay private and your fast previews remain available for future orders.</p></div>
             <button type="button" onClick={openAccountFromGuestArtworkWarning} className="shrink-0 rounded-lg border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Create Account / Sign In</button>
           </div> : null}
           <div className="hue-image-library-grid min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
@@ -10435,7 +10638,7 @@ export default function Home() {
           <div className="hue-image-library-footer flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4">
             <p className="text-xs text-slate-400"><span className="mr-2 text-emerald-400">●</span>{customerSession?.access_token
               ? (isSupabaseStorageConfigured ? 'Original artwork is securely saved to your private Hue cloud library.' : 'Cloud storage is not configured; artwork remains in this browser session.')
-              : 'Guest artwork stays in this browser session. Sign in to use a private Hue cloud library.'}</p>
+              : 'Guest browsing is available. Sign in to upload artwork and use your private Image Zone library.'}</p>
             <div className="flex gap-2">
               <button type="button" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-sm font-bold text-slate-300 hover:border-white/30 hover:bg-white/[0.1] hover:text-white">Cancel</button>
               <button type="button" disabled={!selectedImageZoneId} onClick={async () => {
