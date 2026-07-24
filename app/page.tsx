@@ -631,9 +631,7 @@ const uploadArtworkFileToSupabase = async (
       throw new Error('Secure B2 storage did not return a complete upload ticket.');
     }
     try {
-      onProgress?.({ phase: 'Preparing fast preview', detail: 'Reading artwork and creating working-size copies...', percent: 5 });
-      const preview = await renderReducedArtworkPreview(file);
-      onProgress?.({ phase: 'Uploading production original', detail: `Sending ${(file.size / 1024 / 1024).toFixed(1)} MB securely to production storage...`, percent: 10 });
+      onProgress?.({ phase: 'Uploading production original', detail: `Sending ${(file.size / 1024 / 1024).toFixed(1)} MB securely to production storage...`, percent: 5 });
       await uploadFileWithProgress(
         ticket.uploadUrl,
         file,
@@ -641,25 +639,48 @@ const uploadArtworkFileToSupabase = async (
         (fraction) => onProgress?.({
           phase: 'Uploading production original',
           detail: `${(fraction * file.size / 1024 / 1024).toFixed(1)} of ${(file.size / 1024 / 1024).toFixed(1)} MB uploaded`,
-          percent: Math.round(10 + (fraction * 77)),
+          percent: Math.round(5 + (fraction * 77)),
         }),
       );
-      onProgress?.({ phase: 'Saving fast preview', detail: 'Production original saved. Uploading the designer preview...', percent: 90 });
-      const { error: previewUploadError } = await supabase.storage
-        .from(SUPABASE_STORAGE_BUCKET)
-        .uploadToSignedUrl(ticket.previewStoragePath, ticket.previewToken, preview.file, {
-          contentType: 'image/webp',
-          metadata: { originalName: file.name, hueAssetId: ticket.assetId },
+      onProgress?.({ phase: 'Preparing fast preview', detail: 'Production original saved. Creating working-size copies...', percent: 84 });
+      let previewDetails: { width: number; height: number; dpiX: number; dpiY: number };
+      try {
+        const preview = await renderReducedArtworkPreview(file);
+        onProgress?.({ phase: 'Saving fast preview', detail: 'Uploading the designer preview...', percent: 90 });
+        const { error: previewUploadError } = await supabase.storage
+          .from(SUPABASE_STORAGE_BUCKET)
+          .uploadToSignedUrl(ticket.previewStoragePath, ticket.previewToken, preview.file, {
+            contentType: 'image/webp',
+            metadata: { originalName: file.name, hueAssetId: ticket.assetId },
+          });
+        if (previewUploadError) throw new Error(previewUploadError.message || 'The reduced artwork preview could not be saved.');
+        onProgress?.({ phase: 'Saving thumbnail', detail: 'Preparing the Image Zone thumbnail...', percent: 94 });
+        const { error: thumbnailUploadError } = await supabase.storage
+          .from(SUPABASE_STORAGE_BUCKET)
+          .uploadToSignedUrl(ticket.thumbnailStoragePath, ticket.thumbnailToken, preview.thumbnailFile, {
+            contentType: 'image/webp',
+            metadata: { originalName: file.name, hueAssetId: ticket.assetId },
+          });
+        if (thumbnailUploadError) throw new Error(thumbnailUploadError.message || 'The artwork thumbnail could not be saved.');
+        previewDetails = preview;
+      } catch (previewError) {
+        if ((ticket.mimeType || file.type) !== 'image/jpeg') throw previewError;
+        onProgress?.({ phase: 'Optimizing oversized artwork', detail: 'Creating the fast preview securely from the B2 original...', percent: 88 });
+        const fallbackResponse = await fetch('/api/artwork/upload', {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify({ action: 'generate-previews', assetId: ticket.assetId }),
         });
-      if (previewUploadError) throw new Error(previewUploadError.message || 'The reduced artwork preview could not be saved.');
-      onProgress?.({ phase: 'Saving thumbnail', detail: 'Preparing the Image Zone thumbnail...', percent: 94 });
-      const { error: thumbnailUploadError } = await supabase.storage
-        .from(SUPABASE_STORAGE_BUCKET)
-        .uploadToSignedUrl(ticket.thumbnailStoragePath, ticket.thumbnailToken, preview.thumbnailFile, {
-          contentType: 'image/webp',
-          metadata: { originalName: file.name, hueAssetId: ticket.assetId },
-        });
-      if (thumbnailUploadError) throw new Error(thumbnailUploadError.message || 'The artwork thumbnail could not be saved.');
+        if (!fallbackResponse.ok) throw new Error(await getErrorMessage(fallbackResponse));
+        const fallback = await fallbackResponse.json() as { width?: number; height?: number; dpiX?: number; dpiY?: number };
+        if (!fallback.width || !fallback.height) throw new Error('The secure preview fallback did not return the artwork dimensions.');
+        previewDetails = {
+          width: fallback.width,
+          height: fallback.height,
+          dpiX: fallback.dpiX || 0,
+          dpiY: fallback.dpiY || 0,
+        };
+      }
       onProgress?.({ phase: 'Verifying production file', detail: 'Checking the original and connecting it to your library...', percent: 97 });
       const verifyResponse = await fetch('/api/artwork/upload', {
         method: 'POST',
@@ -667,10 +688,10 @@ const uploadArtworkFileToSupabase = async (
         body: JSON.stringify({
           action: 'verify',
           assetId: ticket.assetId,
-          width: preview.width,
-          height: preview.height,
-          dpiX: preview.dpiX,
-          dpiY: preview.dpiY,
+          width: previewDetails.width,
+          height: previewDetails.height,
+          dpiX: previewDetails.dpiX,
+          dpiY: previewDetails.dpiY,
         }),
       });
       if (!verifyResponse.ok) throw new Error(await getErrorMessage(verifyResponse));

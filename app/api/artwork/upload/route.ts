@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import {
@@ -19,6 +22,7 @@ import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/
 import {
   createBackblazeUploadUrl,
   deleteBackblazeObject,
+  downloadBackblazeObjectToFile,
   getBackblazeObjectMetadata,
   hasBackblazeB2Config,
   readBackblazeObjectRange,
@@ -34,7 +38,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 type UploadRequest = {
-  action?: 'ticket' | 'verify' | 'abort';
+  action?: 'ticket' | 'generate-previews' | 'verify' | 'abort';
   fileName?: string;
   fileSize?: number;
   mimeType?: string;
@@ -102,7 +106,7 @@ const createDesignerImagePreview = async (buffer: Buffer, mimeType: string) => {
     .clone()
     .rotate()
     .resize({ width: PREVIEW_MAX_DIMENSION, height: PREVIEW_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
-    .webp({ quality: 82, effort: 4 })
+    .webp({ quality: 82, effort: 2 })
     .toBuffer({ resolveWithObject: true });
   return {
     bytes: preview.data,
@@ -110,6 +114,31 @@ const createDesignerImagePreview = async (buffer: Buffer, mimeType: string) => {
     height: preview.info.height,
     dpi: metadata.density,
     mimeType: 'image/webp' as const,
+  };
+};
+
+const createOversizedJpegPreviews = async (filePath: string) => {
+  const metadata = await sharp(filePath, { limitInputPixels: false, sequentialRead: true }).metadata();
+  const preview = await sharp(filePath, { limitInputPixels: false, sequentialRead: true })
+    .rotate()
+    .resize({ width: PREVIEW_MAX_DIMENSION, height: PREVIEW_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 82, effort: 4 })
+    .toBuffer({ resolveWithObject: true });
+  const thumbnail = await sharp(filePath, { limitInputPixels: false, sequentialRead: true })
+    .rotate()
+    .resize({ width: 480, height: 480, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 72, effort: 1 })
+    .toBuffer({ resolveWithObject: true });
+  if (preview.data.length > MAX_PREVIEW_BYTES || thumbnail.data.length > MAX_THUMBNAIL_BYTES) {
+    throw new Error('The optimized artwork previews exceeded their storage limits.');
+  }
+  return {
+    preview: preview.data,
+    thumbnail: thumbnail.data,
+    width: metadata.width,
+    height: metadata.height,
+    dpiX: metadata.density,
+    dpiY: metadata.density,
   };
 };
 
@@ -139,6 +168,52 @@ export async function POST(request: Request) {
       ]);
       await deleteArtworkAssetRecord(asset.id, user.id);
       return NextResponse.json({ aborted: true });
+    }
+
+    if (body.action === 'generate-previews') {
+      const assetId = String(body.assetId || '');
+      const asset = assetId ? await getArtworkAssetForUser(assetId, user.id) : null;
+      if (!asset || asset.original_provider !== 'b2') return NextResponse.json({ error: 'That B2 artwork upload does not belong to this account.' }, { status: 403 });
+      if (asset.mime_type !== 'image/jpeg') return NextResponse.json({ error: 'Secure preview fallback is only available for oversized JPEG artwork.' }, { status: 400 });
+
+      const object = await getBackblazeObjectMetadata(asset.original_object_key);
+      if (object.size !== Number(asset.file_size)) throw new Error('The uploaded production file size does not match the selected file.');
+      const firstEnd = Math.min(object.size - 1, 1024 * 1024 - 1);
+      const firstBytes = await readBackblazeObjectRange(asset.original_object_key, `bytes=0-${firstEnd}`);
+      const validated = validateArtworkBuffer(firstBytes, {
+        maxBytes: MAX_ARTWORK_BYTES,
+        maxImagePixels: MAX_PRODUCTION_JPEG_PIXELS,
+      });
+      if (validated.mimeType !== 'image/jpeg') throw new Error('The production file contents do not match the selected JPEG file type.');
+
+      const temporaryPath = join(tmpdir(), `hue-artwork-${asset.id}.jpg`);
+      try {
+        await downloadBackblazeObjectToFile(asset.original_object_key, temporaryPath);
+        const generated = await createOversizedJpegPreviews(temporaryPath);
+        const storage = getSupabaseAdminClient().storage.from(getStorageBucket());
+        const [{ error: previewError }, { error: thumbnailError }] = await Promise.all([
+          storage.upload(asset.preview_storage_path, generated.preview, {
+            contentType: 'image/webp',
+            cacheControl: '604800',
+            upsert: true,
+          }),
+          storage.upload(asset.thumbnail_storage_path, generated.thumbnail, {
+            contentType: 'image/webp',
+            cacheControl: '604800',
+            upsert: true,
+          }),
+        ]);
+        if (previewError) throw new Error(previewError.message || 'The reduced artwork preview could not be saved.');
+        if (thumbnailError) throw new Error(thumbnailError.message || 'The artwork thumbnail could not be saved.');
+        return NextResponse.json({
+          width: validated.width || generated.width,
+          height: validated.height || generated.height,
+          dpiX: generated.dpiX,
+          dpiY: generated.dpiY,
+        });
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
+      }
     }
 
     if (body.action === 'ticket') {

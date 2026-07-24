@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -84,6 +86,16 @@ export const readBackblazeObjectRange = async (objectKey: string, range: string)
     Range: range,
   }));
   return bodyToBuffer(result.Body);
+};
+
+export const downloadBackblazeObjectToFile = async (objectKey: string, filePath: string) => {
+  const result = await client().send(new GetObjectCommand({
+    Bucket: getBackblazeB2Bucket(),
+    Key: objectKey,
+  }));
+  const body = result.Body as NodeJS.ReadableStream | undefined;
+  if (!body || typeof body.pipe !== 'function') throw new Error('Backblaze B2 did not return a readable production file.');
+  await pipeline(body, createWriteStream(filePath));
 };
 
 export const createBackblazeDownloadUrl = async (objectKey: string, expiresIn = 15 * 60) => getSignedUrl(
