@@ -5,6 +5,21 @@ import { DEFAULT_SHEET_PRICING, STUDIO_PRICING_PRODUCTS } from '@/lib/server/stu
 import { enforceRateLimit } from '@/lib/server/request-security';
 
 type StorageEntry = { id?: string | null; name?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; path?: string; preview_url?: string };
+type ArtworkAssetEntry = {
+  id: string;
+  owner_user_id: string;
+  original_name: string;
+  production_reference: string;
+  original_provider: 'b2' | 'supabase' | 'drive';
+  original_object_key: string;
+  preview_storage_path: string;
+  thumbnail_storage_path: string;
+  mime_type: string;
+  file_size: number;
+  archive_status: string;
+  created_at?: string;
+  updated_at?: string;
+};
 
 const canPreviewImage = (entry: StorageEntry) => String(entry.metadata?.mimetype || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(entry.name || '');
 
@@ -26,6 +41,16 @@ const listAllUsers = async () => {
     const pageUsers = payload.users || [];
     users.push(...pageUsers);
     if (pageUsers.length < perPage) return { users };
+  }
+};
+
+const listAllArtworkAssets = async () => {
+  const pageSize = 1000;
+  const assets: ArtworkAssetEntry[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await supabaseAdminFetch(`/rest/v1/hue_artwork_assets?select=*&archive_status=neq.deleted&order=created_at.desc&limit=${pageSize}&offset=${offset}`) as ArtworkAssetEntry[];
+    assets.push(...page);
+    if (page.length < pageSize) return assets;
   }
 };
 
@@ -56,9 +81,10 @@ export async function GET(request: NextRequest) {
       listStorageFiles(),
       supabaseAdminFetch('/rest/v1/hue_promo_codes?select=*&order=created_at.desc') as Promise<unknown[]>,
       supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=*&order=category.asc,display_name.asc') as Promise<unknown[]>,
-      supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=sheet_included_pieces,sheet_extra_percent,sheet_max_surcharge_percent&limit=1') as Promise<unknown[]>
+      supabaseAdminFetch('/rest/v1/hue_pricing_adjustments?select=sheet_included_pieces,sheet_extra_percent,sheet_max_surcharge_percent&limit=1') as Promise<unknown[]>,
+      listAllArtworkAssets(),
     ]);
-    const sectionNames = ['users', 'orders', 'files', 'promos', 'pricing', 'sheetPricing'] as const;
+    const sectionNames = ['users', 'orders', 'files', 'promos', 'pricing', 'sheetPricing', 'artworkAssets'] as const;
     const sectionErrors = results.reduce<Record<string, string>>((errors, result, index) => {
       if (result.status === 'rejected') {
         errors[sectionNames[index]] = result.reason instanceof Error ? result.reason.message : 'This section could not be loaded.';
@@ -67,10 +93,13 @@ export async function GET(request: NextRequest) {
     }, {});
     const usersPayload = results[0].status === 'fulfilled' ? results[0].value : { users: [] };
     const orders = results[1].status === 'fulfilled' ? results[1].value : [];
+    const artworkAssets = results[6].status === 'fulfilled' ? results[6].value : [];
+    const managedDerivativePaths = new Set(artworkAssets.flatMap((asset) => [asset.preview_storage_path, asset.thumbnail_storage_path]));
     const rawFiles = results[2].status === 'fulfilled'
       ? results[2].value.filter((file) => file.name !== '.emptyFolderPlaceholder' && !file.path?.endsWith('/.emptyFolderPlaceholder'))
+        .filter((file) => !file.path || !managedDerivativePaths.has(file.path))
       : [];
-    const files = await Promise.all(rawFiles.map(async (file) => {
+    const legacyFiles = await Promise.all(rawFiles.map(async (file) => {
       if (!file.path || !canPreviewImage(file)) return file;
       try {
         return { ...file, preview_url: await getStorageSignedUrl(file.path) };
@@ -78,6 +107,22 @@ export async function GET(request: NextRequest) {
         return file;
       }
     }));
+    const registeredFiles = await Promise.all(artworkAssets.map(async (asset) => ({
+      id: asset.id,
+      name: asset.original_name,
+      path: asset.preview_storage_path,
+      created_at: asset.created_at,
+      updated_at: asset.updated_at,
+      metadata: { size: Number(asset.file_size || 0), mimetype: asset.mime_type },
+      preview_url: await getStorageSignedUrl(asset.preview_storage_path).catch(() => undefined),
+      asset_id: asset.id,
+      owner_user_id: asset.owner_user_id,
+      production_reference: asset.production_reference,
+      original_provider: asset.original_provider,
+      archive_status: asset.archive_status,
+      derivative_count: 2,
+    })));
+    const files = [...registeredFiles, ...legacyFiles];
     const promos = results[3].status === 'fulfilled' ? results[3].value : [];
     const savedPricing = results[4].status === 'fulfilled' ? results[4].value as Array<Record<string, unknown>> : [];
     const pricing = STUDIO_PRICING_PRODUCTS.map((product) => {

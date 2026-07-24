@@ -34,6 +34,7 @@ const getBearerToken = (request: Request) => {
 
 const safeFolder = (value: string, fallback: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || fallback;
 const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf|json)(\?.*)?$/i.test(value);
+const isManagedDerivativePath = (value: string) => /\/(?:previews|thumbnails)\//i.test(value);
 const mimeTypeFromName = (name: string) => {
   const extension = name.split('.').pop()?.toLowerCase();
   if (extension === 'png') return 'image/png';
@@ -215,7 +216,7 @@ export async function GET(request: NextRequest) {
     const allFiles = [...filesByPath.values()];
     const previewPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-preview\.webp$/i.test(file.path)).map((file) => file.path));
     const registeredPreviewPaths = new Set(registeredAssets.map((asset) => asset.preview_storage_path));
-    const originalFiles = allFiles.filter((file) => !/\/previews\//i.test(file.path) && !registeredPreviewPaths.has(file.path));
+    const originalFiles = allFiles.filter((file) => !isManagedDerivativePath(file.path) && !registeredPreviewPaths.has(file.path));
     originalFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
     const metadataPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-metadata\.json$/i.test(file.path)).map((file) => file.path));
     const storedMetadataEntries = await Promise.all(originalFiles.map(async (file) => {
