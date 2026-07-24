@@ -41,6 +41,56 @@ type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkUploadProgress = { fileName: string; phase: string; detail: string; percent: number };
 type ArtworkUploadProgressUpdate = Omit<ArtworkUploadProgress, 'fileName'>;
+
+const PRINT_SHOP_QUIPS = [
+  'Calibrating the creative flux...',
+  'Aligning the pixel particles...',
+  'Warming up the ink engines...',
+  'Synchronizing the squeegee matrix...',
+  'Stabilizing the bleed perimeter...',
+  'Tuning the registration field...',
+  'Charging the print capacitors...',
+  'Negotiating with the magenta channel...',
+  'Translating pixels into print magic...',
+  'Reversing the CMYK polarity...',
+  'Defragmenting the design molecules...',
+  'Polishing the invisible crop marks...',
+  'Balancing the cyan-to-vibes ratio...',
+  'Spooling the chromatic continuum...',
+  'Rebooting the color wheel...',
+  'Coaxing the vectors into formation...',
+  'Activating maximum printitude...',
+  'Cross-checking the Pantone particles...',
+  'Increasing pixel confidence levels...',
+  'Running a highly scientific ink diagnostic...',
+  'Recalculating the awesome coefficient...',
+  'Priming the squeegee thrusters...',
+  'Decompressing the design atmosphere...',
+  'Converting caffeine into color...',
+  'Checking the registration gravity...',
+  'Fine-tuning the wow frequency...',
+  'Applying anti-boring calibration...',
+  'Routing the artwork through the fun tunnel...',
+  'Making the pixels look extremely busy...',
+  'Consulting the ancient print manual...',
+] as const;
+
+const usePrintShopQuip = (active: boolean) => {
+  const [quipIndex, setQuipIndex] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const chooseNext = (current: number) => {
+      const offset = 1 + Math.floor(Math.random() * (PRINT_SHOP_QUIPS.length - 1));
+      return (current + offset) % PRINT_SHOP_QUIPS.length;
+    };
+    setQuipIndex(chooseNext);
+    const interval = window.setInterval(() => {
+      setQuipIndex(chooseNext);
+    }, 2800);
+    return () => window.clearInterval(interval);
+  }, [active]);
+  return PRINT_SHOP_QUIPS[quipIndex];
+};
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backDpi?: number; backSourceSignWidth?: number; backSourceSignHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
@@ -2522,6 +2572,28 @@ export default function Home() {
   const pendingPayPalCheckoutRef = useRef<{ order: TestOrder; checkoutToken: string; paypalOrderId: string; paymentToken?: string; captureId?: string; paidAt?: string } | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
+  const isPrintShopBusy = Boolean(
+    imageUploadProgress
+    || isImageLibraryLoading
+    || isCanvaImportLoading
+    || isCanvaDesignsLoading
+    || importingCanvaDesignId
+    || isAiEditing
+    || isArtworkEditorSaving
+    || artworkEditorAiAction
+    || isGeneratingSmartTemplate
+    || isCustomerAuthLoading
+    || isPreparingCartArtwork
+    || accountOrdersLoading
+    || isCheckoutPromoLoading
+    || isSubmittingTestOrder
+    || pendingPayPalFinalization
+    || isAddingCoroSign
+    || isApparelEstimateLoading
+    || isSignEstimateLoading
+    || isCategoryCatalogLoading
+  );
+  const printShopQuip = usePrintShopQuip(isPrintShopBusy);
 
   useEffect(() => {
     try {
@@ -6941,9 +7013,9 @@ export default function Home() {
     if ((isImageFile || isPdfFile) && isSupabaseStorageConfigured) {
       event.target.value = '';
       setArtworkAnalysis(null);
-      setArtworkAnalysisStatus(`${file.name} is being saved securely. Hue Studio will use a reduced working preview.`);
-      setImageLibraryStatus(`Saving production original (${(file.size / 1024 / 1024).toFixed(1)} MB) and preparing a fast preview...`);
-      setImageUploadProgress({ fileName: file.name, phase: 'Preparing upload', detail: 'Starting secure artwork processing...', percent: 1 });
+      setArtworkAnalysisStatus(`${file.name} is entering the print dimension.`);
+      setImageLibraryStatus('Calibrating the creative flux...');
+      setImageUploadProgress({ fileName: file.name, phase: 'Calibrating the creative flux...', detail: 'Please keep this tab open.', percent: 1 });
       try {
         const storageInfo = await uploadArtworkFileToSupabase(file, customerSession, (progress) => {
           setImageUploadProgress({ fileName: file.name, ...progress });
@@ -9230,9 +9302,9 @@ export default function Home() {
                   {productSizeIssue ? <p className="mt-2 rounded border border-red-400/35 bg-red-950/45 px-3 py-2 text-left text-[10px] font-bold leading-4 text-red-100">{productSizeIssue}</p> : null}
                   {isProductionBuilder && signEstimateStatus ? <p className={`mt-2 max-w-[240px] text-xs leading-4 ${signEstimate ? 'text-emerald-300' : isSignEstimateLoading ? 'text-[#8be3ff]' : 'text-amber-300'}`}>{signEstimateStatus}</p> : null}
                   {hasCoroSheetWarning ? <button type="button" onClick={() => setShowCoroSheetWarning(true)} className="mt-3 rounded bg-red-600 px-3 py-1.5 text-xs font-black text-white shadow-[0_10px_24px_rgba(220,38,38,0.24)] hover:bg-red-500">{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0)} warning{(hasCoroUnusedSheetSpace ? 1 : 0) + (hasCoroAspectMismatch ? 1 : 0) === 1 ? '' : 's'}</button> : null}
-                  {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading || isPreparingCartArtwork} className={`mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait ${isPreparingCartArtwork ? 'hue-preparing-artwork-button' : 'disabled:opacity-60'}`}>{isPreparingCartArtwork ? <span className="hue-preparing-artwork-button__content"><span className="hue-preparing-artwork-button__spinner" aria-hidden="true" />Preparing Final Artwork<span className="hue-preparing-artwork-button__dots" aria-hidden="true" /></span> : isSignEstimateLoading ? 'Pricing...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
+                  {isProductionBuilder ? <button type="button" onClick={canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} disabled={isSignEstimateLoading || isPreparingCartArtwork} className={`mt-3 w-full rounded border border-[#22c55e]/40 bg-[#22c55e] px-4 py-2.5 text-xs font-black uppercase text-white shadow-[0_0_24px_rgba(34,197,94,0.20)] hover:bg-[#16a34a] disabled:cursor-wait ${isPreparingCartArtwork ? 'hue-preparing-artwork-button' : 'disabled:opacity-60'}`}>{isPreparingCartArtwork ? <span className="hue-preparing-artwork-button__content"><span className="hue-preparing-artwork-button__spinner" aria-hidden="true" />Preflighting the pixels<span className="hue-preparing-artwork-button__dots" aria-hidden="true" /></span> : isSignEstimateLoading ? 'Counting ink pennies...' : canAddCurrentDesignToCart ? 'Add To Cart' : signEstimate ? 'Check Artwork' : 'Run Pricing'}</button> : null}
                 </div>
-                <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className={`${isProductionBuilder ? 'hidden' : 'min-h-14'} bg-[#1678b8] px-4 text-sm font-bold uppercase text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70`}>{isSignEstimateLoading ? 'Pricing...' : signEstimate ? 'Update Price' : 'Price It'}</button>
+                <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className={`${isProductionBuilder ? 'hidden' : 'min-h-14'} bg-[#1678b8] px-4 text-sm font-bold uppercase text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70`}>{isSignEstimateLoading ? 'Counting ink pennies...' : signEstimate ? 'Update Price' : 'Price It'}</button>
               </div> : null}
               {productMode === 'apparel' && layers.length === 0 ? <div className="absolute bottom-20 left-24 top-6 z-10 hidden w-[min(540px,42vw)] rounded-lg bg-white p-8 shadow-sm lg:block">
                 <h2 className="text-center text-2xl font-black text-[#05090b]">What&apos;s next for you?</h2>
@@ -9387,7 +9459,7 @@ export default function Home() {
                   <div className="mt-3 text-xs"><button type="button" className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-slate-400">Contour Cut</button></div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => requestArtworkUpload(`Choose finished artwork for ${selectedSignProduct.name}.`)} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</button><button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button></div>
-                {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
+                {imageLibraryStatus ? <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{isImageLibraryLoading ? `${printShopQuip} ` : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p><span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-xs font-bold text-[#8be3ff]">{imageZoneItems.length}</span></div>
                   <div className="mt-2 max-h-60 space-y-2 overflow-y-auto pr-1">{imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => <button key={item.id} type="button" onClick={async () => { await applyImageZoneItem(item); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left text-xs transition hover:border-[#38bdf8]">{hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}<span className="min-w-0 flex-1"><span className="block truncate font-bold text-slate-800">{item.name}</span><span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span></span><span className="rounded bg-[#1678b8] px-2 py-1 font-black uppercase text-white">Use</span></button>)}</div>
@@ -9586,7 +9658,7 @@ export default function Home() {
                   <button type="button" onClick={() => requestArtworkUpload()} className="hue-artwork-primary cursor-pointer rounded-xl bg-[#1686c9] px-3 py-3 text-center text-xs font-black text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">Upload file</button>
                   <button type="button" onClick={() => setShowImageZone(true)} className="hue-artwork-secondary rounded-xl border border-white/15 bg-white/[0.06] px-3 py-3 text-xs font-black text-slate-100 hover:border-[#38bdf8]/50 hover:bg-white/[0.1]">Open Image Zone</button>
                 </div>
-                {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</p> : null}
+                {imageLibraryStatus ? <p className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">{isImageLibraryLoading ? `${printShopQuip} ` : ''}{imageLibraryStatus}</p> : null}
                 <div className="hue-library-queue mt-5 border-t border-white/10 pt-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Session library</p>
@@ -9913,7 +9985,7 @@ export default function Home() {
             </> : <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               <p className="font-semibold text-slate-950">{selectedSignProduct.name}</p>
               <p className="mt-1 text-xs leading-5">{getSignConfigurationText(selectedSignProduct, signValues)}</p>
-              <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className="mt-3 w-full rounded-md bg-[#1678b8] px-3 py-2 text-sm font-bold text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70">{isSignEstimateLoading ? 'Loading estimate...' : 'Get Sign Estimate'}</button>
+              <button type="button" onClick={requestSignEstimate} disabled={isSignEstimateLoading} className="mt-3 w-full rounded-md bg-[#1678b8] px-3 py-2 text-sm font-bold text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70">{isSignEstimateLoading ? 'Counting ink pennies...' : 'Get Sign Estimate'}</button>
               {signEstimate ? <div className="mt-3 rounded-md border border-[#1678b8]/20 bg-white p-3 text-slate-950"><p className="font-semibold">Estimated total: {formatSignPrice(signEstimate.price?.retail, signEstimate.currency)}</p><p className="mt-1">Each: {formatSignPrice(signEstimate.price?.each, signEstimate.currency)}</p>{signEstimate.warnings?.length ? <p className="mt-2 text-xs text-amber-700">{signEstimate.warnings.join(' ')}</p> : null}</div> : null}
               {signEstimateStatus ? <p className={`mt-3 text-xs ${signEstimate ? 'text-slate-500' : 'text-amber-700'}`}>{signEstimateStatus}</p> : null}
             </div>}
@@ -9938,7 +10010,7 @@ export default function Home() {
               <p className="font-semibold">{printMethod === 'Not sure / Recommend for me' ? printRecommendation.method : printMethod}</p>
               <p className="mt-1">{printMethod === 'Not sure / Recommend for me' ? printRecommendation.reason : `You selected ${printMethod}.`}</p>
               {manualMethodWarning ? <p className="mt-1 text-amber-800">{manualMethodWarning}</p> : null}
-              <button type="button" onClick={requestApparelEstimate} disabled={isApparelEstimateLoading} className="mt-3 w-full rounded-md bg-[#1678b8] px-3 py-2 text-sm font-bold text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70">{isApparelEstimateLoading ? 'Loading real estimate...' : 'Get Real Apparel Estimate'}</button>
+              <button type="button" onClick={requestApparelEstimate} disabled={isApparelEstimateLoading} className="mt-3 w-full rounded-md bg-[#1678b8] px-3 py-2 text-sm font-bold text-white hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-70">{isApparelEstimateLoading ? 'Counting shirt pennies...' : 'Get Real Apparel Estimate'}</button>
               {apparelEstimateStatus ? <p className={`mt-2 text-xs ${apparelEstimate ? 'text-[#1678b8]' : 'text-amber-800'}`}>{apparelEstimateStatus}</p> : null}
               <p className="mt-3 font-semibold">{apparelEstimate ? 'Pricing API' : 'Local fallback'} / Decoration ${displayedDecorationCost.toFixed(2)} / Per Shirt ${displayedPerShirt.toFixed(2)}</p>
             </div> : null}
@@ -10031,7 +10103,7 @@ export default function Home() {
                     <p className="mt-1 text-slate-400">{new Date(order.createdAt).toLocaleDateString()} / {order.items.length} item{order.items.length === 1 ? '' : 's'} / {order.items.reduce((total, item) => total + item.artworkFiles.length, 0)} artwork file{order.items.reduce((total, item) => total + item.artworkFiles.length, 0) === 1 ? '' : 's'}</p>
                     <span className="mt-1 block font-bold text-[#8be3ff]">View order details →</span>
                   </button>)}
-                </div> : <p className="mt-2 text-xs leading-5 text-slate-400">{accountOrdersLoading ? 'Loading your complete order history...' : 'Orders placed with this signed-in email will appear here.'}</p>}
+                </div> : <p className="mt-2 text-xs leading-5 text-slate-400">{accountOrdersLoading ? printShopQuip : 'Orders placed with this signed-in email will appear here.'}</p>}
               </div>
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
               <label className="block text-sm font-bold text-slate-200">Email
@@ -10043,7 +10115,7 @@ export default function Home() {
               {customerAuthMode === 'signin' ? <div className="-mt-1 flex justify-end">
                 <button type="button" onClick={() => { void handleCustomerPasswordRecovery(); }} disabled={isCustomerAuthLoading} className="text-xs font-black uppercase tracking-[0.16em] text-[#8be3ff] hover:text-white disabled:cursor-wait disabled:opacity-60">Forgot password?</button>
               </div> : null}
-              <button type="submit" disabled={isCustomerAuthLoading} className="w-full rounded border border-[#0ea5e9]/60 bg-[#1678b8] px-5 py-3 text-sm font-black uppercase text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-60">{isCustomerAuthLoading ? 'Working...' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</button>
+              <button type="submit" disabled={isCustomerAuthLoading} className="w-full rounded border border-[#0ea5e9]/60 bg-[#1678b8] px-5 py-3 text-sm font-black uppercase text-white shadow-[0_0_22px_rgba(14,165,233,0.18)] hover:bg-[#0f5f94] disabled:cursor-wait disabled:opacity-60">{isCustomerAuthLoading ? 'Mixing the login ink...' : customerAuthMode === 'signin' ? 'Sign In' : 'Create Account'}</button>
             </form>}
             {customerAuthStatus ? <p className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{customerAuthStatus}</p> : null}
             <div className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-wrap gap-2 border-t border-white/10 bg-[#07111f]/95 px-6 py-4 shadow-[0_-14px_28px_rgba(2,7,13,0.72)] backdrop-blur-md">
@@ -10287,7 +10359,7 @@ export default function Home() {
                 </div>
               </div>
               <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-4">
-                <div className="flex flex-wrap items-end gap-3"><label className="min-w-52 flex-1 text-xs font-black uppercase tracking-wide text-[#8be3ff]">Promo code<input value={checkoutPromoInput} onChange={(event) => { setCheckoutPromoInput(event.target.value.toUpperCase()); if (checkoutPromo && event.target.value.toUpperCase() !== checkoutPromo.code) setCheckoutPromo(null); }} placeholder="Enter code" className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-4 text-sm font-bold uppercase text-white outline-none focus:border-[#38bdf8]" /></label><button type="button" disabled={isCheckoutPromoLoading} onClick={() => void applyCheckoutPromo()} className="h-11 rounded-xl bg-[#1686c9] px-5 text-xs font-black uppercase text-white hover:bg-[#0f75b5] disabled:opacity-50">{isCheckoutPromoLoading ? 'Checking...' : checkoutPromo ? 'Reapply' : 'Apply code'}</button>{checkoutPromo ? <button type="button" onClick={() => { setCheckoutPromo(null); setCheckoutPromoInput(''); setCheckoutStatus('Promo code removed.'); }} className="h-11 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300">Remove</button> : null}</div>
+                <div className="flex flex-wrap items-end gap-3"><label className="min-w-52 flex-1 text-xs font-black uppercase tracking-wide text-[#8be3ff]">Promo code<input value={checkoutPromoInput} onChange={(event) => { setCheckoutPromoInput(event.target.value.toUpperCase()); if (checkoutPromo && event.target.value.toUpperCase() !== checkoutPromo.code) setCheckoutPromo(null); }} placeholder="Enter code" className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-4 text-sm font-bold uppercase text-white outline-none focus:border-[#38bdf8]" /></label><button type="button" disabled={isCheckoutPromoLoading} onClick={() => void applyCheckoutPromo()} className="h-11 rounded-xl bg-[#1686c9] px-5 text-xs font-black uppercase text-white hover:bg-[#0f75b5] disabled:opacity-50">{isCheckoutPromoLoading ? 'Checking under the press...' : checkoutPromo ? 'Reapply' : 'Apply code'}</button>{checkoutPromo ? <button type="button" onClick={() => { setCheckoutPromo(null); setCheckoutPromoInput(''); setCheckoutStatus('Promo code removed.'); }} className="h-11 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300">Remove</button> : null}</div>
                 {checkoutPromo ? <p className="mt-3 text-sm font-bold text-emerald-300">✓ {checkoutPromo.code}: {checkoutPromo.description} — {formatSignPrice(checkoutDiscountAmount, 'USD')} savings</p> : <p className="mt-3 text-xs text-slate-400">Have a special Hue discount? Apply it before submitting.</p>}
               </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -10628,7 +10700,7 @@ export default function Home() {
           <footer className="hue-mobile-editor-footer flex flex-wrap items-center gap-3 border-t border-white/10 bg-[#050d16] px-5 py-3">
             <p className={`min-w-0 flex-1 text-xs leading-5 ${artworkEditorStatus.toLowerCase().includes('could not') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{artworkEditorStatus}</p>
             <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Saving design...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Bottling the print magic...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
           </footer>
         </section>
       </div> : null}
@@ -10752,7 +10824,7 @@ export default function Home() {
             <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-6">
               <div className="grid gap-5 lg:grid-cols-[1fr_1fr_390px]">
                 <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Original</p><div className="flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white">{source ? <img src={source.dataUrl} alt="Original artwork" className="max-h-full max-w-full object-contain" /> : null}</div><p className="mt-2 truncate text-xs text-slate-400">{source?.name}</p></div>
-                <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">AI proof</p><div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-[#38bdf8]/25 bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.12),transparent_65%)]">{aiEditPreview ? <img src={aiEditPreview.dataUrl} alt="AI edited proof" className="max-h-full max-w-full object-contain" /> : <div className="max-w-52 text-center"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[#0c2a40] text-2xl text-[#67d8ff]">✦</span><p className="mt-4 text-sm font-bold text-slate-300">Your generated proof will appear here</p></div>}{isAiEditing ? <div className="absolute inset-0 flex items-center justify-center bg-[#04101c]/80"><div className="text-center"><span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-[#67d8ff]/25 border-t-[#67d8ff]" /><p className="mt-3 text-xs font-bold text-[#a9ecff]">Working on your proof...</p></div></div> : null}</div></div>
+                <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">AI proof</p><div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-[#38bdf8]/25 bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.12),transparent_65%)]">{aiEditPreview ? <img src={aiEditPreview.dataUrl} alt="AI edited proof" className="max-h-full max-w-full object-contain" /> : <div className="max-w-52 text-center"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[#0c2a40] text-2xl text-[#67d8ff]">✦</span><p className="mt-4 text-sm font-bold text-slate-300">Your generated proof will appear here</p></div>}{isAiEditing ? <div className="absolute inset-0 flex items-center justify-center bg-[#04101c]/80"><div className="text-center"><span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-[#67d8ff]/25 border-t-[#67d8ff]" /><p className="mt-3 text-xs font-bold text-[#a9ecff]">{printShopQuip}</p></div></div> : null}</div></div>
                 <div className="rounded-2xl border border-[#38bdf8]/20 bg-[#061524]/85 p-4 shadow-[0_0_34px_rgba(14,165,233,0.08)]">
                   <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Choose a Hue AI tool</p><h3 className="mt-1 text-lg font-black">{activeAiTool.title}</h3></div><span className="rounded-full border border-[#38bdf8]/25 bg-[#0c2a40] px-2.5 py-1 text-[9px] font-black uppercase text-[#9be8ff]">{activeAiTool.tag}</span></div>
                   <div className="mt-4 grid grid-cols-1 gap-2">{aiTools.map((tool) => <button key={tool.id} type="button" onClick={() => { setAiEditAction(tool.id); setAiEditPrompt(''); setAiEditPreview(null); setAiEditStatus(tool.id === 'quality-check' ? 'Run a print-quality check before spending AI credits.' : `Ready for ${tool.title}. Your original artwork will remain untouched.`); }} className={`rounded-xl border p-3 text-left transition ${aiEditAction === tool.id ? 'border-[#67d8ff] bg-[#0c2a40] shadow-[0_0_22px_rgba(14,165,233,0.16)]' : 'border-white/10 bg-white/[0.035] hover:border-[#38bdf8]/45 hover:bg-white/[0.06]'}`}><span className="flex items-center justify-between gap-2"><strong className="text-xs font-black text-white">{tool.title}</strong><span className="text-[9px] font-black uppercase text-slate-500">{tool.tag}</span></span><span className="mt-1 block text-[10px] leading-4 text-slate-400">{tool.description}</span></button>)}</div>
@@ -10804,7 +10876,7 @@ export default function Home() {
               <button type="button" aria-label="Close Image Zone" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="hue-image-library-mobile-close hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] text-lg font-bold text-slate-300">×</button>
             </div>
             <div className="hue-image-library-actions contents">
-            <button type="button" disabled={Boolean(imageUploadProgress)} onClick={() => requestArtworkUpload()} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{imageUploadProgress ? 'Uploading...' : '+ Upload artwork'}</button>
+            <button type="button" disabled={Boolean(imageUploadProgress)} onClick={() => requestArtworkUpload()} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{imageUploadProgress ? 'Making print magic...' : '+ Upload artwork'}</button>
             <button type="button" onClick={openCanvaImport} className="h-10 rounded-xl border border-[#22d3ee]/35 bg-[#083044] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#0c3b55]">Import Canva</button>
             <button type="button" onClick={() => openNewArtworkCreator('image-zone-create')} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit in Hue Designer</button>
@@ -10821,13 +10893,13 @@ export default function Home() {
           <div className="hue-image-library-summary flex flex-wrap items-center gap-3 border-b border-white/10 bg-[#0a1928] px-5 py-3 text-xs">
             <button type="button" className="rounded-lg border border-[#38bdf8]/35 bg-[#0c2a40] px-4 py-2 font-black uppercase text-[#8be3ff] hover:bg-[#10364f]">Select all</button>
             <span className="font-semibold text-slate-300"><strong className="text-white">{imageZoneItems.length}</strong> item{imageZoneItems.length === 1 ? '' : 's'} in your artwork vault</span>
-            {imageLibraryStatus ? <span className="hue-image-library-status order-last block basis-full whitespace-normal break-words leading-5 text-slate-400"><span className="mr-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
+            {imageLibraryStatus ? <span className="hue-image-library-status order-last block basis-full whitespace-normal break-words leading-5 text-slate-400"><span className="mr-2 text-white/20">/</span>{isImageLibraryLoading ? `${printShopQuip} ` : ''}{imageLibraryStatus}</span> : null}
             {selectedImageZoneId ? <span className="ml-auto rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 font-bold text-emerald-300">● Artwork selected</span> : null}
           </div>
           {imageUploadProgress ? <div role="status" aria-live="polite" className="border-b border-[#38bdf8]/25 bg-[linear-gradient(90deg,rgba(14,165,233,0.16),rgba(8,47,73,0.32))] px-4 py-3 sm:px-5">
             <div className="flex items-center gap-3">
               <span className="block h-8 w-8 shrink-0 animate-spin rounded-full border-[3px] border-[#67d8ff]/20 border-t-[#67d8ff]" aria-hidden="true" />
-              <div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3"><p className="truncate text-xs font-black uppercase tracking-[0.12em] text-[#a9ecff]">{imageUploadProgress.phase}</p><span className="shrink-0 text-sm font-black text-white">{Math.round(imageUploadProgress.percent)}%</span></div><p className="mt-1 truncate text-xs text-slate-300"><strong className="text-white">{imageUploadProgress.fileName}</strong> · {imageUploadProgress.detail}</p></div>
+              <div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3"><p className="truncate text-xs font-black uppercase tracking-[0.12em] text-[#a9ecff]">{printShopQuip}</p><span className="shrink-0 text-sm font-black text-white">{Math.round(imageUploadProgress.percent)}%</span></div><p className="mt-1 truncate text-xs text-slate-300"><strong className="text-white">{imageUploadProgress.fileName}</strong> · Please keep this tab open.</p></div>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/35"><div className="h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#67e8f9)] shadow-[0_0_16px_rgba(103,232,249,0.5)] transition-[width] duration-300" style={{ width: `${Math.max(2, Math.min(100, imageUploadProgress.percent))}%` }} /></div>
           </div> : null}
@@ -10842,8 +10914,8 @@ export default function Home() {
                 <span className="hue-image-library-loading__orb mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.18)]">
                   <span className="hue-image-library-loading__spinner" aria-hidden="true" />
                 </span>
-                <p className="mt-5 text-lg font-black text-white">Loading your saved artwork...</p>
-                <p className="mt-2 text-sm text-slate-400">Hang tight while Hue Studio pulls your Image Zone files.</p>
+                <p className="mt-5 text-lg font-black text-white">Opening your artwork vault...</p>
+                <p className="mt-2 text-sm text-slate-400">{printShopQuip}</p>
                 <div className="mx-auto mt-6 grid max-w-md grid-cols-3 gap-3">
                   {[0, 1, 2].map((item) => <span key={item} className="hue-image-library-loading__tile" />)}
                 </div>
@@ -10853,7 +10925,7 @@ export default function Home() {
                 <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/20 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.15)]">+</span><p className="mt-5 text-lg font-black text-white">Your artwork vault is ready</p>
                 <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  <button type="button" disabled={Boolean(imageUploadProgress)} onClick={() => requestArtworkUpload()} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{imageUploadProgress ? 'Uploading...' : 'Upload artwork'}</button>
+                  <button type="button" disabled={Boolean(imageUploadProgress)} onClick={() => requestArtworkUpload()} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{imageUploadProgress ? 'Making print magic...' : 'Upload artwork'}</button>
                   <button type="button" onClick={openCanvaImport} className="inline-flex rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Import Canva</button>
                 </div>
               </div>
@@ -10920,16 +10992,16 @@ export default function Home() {
               <button type="button" onClick={openCanvaImport} className="mt-4 w-full rounded-xl border border-white/15 bg-white/[0.05] px-4 py-3 text-xs font-bold text-slate-300 hover:border-[#38bdf8]/45 hover:bg-white/[0.09]">Refresh connection</button>
             </aside>
             <div className="flex min-h-[520px] min-w-0 flex-col rounded-2xl border border-[#38bdf8]/20 bg-[#06111d] p-5">
-              {isCanvaImportLoading ? <p className="mt-4 text-sm text-slate-300">Checking Canva setup...</p> : canvaImportStatus?.configured ? <>
+              {isCanvaImportLoading ? <p className="mt-4 text-sm text-slate-300">{printShopQuip}</p> : canvaImportStatus?.configured ? <>
                 {canvaImportStatus.connected ? <div className="flex min-h-0 flex-1 flex-col">
                   <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#38bdf8]/25 bg-[#0c2a40]/70 p-3">
                     <label className="flex h-11 min-w-56 flex-1 items-center gap-3 rounded-xl border border-white/15 bg-black/25 px-4 focus-within:border-[#38bdf8]"><span className="text-[#67d8ff]">⌕</span><input value={canvaDesignSearch} onChange={(event) => setCanvaDesignSearch(event.target.value)} placeholder="Search Canva designs" className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500" /></label>
                     <span className="text-xs font-semibold text-slate-400">{filteredCanvaDesigns.length} design{filteredCanvaDesigns.length === 1 ? '' : 's'}</span>
-                    <button type="button" onClick={loadCanvaDesigns} disabled={isCanvaDesignsLoading} className="h-11 shrink-0 rounded-lg border border-[#38bdf8]/35 bg-[#083044] px-4 text-[10px] font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] disabled:cursor-wait disabled:opacity-60">{isCanvaDesignsLoading ? 'Refreshing...' : 'Refresh designs'}</button>
+                    <button type="button" onClick={loadCanvaDesigns} disabled={isCanvaDesignsLoading} className="h-11 shrink-0 rounded-lg border border-[#38bdf8]/35 bg-[#083044] px-4 text-[10px] font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] disabled:cursor-wait disabled:opacity-60">{isCanvaDesignsLoading ? 'Shuffling pixels...' : 'Refresh designs'}</button>
                   </div>
                   {canvaDesignStatus ? <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-300">{canvaDesignStatus}</p> : null}
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
-                    {isCanvaDesignsLoading ? <p className="rounded-xl border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">Loading Canva designs...</p> : filteredCanvaDesigns.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {isCanvaDesignsLoading ? <p className="rounded-xl border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">{printShopQuip}</p> : filteredCanvaDesigns.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       {filteredCanvaDesigns.map((design) => <article key={design.id} className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.055] transition hover:-translate-y-0.5 hover:border-[#38bdf8]/45 hover:shadow-[0_18px_42px_rgba(0,0,0,0.28)]">
                         <div className="flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-white/10 bg-slate-950 p-3">
                           {design.thumbnailUrl ? <img src={design.thumbnailUrl} alt={`Preview of ${design.title}`} className="h-full w-full rounded-lg object-contain" /> : <span className="text-[10px] font-black uppercase text-slate-500">Canva preview</span>}
@@ -10937,7 +11009,7 @@ export default function Home() {
                         <div className="min-w-0 p-4">
                           <p className="line-clamp-2 min-h-10 text-sm font-black leading-5 text-white" title={design.title}>{design.title}</p>
                           <p className="mt-1 truncate text-[11px] text-slate-400">{design.updatedAt || 'Canva design'}</p>
-                          <button type="button" onClick={() => void importCanvaDesign(design)} disabled={Boolean(importingCanvaDesignId)} className="mt-4 flex h-11 w-full items-center justify-center rounded-xl bg-[#1686c9] px-3 text-[10px] font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.2)] hover:bg-[#0f75b5] disabled:cursor-wait disabled:opacity-55">{importingCanvaDesignId === design.id ? 'Importing...' : 'Import to Image Zone'}</button>
+                          <button type="button" onClick={() => void importCanvaDesign(design)} disabled={Boolean(importingCanvaDesignId)} className="mt-4 flex h-11 w-full items-center justify-center rounded-xl bg-[#1686c9] px-3 text-[10px] font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.2)] hover:bg-[#0f75b5] disabled:cursor-wait disabled:opacity-55">{importingCanvaDesignId === design.id ? 'Borrowing the pixels...' : 'Import to Image Zone'}</button>
                         </div>
                       </article>)}
                     </div> : <div className="flex min-h-72 items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/25 bg-white/[0.035] p-6 text-center"><div><p className="font-black text-white">{canvaDesignSearch.trim() ? 'No matching Canva designs' : 'No Canva designs found'}</p><p className="mt-2 text-sm leading-6 text-slate-400">{canvaDesignSearch.trim() ? 'Try a different search.' : 'Refresh the gallery or create a design in Canva first.'}</p></div></div>}
@@ -10967,7 +11039,7 @@ export default function Home() {
             <p className="truncate text-slate-600">{productMode === 'apparel' ? `${selectedColorName} / Qty: ${totalQuantity} / Est: $${displayedPerShirt.toFixed(2)}/ea` : isCoroBuilder ? `${signWidth}" x ${signHeight}" / Qty ${designerQuantity} / ${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'}` : `Qty: ${designerQuantity} / Est: ${signEstimate ? formatSignPrice(signEstimate.price?.each, signEstimate.currency) + '/ea' : 'Run sign estimate'}`}</p>
           </div>
           <button onClick={saveDraftToLocal} className={`rounded-md border border-[#1678b8] bg-white px-4 py-3 font-bold text-[#1678b8] hover:bg-[#eaf5fb] ${isCoroBuilder ? 'hidden sm:block' : ''}`}>{isCoroBuilder ? 'Save' : 'Save | Share'}</button>
-          <button disabled={isPreparingCartArtwork} onClick={productMode === 'apparel' ? requestApparelEstimate : canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} className={`rounded-md bg-[#1f73be] px-5 py-3 font-bold text-white hover:bg-[#2a86d8] disabled:cursor-wait ${isPreparingCartArtwork ? 'hue-preparing-artwork-button' : 'disabled:opacity-60'}`}>{isPreparingCartArtwork ? <span className="hue-preparing-artwork-button__content"><span className="hue-preparing-artwork-button__spinner" aria-hidden="true" />Preparing Final Artwork<span className="hue-preparing-artwork-button__dots" aria-hidden="true" /></span> : productMode === 'apparel' ? 'Get Price' : canAddCurrentDesignToCart ? 'Add to Cart' : 'Price It'}</button>
+          <button disabled={isPreparingCartArtwork} onClick={productMode === 'apparel' ? requestApparelEstimate : canAddCurrentDesignToCart ? handleAddCurrentDesignToCart : requestSignEstimate} className={`rounded-md bg-[#1f73be] px-5 py-3 font-bold text-white hover:bg-[#2a86d8] disabled:cursor-wait ${isPreparingCartArtwork ? 'hue-preparing-artwork-button' : 'disabled:opacity-60'}`}>{isPreparingCartArtwork ? <span className="hue-preparing-artwork-button__content"><span className="hue-preparing-artwork-button__spinner" aria-hidden="true" />Preflighting the pixels<span className="hue-preparing-artwork-button__dots" aria-hidden="true" /></span> : productMode === 'apparel' ? 'Get Price' : canAddCurrentDesignToCart ? 'Add to Cart' : 'Price It'}</button>
         </div>
       </div>
       </>
