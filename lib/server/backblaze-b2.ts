@@ -37,6 +37,11 @@ const client = () => {
     endpoint,
     region,
     forcePathStyle: true,
+    // AWS SDK v3 enables CRC32 checksums for S3 uploads by default. A presigned
+    // browser upload has no body at signing time, so that produces an empty-body
+    // checksum in the URL that does not match the file later sent to Backblaze.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     credentials: { accessKeyId: keyId, secretAccessKey: applicationKey },
   });
   return cachedClient;
