@@ -39,25 +39,41 @@ const readJpegDimensions = (buffer: Buffer) => {
 };
 
 const readWebpDimensions = (buffer: Buffer) => {
-  const kind = ascii(buffer, 12, 4);
-  if (kind === 'VP8X' && buffer.length >= 30) {
-    return {
-      width: 1 + buffer.readUIntLE(24, 3),
-      height: 1 + buffer.readUIntLE(27, 3),
-    };
-  }
-  if (kind === 'VP8L' && buffer.length >= 25 && buffer[20] === 0x2f) {
-    const bits = buffer.readUInt32LE(21);
-    return {
-      width: (bits & 0x3fff) + 1,
-      height: ((bits >> 14) & 0x3fff) + 1,
-    };
-  }
-  if (kind === 'VP8 ' && buffer.length >= 30 && startsWith(buffer.subarray(23), [0x9d, 0x01, 0x2a])) {
-    return {
-      width: buffer.readUInt16LE(26) & 0x3fff,
-      height: buffer.readUInt16LE(28) & 0x3fff,
-    };
+  // A WebP RIFF can contain metadata chunks before VP8/VP8L/VP8X. Walk the
+  // chunk table instead of assuming image data always begins at byte 12.
+  let chunkOffset = 12;
+  while (chunkOffset + 8 <= buffer.length) {
+    const kind = ascii(buffer, chunkOffset, 4);
+    const chunkLength = buffer.readUInt32LE(chunkOffset + 4);
+    const dataOffset = chunkOffset + 8;
+    const chunkEnd = dataOffset + chunkLength;
+    if (chunkEnd > buffer.length) break;
+
+    if (kind === 'VP8X' && chunkLength >= 10) {
+      return {
+        width: 1 + buffer.readUIntLE(dataOffset + 4, 3),
+        height: 1 + buffer.readUIntLE(dataOffset + 7, 3),
+      };
+    }
+    if (kind === 'VP8L' && chunkLength >= 5 && buffer[dataOffset] === 0x2f) {
+      const bits = buffer.readUInt32LE(dataOffset + 1);
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1,
+      };
+    }
+    if (kind === 'VP8 ' && chunkLength >= 10) {
+      const syncLimit = Math.min(chunkEnd - 7, dataOffset + 16);
+      for (let syncOffset = dataOffset; syncOffset <= syncLimit; syncOffset += 1) {
+        if (!startsWith(buffer.subarray(syncOffset), [0x9d, 0x01, 0x2a])) continue;
+        return {
+          width: buffer.readUInt16LE(syncOffset + 3) & 0x3fff,
+          height: buffer.readUInt16LE(syncOffset + 5) & 0x3fff,
+        };
+      }
+    }
+
+    chunkOffset = chunkEnd + (chunkLength % 2);
   }
   throw new Error('The WebP dimensions could not be verified.');
 };
