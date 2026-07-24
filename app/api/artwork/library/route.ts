@@ -123,9 +123,9 @@ const createInlinePreview = async (storagePath: string) => {
     width: preview.info.width,
     height: preview.info.height,
     sourcePath: storagePath,
-    sourceMetadata: metadata.width && metadata.height ? {
-      width: metadata.width,
-      height: metadata.height,
+    sourceMetadata: (metadata.autoOrient?.width || metadata.width) && (metadata.autoOrient?.height || metadata.height) ? {
+      width: metadata.autoOrient?.width || metadata.width!,
+      height: metadata.autoOrient?.height || metadata.height!,
       ...(metadata.density ? { dpiX: metadata.density, dpiY: metadata.density } : {}),
     } : undefined,
   } satisfies InlinePreview;

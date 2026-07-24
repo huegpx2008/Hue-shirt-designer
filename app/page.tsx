@@ -521,6 +521,7 @@ const renderReducedArtworkPreview = async (file: File) => {
     if (!isPdf && originalWidth > 0 && originalHeight > 0 && typeof createImageBitmap === 'function') {
       const decodeScale = Math.min(1, 2400 / Math.max(1, originalWidth, originalHeight));
       bitmap = await createImageBitmap(file, {
+        imageOrientation: 'from-image',
         resizeWidth: Math.max(1, Math.round(originalWidth * decodeScale)),
         resizeHeight: Math.max(1, Math.round(originalHeight * decodeScale)),
         resizeQuality: 'high',
@@ -611,6 +612,7 @@ const readRasterImageDimensions = async (blob: Blob): Promise<{ width: number; h
     }
   }
   if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let orientation = 1;
     let offset = 2;
     while (offset + 9 < bytes.length) {
       if (bytes[offset] !== 0xff) { offset += 1; continue; }
@@ -619,8 +621,39 @@ const readRasterImageDimensions = async (blob: Blob): Promise<{ width: number; h
       if (offset + 4 > bytes.length) break;
       const length = view.getUint16(offset + 2, false);
       if (length < 2 || offset + 2 + length > bytes.length) break;
+      const dataOffset = offset + 4;
+      const segmentEnd = offset + 2 + length;
+      const isExif = marker === 0xe1 && dataOffset + 14 <= segmentEnd
+        && ascii(dataOffset, 6) === 'Exif\0\0';
+      if (isExif) {
+        const tiffOffset = dataOffset + 6;
+        const littleEndian = bytes[tiffOffset] === 0x49 && bytes[tiffOffset + 1] === 0x49;
+        const bigEndian = bytes[tiffOffset] === 0x4d && bytes[tiffOffset + 1] === 0x4d;
+        if (littleEndian || bigEndian) {
+          const readUint16 = (position: number) => view.getUint16(position, littleEndian);
+          const readUint32 = (position: number) => view.getUint32(position, littleEndian);
+          if (readUint16(tiffOffset + 2) === 42) {
+            const directoryOffset = tiffOffset + readUint32(tiffOffset + 4);
+            if (directoryOffset + 2 <= segmentEnd) {
+              const entryCount = readUint16(directoryOffset);
+              for (let entryIndex = 0; entryIndex < entryCount; entryIndex += 1) {
+                const entryOffset = directoryOffset + 2 + (entryIndex * 12);
+                if (entryOffset + 12 > segmentEnd) break;
+                if (readUint16(entryOffset) !== 0x0112) continue;
+                const nextOrientation = readUint16(entryOffset + 8);
+                if (nextOrientation >= 1 && nextOrientation <= 8) orientation = nextOrientation;
+                break;
+              }
+            }
+          }
+        }
+      }
       if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
-        return { height: view.getUint16(offset + 5, false), width: view.getUint16(offset + 7, false) };
+        const rawHeight = view.getUint16(offset + 5, false);
+        const rawWidth = view.getUint16(offset + 7, false);
+        return orientation >= 5 && orientation <= 8
+          ? { width: rawHeight, height: rawWidth }
+          : { width: rawWidth, height: rawHeight };
       }
       offset += 2 + length;
     }

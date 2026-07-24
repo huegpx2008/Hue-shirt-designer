@@ -112,6 +112,8 @@ const createDesignerImagePreview = async (buffer: Buffer, mimeType: string) => {
     bytes: preview.data,
     width: preview.info.width,
     height: preview.info.height,
+    originalWidth: metadata.autoOrient?.width || metadata.width,
+    originalHeight: metadata.autoOrient?.height || metadata.height,
     dpi: metadata.density,
     mimeType: 'image/webp' as const,
   };
@@ -137,8 +139,8 @@ const createOversizedJpegPreviews = async (filePath: string) => {
     thumbnail: thumbnail.data,
     previewWidth: preview.info.width,
     previewHeight: preview.info.height,
-    width: metadata.width,
-    height: metadata.height,
+    width: metadata.autoOrient?.width || metadata.width,
+    height: metadata.autoOrient?.height || metadata.height,
     dpiX: metadata.density,
     dpiY: metadata.density,
   };
@@ -221,8 +223,8 @@ export async function POST(request: Request) {
         ]);
         if (previewError) throw new Error(previewError.message || 'The reduced artwork preview could not be saved.');
         if (thumbnailError) throw new Error(thumbnailError.message || 'The artwork thumbnail could not be saved.');
-        const width = validated.width || generated.width || undefined;
-        const height = validated.height || generated.height || undefined;
+        const width = generated.width || validated.width || undefined;
+        const height = generated.height || validated.height || undefined;
         const dpiX = generated.dpiX || undefined;
         const dpiY = generated.dpiY || undefined;
         await updateArtworkAsset(asset.id, {
@@ -387,8 +389,14 @@ export async function POST(request: Request) {
 
           const reportedWidth = Math.max(0, Math.round(Number(body.width || 0)));
           const reportedHeight = Math.max(0, Math.round(Number(body.height || 0)));
-          const width = validated.width || reportedWidth || undefined;
-          const height = validated.height || reportedHeight || undefined;
+          const reportedDimensionsMatchOriginal = Boolean(
+            reportedWidth && reportedHeight && validated.width && validated.height
+            && reportedWidth * reportedHeight === validated.width * validated.height
+            && ((reportedWidth === validated.width && reportedHeight === validated.height)
+              || (reportedWidth === validated.height && reportedHeight === validated.width)),
+          );
+          const width = reportedDimensionsMatchOriginal ? reportedWidth : validated.width || undefined;
+          const height = reportedDimensionsMatchOriginal ? reportedHeight : validated.height || undefined;
           const dpiX = Math.max(0, Number(body.dpiX || 0)) || undefined;
           const dpiY = Math.max(0, Number(body.dpiY || 0)) || undefined;
           await updateArtworkAsset(asset.id, {
@@ -469,12 +477,14 @@ export async function POST(request: Request) {
             previewHeight = designerPreview.height;
           }
         }
-        if (!isOrderProof && validated.width && validated.height) {
+        const orientedWidth = designerPreview?.originalWidth || validated.width;
+        const orientedHeight = designerPreview?.originalHeight || validated.height;
+        if (!isOrderProof && orientedWidth && orientedHeight) {
           const metadataStoragePath = getMetadataPath(storagePath);
           await storage.upload(metadataStoragePath, JSON.stringify({
             version: 1,
-            width: validated.width,
-            height: validated.height,
+            width: orientedWidth,
+            height: orientedHeight,
             dpiX: designerPreview?.dpi,
             dpiY: designerPreview?.dpi,
           }), {
@@ -489,8 +499,8 @@ export async function POST(request: Request) {
           storageUrl,
           mimeType: validated.mimeType,
           size: buffer.length,
-          width: validated.width,
-          height: validated.height,
+          width: orientedWidth,
+          height: orientedHeight,
           previewStoragePath,
           previewUrl,
           previewWidth,
