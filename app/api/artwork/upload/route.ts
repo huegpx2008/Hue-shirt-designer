@@ -135,6 +135,8 @@ const createOversizedJpegPreviews = async (filePath: string) => {
   return {
     preview: preview.data,
     thumbnail: thumbnail.data,
+    previewWidth: preview.info.width,
+    previewHeight: preview.info.height,
     width: metadata.width,
     height: metadata.height,
     dpiX: metadata.density,
@@ -219,11 +221,40 @@ export async function POST(request: Request) {
         ]);
         if (previewError) throw new Error(previewError.message || 'The reduced artwork preview could not be saved.');
         if (thumbnailError) throw new Error(thumbnailError.message || 'The artwork thumbnail could not be saved.');
+        const width = validated.width || generated.width || undefined;
+        const height = validated.height || generated.height || undefined;
+        const dpiX = generated.dpiX || undefined;
+        const dpiY = generated.dpiY || undefined;
+        await updateArtworkAsset(asset.id, {
+          archive_status: 'active',
+          file_size: object.size,
+          content_etag: object.etag,
+          width,
+          height,
+          dpi_x: dpiX,
+          dpi_y: dpiY,
+          error: null,
+        });
+        const previewUrl = await getStorageSignedUrl(asset.preview_storage_path, 3600);
+        const thumbnailUrl = await getStorageSignedUrl(asset.thumbnail_storage_path, 3600);
         return NextResponse.json({
-          width: validated.width || generated.width,
-          height: validated.height || generated.height,
-          dpiX: generated.dpiX,
-          dpiY: generated.dpiY,
+          provider: 'b2',
+          assetId: asset.id,
+          productionReference: asset.production_reference,
+          storagePath: asset.preview_storage_path,
+          storageUrl: previewUrl,
+          previewStoragePath: asset.preview_storage_path,
+          previewUrl,
+          thumbnailStoragePath: asset.thumbnail_storage_path,
+          thumbnailUrl,
+          mimeType: validated.mimeType,
+          size: object.size,
+          width,
+          height,
+          dpiX,
+          dpiY,
+          previewWidth: generated.previewWidth,
+          previewHeight: generated.previewHeight,
         });
       } finally {
         await unlink(temporaryPath).catch(() => undefined);

@@ -694,6 +694,7 @@ const uploadArtworkFileToSupabase = async (
       );
       onProgress?.({ phase: 'Preparing fast preview', detail: 'Production original saved. Creating working-size copies...', percent: 84 });
       let previewDetails: { width: number; height: number; dpiX: number; dpiY: number };
+      let serverFinalizedResult: { storagePath?: string; storageUrl?: string; mimeType?: string; size?: number; width?: number; height?: number; dpiX?: number; dpiY?: number; previewStoragePath?: string; previewUrl?: string; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; provider?: 'b2' } | null = null;
       try {
         const preview = await renderReducedArtworkPreview(file);
         onProgress?.({ phase: 'Saving fast preview', detail: 'Uploading the designer preview...', percent: 90 });
@@ -722,13 +723,37 @@ const uploadArtworkFileToSupabase = async (
           body: JSON.stringify({ action: 'generate-previews', assetId: ticket.assetId }),
         });
         if (!fallbackResponse.ok) throw new Error(await getErrorMessage(fallbackResponse));
-        const fallback = await fallbackResponse.json() as { width?: number; height?: number; dpiX?: number; dpiY?: number };
+        const fallback = await fallbackResponse.json() as { storagePath?: string; storageUrl?: string; mimeType?: string; size?: number; width?: number; height?: number; dpiX?: number; dpiY?: number; previewStoragePath?: string; previewUrl?: string; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; provider?: 'b2' };
         if (!fallback.width || !fallback.height) throw new Error('The secure preview fallback did not return the artwork dimensions.');
+        if (!fallback.storagePath || !fallback.storageUrl) throw new Error('The secure preview fallback did not finalize the artwork library record.');
+        serverFinalizedResult = fallback;
         previewDetails = {
           width: fallback.width,
           height: fallback.height,
           dpiX: fallback.dpiX || 0,
           dpiY: fallback.dpiY || 0,
+        };
+      }
+      if (serverFinalizedResult) {
+        onProgress?.({ phase: 'Upload complete', detail: 'Production original and previews are ready.', percent: 100 });
+        return {
+          storagePath: serverFinalizedResult.storagePath!,
+          storageUrl: serverFinalizedResult.storageUrl!,
+          mimeType: serverFinalizedResult.mimeType,
+          size: serverFinalizedResult.size,
+          width: serverFinalizedResult.width,
+          height: serverFinalizedResult.height,
+          dpiX: serverFinalizedResult.dpiX,
+          dpiY: serverFinalizedResult.dpiY,
+          previewStoragePath: serverFinalizedResult.previewStoragePath,
+          previewUrl: serverFinalizedResult.previewUrl,
+          previewWidth: serverFinalizedResult.previewWidth,
+          previewHeight: serverFinalizedResult.previewHeight,
+          thumbnailStoragePath: serverFinalizedResult.thumbnailStoragePath,
+          thumbnailUrl: serverFinalizedResult.thumbnailUrl,
+          assetId: serverFinalizedResult.assetId || ticket.assetId,
+          productionReference: serverFinalizedResult.productionReference || ticket.productionReference,
+          originalProvider: 'b2' as const,
         };
       }
       onProgress?.({ phase: 'Verifying production file', detail: 'Checking the original and connecting it to your library...', percent: 97 });
