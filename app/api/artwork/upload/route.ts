@@ -142,6 +142,20 @@ const createOversizedJpegPreviews = async (filePath: string) => {
   };
 };
 
+const inspectOptimizedWebp = async (
+  buffer: Buffer,
+  options: { label: string; maxBytes: number; maxDimension: number },
+) => {
+  if (buffer.length < 1 || buffer.length > options.maxBytes) throw new Error(`The ${options.label} is invalid.`);
+  const metadata = await sharp(buffer, { limitInputPixels: options.maxDimension * options.maxDimension }).metadata();
+  const width = Number(metadata.width || 0);
+  const height = Number(metadata.height || 0);
+  if (metadata.format !== 'webp') throw new Error(`The ${options.label} must be a WebP image.`);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error(`The ${options.label} dimensions are invalid.`);
+  if (width > options.maxDimension || height > options.maxDimension) throw new Error(`The ${options.label} dimensions exceed their safe limit.`);
+  return { width, height };
+};
+
 export async function POST(request: Request) {
   if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'This upload request came from an untrusted site.' }, { status: 403 });
   const retryAfter = enforceRateLimit(request, 'artwork-upload', 80, 10 * 60 * 1000);
@@ -322,15 +336,19 @@ export async function POST(request: Request) {
 
           const { data: previewData, error: previewError } = await storage.download(asset.preview_storage_path);
           if (previewError || !previewData) throw new Error(previewError?.message || 'The reduced artwork preview was not saved.');
-          if (previewData.size < 1 || previewData.size > MAX_PREVIEW_BYTES) throw new Error('The reduced artwork preview is invalid.');
           const previewBuffer = Buffer.from(await previewData.arrayBuffer());
-          const previewValidated = validateArtworkBuffer(previewBuffer, { maxBytes: MAX_PREVIEW_BYTES });
-          if (previewValidated.mimeType !== 'image/webp') throw new Error('The designer preview must be a WebP image.');
+          const previewValidated = await inspectOptimizedWebp(previewBuffer, {
+            label: 'designer preview',
+            maxBytes: MAX_PREVIEW_BYTES,
+            maxDimension: PREVIEW_MAX_DIMENSION,
+          });
           const { data: thumbnailData, error: thumbnailError } = await storage.download(asset.thumbnail_storage_path);
           if (thumbnailError || !thumbnailData) throw new Error(thumbnailError?.message || 'The artwork thumbnail was not saved.');
-          if (thumbnailData.size < 1 || thumbnailData.size > MAX_THUMBNAIL_BYTES) throw new Error('The artwork thumbnail is invalid.');
-          const thumbnailValidated = validateArtworkBuffer(Buffer.from(await thumbnailData.arrayBuffer()), { maxBytes: MAX_THUMBNAIL_BYTES });
-          if (thumbnailValidated.mimeType !== 'image/webp') throw new Error('The artwork thumbnail must be a WebP image.');
+          await inspectOptimizedWebp(Buffer.from(await thumbnailData.arrayBuffer()), {
+            label: 'artwork thumbnail',
+            maxBytes: MAX_THUMBNAIL_BYTES,
+            maxDimension: 480,
+          });
 
           const reportedWidth = Math.max(0, Math.round(Number(body.width || 0)));
           const reportedHeight = Math.max(0, Math.round(Number(body.height || 0)));
