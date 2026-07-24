@@ -41,6 +41,33 @@ type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkUploadProgress = { fileName: string; phase: string; detail: string; percent: number };
 type ArtworkUploadProgressUpdate = Omit<ArtworkUploadProgress, 'fileName'>;
+type BannerGrommetPoint = { key: string; x: number; y: number };
+
+const BANNER_GROMMET_DIAMETER_INCHES = 0.5;
+const BANNER_GROMMET_EDGE_INSET_INCHES = 0.5;
+const BANNER_GROMMET_MAX_SPACING_INCHES = 24;
+
+const getBannerGrommetPoints = (width: number, height: number): BannerGrommetPoint[] => {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return [];
+  const inset = Math.min(BANNER_GROMMET_EDGE_INSET_INCHES, width / 2, height / 2);
+  const usableWidth = Math.max(0, width - (inset * 2));
+  const usableHeight = Math.max(0, height - (inset * 2));
+  const horizontalSegments = Math.max(1, Math.ceil(usableWidth / BANNER_GROMMET_MAX_SPACING_INCHES));
+  const verticalSegments = Math.max(1, Math.ceil(usableHeight / BANNER_GROMMET_MAX_SPACING_INCHES));
+  const points: BannerGrommetPoint[] = [];
+
+  for (let index = 0; index <= horizontalSegments; index += 1) {
+    const x = inset + ((usableWidth * index) / horizontalSegments);
+    points.push({ key: `top-${index}`, x, y: inset });
+    points.push({ key: `bottom-${index}`, x, y: height - inset });
+  }
+  for (let index = 1; index < verticalSegments; index += 1) {
+    const y = inset + ((usableHeight * index) / verticalSegments);
+    points.push({ key: `left-${index}`, x: inset, y });
+    points.push({ key: `right-${index}`, x: width - inset, y });
+  }
+  return points;
+};
 
 const PRINT_SHOP_QUIPS = [
   'Calibrating the creative flux...',
@@ -3262,6 +3289,15 @@ export default function Home() {
     ? `min(44vw, 760px, calc(48vh * ${signPreviewAspect}))`
     : '82%';
   const signPreviewBoxStyle = { aspectRatio: signPreviewAspect, width: signPreviewWidth };
+  const bannerGrommetPoints = isTrueBannerBuilder && Boolean(signValues.grommets)
+    ? getBannerGrommetPoints(signWidth, signHeight)
+    : [];
+  const bannerGrommetSizeStyle = signWidth > 0 && signHeight > 0
+    ? {
+        width: `max(1.5px, ${(BANNER_GROMMET_DIAMETER_INCHES / signWidth) * 100}%)`,
+        height: `max(1.5px, ${(BANNER_GROMMET_DIAMETER_INCHES / signHeight) * 100}%)`,
+      }
+    : undefined;
   const rigidSafeZoneInsetX = signWidth > 0 ? Math.min(24, (0.25 / signWidth) * 100) : 0;
   const rigidSafeZoneInsetY = signHeight > 0 ? Math.min(24, (0.25 / signHeight) * 100) : 0;
   const hasCoroSheetArtwork = isCoroBuilder && coroSheetArtworkItems.length > 0;
@@ -9435,7 +9471,7 @@ export default function Home() {
                       {signSurfacePreviewUrl ? <img src={signSurfacePreviewUrl} alt="" className={`absolute inset-0 h-full w-full ${bannerArtworkFitState === 'stretch' ? 'object-fill' : !rawBannerAspectMismatch || signArtworkMatchesSize ? 'object-cover' : 'object-contain'}`} /> : null}
                       {isRigidSignBuilder && signWidth > 0 && signHeight > 0 ? <div className="pointer-events-none absolute z-20 border border-dashed border-[#93c5fd] shadow-[0_0_0_1px_rgba(15,23,42,0.18),0_0_18px_rgba(56,189,248,0.22)]" style={{ left: `${rigidSafeZoneInsetX}%`, right: `${rigidSafeZoneInsetX}%`, top: `${rigidSafeZoneInsetY}%`, bottom: `${rigidSafeZoneInsetY}%`, borderRadius: roundedSafeZonePreviewRadius }} /> : null}
                       {supportsSizedRoundedCorners && selectedRoundedCornerRadius > 0 ? <span className="pointer-events-none absolute bottom-2 left-2 z-30 rounded-full border border-white/45 bg-[#071827]/80 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-[#b7ecff] shadow backdrop-blur">{selectedRoundedCornerOption.label} corners</span> : null}
-                      {isTrueBannerBuilder ? <div className="absolute inset-1">{[0, 1, 2, 3, 4, 5].map((dot) => <span key={dot} className={`absolute h-2 w-2 rounded-full border border-slate-500 bg-white ${dot === 0 ? 'left-0 top-0' : dot === 1 ? 'right-0 top-0' : dot === 2 ? 'bottom-0 left-0' : dot === 3 ? 'bottom-0 right-0' : dot === 4 ? 'left-1/2 top-0 -translate-x-1/2' : 'bottom-0 left-1/2 -translate-x-1/2'}`} />)}</div> : null}
+                      {bannerGrommetPoints.length ? <div className="pointer-events-none absolute inset-0 z-20" aria-hidden="true">{bannerGrommetPoints.map((point) => <span key={point.key} className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle_at_38%_32%,#f8fafc_0_18%,#94a3b8_25%_46%,#0f172a_53%_67%,#cbd5e1_74%_100%)] shadow-[0_0_1px_rgba(15,23,42,0.9)]" style={{ ...bannerGrommetSizeStyle, left: `${(point.x / signWidth) * 100}%`, top: `${(point.y / signHeight) * 100}%` }} />)}</div> : null}
                     </div>
                     {isAutoSidedRigidBuilder && rigidBackArtwork ? <div className="absolute -bottom-16 left-0 z-20 inline-flex overflow-hidden rounded-full border border-[#38bdf8]/30 bg-[#06111d]/90 p-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#b7ecff] shadow-[0_0_24px_rgba(14,165,233,0.18)] backdrop-blur">
                       <button type="button" onClick={() => setRigidPreviewSide('front')} className={`rounded-full px-4 py-1.5 transition ${rigidPreviewSide === 'front' ? 'bg-[#1686c9] text-white' : 'hover:bg-[#0a2438] hover:text-white'}`}>Front</button>
