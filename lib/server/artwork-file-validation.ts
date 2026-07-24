@@ -4,6 +4,11 @@ export const MAX_PROJECT_BYTES = 25 * 1024 * 1024;
 // limits still bound uploads, while this ceiling accepts files such as a
 // 10,050 x 24,000 production JPEG without allowing unbounded dimensions.
 export const MAX_IMAGE_PIXELS = 300_000_000;
+// Production JPEG originals are stored untouched in B2 and are only inspected
+// by their file header on the verification route. They can safely exceed the
+// decode limit used for server-generated images because the browser creates a
+// 2,400px working preview before the original is accepted.
+export const MAX_PRODUCTION_JPEG_PIXELS = 1_000_000_000;
 export const MAX_IMAGE_DIMENSION = 50_000;
 
 export type ValidatedArtworkFile = {
@@ -57,15 +62,15 @@ const readWebpDimensions = (buffer: Buffer) => {
   throw new Error('The WebP dimensions could not be verified.');
 };
 
-const validateDimensions = (width: number, height: number) => {
+const validateDimensions = (width: number, height: number, maxImagePixels: number) => {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error('The image dimensions are invalid.');
   if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) throw new Error(`Artwork cannot exceed ${MAX_IMAGE_DIMENSION.toLocaleString()} pixels on either side.`);
-  if (width * height > MAX_IMAGE_PIXELS) throw new Error(`Artwork cannot exceed ${MAX_IMAGE_PIXELS.toLocaleString()} total pixels.`);
+  if (width * height > maxImagePixels) throw new Error(`Artwork cannot exceed ${maxImagePixels.toLocaleString()} total pixels.`);
 };
 
 export const validateArtworkBuffer = (
   buffer: Buffer,
-  options: { allowPdf?: boolean; allowJson?: boolean; maxBytes?: number } = {},
+  options: { allowPdf?: boolean; allowJson?: boolean; maxBytes?: number; maxImagePixels?: number } = {},
 ): ValidatedArtworkFile => {
   if (!buffer.length) throw new Error('The uploaded file is empty.');
   const maxBytes = options.maxBytes || MAX_ARTWORK_BYTES;
@@ -98,7 +103,7 @@ export const validateArtworkBuffer = (
     throw new Error('Unsupported file. Upload a genuine PNG, JPG, WebP, GIF, or PDF file. SVG and executable files are not accepted.');
   }
 
-  if (result.width && result.height) validateDimensions(result.width, result.height);
+  if (result.width && result.height) validateDimensions(result.width, result.height, options.maxImagePixels || MAX_IMAGE_PIXELS);
   return result;
 };
 

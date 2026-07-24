@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import {
   MAX_ARTWORK_BYTES,
+  MAX_PRODUCTION_JPEG_PIXELS,
   MAX_PROJECT_BYTES,
   safeArtworkBaseName,
   validateArtworkBuffer,
@@ -234,7 +235,14 @@ export async function POST(request: Request) {
             const tailBytes = await readBackblazeObjectRange(asset.original_object_key, `bytes=${tailStart}-${object.size - 1}`);
             validationBytes = Buffer.concat([firstBytes, tailBytes]);
           }
-          const validated = validateArtworkBuffer(validationBytes, { allowPdf: true, maxBytes: MAX_ARTWORK_BYTES });
+          // This only parses the stored original's header; it does not decode
+          // the full image. Oversized production JPEGs use the reduced WebP
+          // files below throughout Image Zone and the order builder.
+          const validated = validateArtworkBuffer(validationBytes, {
+            allowPdf: true,
+            maxBytes: MAX_ARTWORK_BYTES,
+            maxImagePixels: asset.mime_type === 'image/jpeg' ? MAX_PRODUCTION_JPEG_PIXELS : undefined,
+          });
           if (validated.mimeType !== asset.mime_type) throw new Error('The production file contents do not match the selected file type.');
 
           const { data: previewData, error: previewError } = await storage.download(asset.preview_storage_path);
