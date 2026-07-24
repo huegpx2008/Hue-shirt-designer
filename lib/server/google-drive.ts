@@ -168,6 +168,15 @@ export const getDriveFileMetadata = async (fileId: string): Promise<DriveFile> =
   return response.json() as Promise<DriveFile>;
 };
 
+export const trashDriveFile = async (fileId: string) => {
+  if (!fileId) throw new Error('A Google Drive file id is required.');
+  await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trashed: true }),
+  });
+};
+
 export const downloadDriveFile = async (fileId: string) => {
   if (!fileId) throw new Error('A Google Drive file id is required.');
   const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`);
