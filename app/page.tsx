@@ -38,6 +38,8 @@ type SmartTemplateForm = { headline: string; subheadline: string; name: string; 
 type SmartTemplateBrowseMode = 'industry' | 'style' | 'family';
 type ArtworkFitState = 'unresolved' | 'fit' | 'stretch';
 type ImageResolution = { dpiX: number; dpiY: number };
+type ArtworkUploadProgress = { fileName: string; phase: string; detail: string; percent: number };
+type ArtworkUploadProgressUpdate = Omit<ArtworkUploadProgress, 'fileName'>;
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
@@ -426,22 +428,41 @@ const renderReducedArtworkPreview = async (file: File) => {
     dpiX = pdfPreview.dpi;
     dpiY = pdfPreview.dpi;
   } else {
-    sourceUrl = URL.createObjectURL(file);
-    revokeSource = true;
+    const dimensions = await readRasterImageDimensions(file).catch(() => null);
+    originalWidth = dimensions?.width || 0;
+    originalHeight = dimensions?.height || 0;
     const embedded = await readEmbeddedImageResolution(file).catch(() => null);
     dpiX = embedded?.dpiX || 0;
     dpiY = embedded?.dpiY || 0;
   }
 
+  let bitmap: ImageBitmap | null = null;
   try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const next = new Image();
-      next.onload = () => resolve(next);
-      next.onerror = () => reject(new Error('The browser could not create a reduced artwork preview.'));
-      next.src = sourceUrl;
-    });
-    originalWidth ||= image.naturalWidth;
-    originalHeight ||= image.naturalHeight;
+    let drawable: CanvasImageSource | null = null;
+    if (!isPdf && originalWidth > 0 && originalHeight > 0 && typeof createImageBitmap === 'function') {
+      const decodeScale = Math.min(1, 2400 / Math.max(1, originalWidth, originalHeight));
+      bitmap = await createImageBitmap(file, {
+        resizeWidth: Math.max(1, Math.round(originalWidth * decodeScale)),
+        resizeHeight: Math.max(1, Math.round(originalHeight * decodeScale)),
+        resizeQuality: 'high',
+      }).catch(() => null);
+      drawable = bitmap;
+    }
+    if (!drawable) {
+      if (!sourceUrl) {
+        sourceUrl = URL.createObjectURL(file);
+        revokeSource = true;
+      }
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const next = new Image();
+        next.onload = () => resolve(next);
+        next.onerror = () => reject(new Error('The browser could not create a reduced artwork preview.'));
+        next.src = sourceUrl;
+      });
+      originalWidth ||= image.naturalWidth;
+      originalHeight ||= image.naturalHeight;
+      drawable = image;
+    }
     const scale = Math.min(1, 2400 / Math.max(1, originalWidth, originalHeight));
     const previewWidth = Math.max(1, Math.round(originalWidth * scale));
     const previewHeight = Math.max(1, Math.round(originalHeight * scale));
@@ -450,7 +471,7 @@ const renderReducedArtworkPreview = async (file: File) => {
     canvas.height = previewHeight;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('The browser could not prepare the artwork preview.');
-    context.drawImage(image, 0, 0, previewWidth, previewHeight);
+    context.drawImage(drawable, 0, 0, previewWidth, previewHeight);
     const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
       (value) => value ? resolve(value) : reject(new Error('The browser could not encode the artwork preview.')),
       'image/webp',
@@ -462,7 +483,7 @@ const renderReducedArtworkPreview = async (file: File) => {
     thumbnailCanvas.height = Math.max(1, Math.round(originalHeight * thumbnailScale));
     const thumbnailContext = thumbnailCanvas.getContext('2d');
     if (!thumbnailContext) throw new Error('The browser could not prepare the artwork thumbnail.');
-    thumbnailContext.drawImage(image, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+    thumbnailContext.drawImage(drawable, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
     const thumbnailBlob = await new Promise<Blob>((resolve, reject) => thumbnailCanvas.toBlob(
       (value) => value ? resolve(value) : reject(new Error('The browser could not encode the artwork thumbnail.')),
       'image/webp',
@@ -477,11 +498,83 @@ const renderReducedArtworkPreview = async (file: File) => {
       dpiY,
     };
   } finally {
+    bitmap?.close();
     if (revokeSource) URL.revokeObjectURL(sourceUrl);
   }
 };
 
-const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession | null) => {
+const readRasterImageDimensions = async (blob: Blob): Promise<{ width: number; height: number }> => {
+  const buffer = await blob.slice(0, Math.min(blob.size, 1024 * 1024)).arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const ascii = (offset: number, length: number) => String.fromCharCode(...bytes.slice(offset, offset + length));
+
+  if (bytes.length >= 24 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)) {
+    return { width: view.getUint32(16, false), height: view.getUint32(20, false) };
+  }
+  if (bytes.length >= 10 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a')) {
+    return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
+  }
+  if (bytes.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP') {
+    const kind = ascii(12, 4);
+    if (kind === 'VP8X' && bytes.length >= 30) {
+      return {
+        width: 1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16),
+        height: 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16),
+      };
+    }
+    if (kind === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2f) {
+      const bits = view.getUint32(21, true);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+    }
+    if (kind === 'VP8 ' && bytes.length >= 30 && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+      return { width: view.getUint16(26, true) & 0x3fff, height: view.getUint16(28, true) & 0x3fff };
+    }
+  }
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < bytes.length) {
+      if (bytes[offset] !== 0xff) { offset += 1; continue; }
+      const marker = bytes[offset + 1];
+      if (marker === 0xd8 || marker === 0xd9) { offset += 2; continue; }
+      if (offset + 4 > bytes.length) break;
+      const length = view.getUint16(offset + 2, false);
+      if (length < 2 || offset + 2 + length > bytes.length) break;
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        return { height: view.getUint16(offset + 5, false), width: view.getUint16(offset + 7, false) };
+      }
+      offset += 2 + length;
+    }
+  }
+  throw new Error('The image dimensions could not be read safely.');
+};
+
+const uploadFileWithProgress = (
+  url: string,
+  file: File,
+  contentType: string,
+  onProgress?: (fraction: number) => void,
+) => new Promise<void>((resolve, reject) => {
+  const request = new XMLHttpRequest();
+  request.open('PUT', url, true);
+  request.setRequestHeader('Content-Type', contentType);
+  request.upload.onprogress = (event) => {
+    if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
+  };
+  request.onerror = () => reject(new Error('The production upload lost its network connection. Please try again.'));
+  request.onabort = () => reject(new Error('The production upload was canceled.'));
+  request.onload = () => {
+    if (request.status >= 200 && request.status < 300) resolve();
+    else reject(new Error(`Backblaze B2 could not save the production original (${request.status || 'network error'}).`));
+  };
+  request.send(file);
+});
+
+const uploadArtworkFileToSupabase = async (
+  file: File,
+  session: CustomerSession | null,
+  onProgress?: (progress: ArtworkUploadProgressUpdate) => void,
+) => {
   if (!isSupabaseStorageConfigured) throw new Error('Supabase is not configured.');
   if (!session?.access_token || !session.user?.id) throw new Error('Create an account or sign in before uploading production artwork.');
   const isProject = /json/i.test(file.type) || /-project\.json$/i.test(file.name);
@@ -491,6 +584,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
     'Content-Type': 'application/json',
     ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
   };
+  onProgress?.({ phase: 'Preparing secure upload', detail: 'Creating private storage locations...', percent: 2 });
   const ticketResponse = await fetch('/api/artwork/upload', {
     method: 'POST',
     headers: requestHeaders,
@@ -533,13 +627,20 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
       throw new Error('Secure B2 storage did not return a complete upload ticket.');
     }
     try {
+      onProgress?.({ phase: 'Preparing fast preview', detail: 'Reading artwork and creating working-size copies...', percent: 5 });
       const preview = await renderReducedArtworkPreview(file);
-      const originalUpload = await fetch(ticket.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': ticket.mimeType || file.type || 'application/octet-stream' },
-        body: file,
-      });
-      if (!originalUpload.ok) throw new Error(`Backblaze B2 could not save the production original (${originalUpload.status}).`);
+      onProgress?.({ phase: 'Uploading production original', detail: `Sending ${(file.size / 1024 / 1024).toFixed(1)} MB securely to production storage...`, percent: 10 });
+      await uploadFileWithProgress(
+        ticket.uploadUrl,
+        file,
+        ticket.mimeType || file.type || 'application/octet-stream',
+        (fraction) => onProgress?.({
+          phase: 'Uploading production original',
+          detail: `${(fraction * file.size / 1024 / 1024).toFixed(1)} of ${(file.size / 1024 / 1024).toFixed(1)} MB uploaded`,
+          percent: Math.round(10 + (fraction * 77)),
+        }),
+      );
+      onProgress?.({ phase: 'Saving fast preview', detail: 'Production original saved. Uploading the designer preview...', percent: 90 });
       const { error: previewUploadError } = await supabase.storage
         .from(SUPABASE_STORAGE_BUCKET)
         .uploadToSignedUrl(ticket.previewStoragePath, ticket.previewToken, preview.file, {
@@ -547,6 +648,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
           metadata: { originalName: file.name, hueAssetId: ticket.assetId },
         });
       if (previewUploadError) throw new Error(previewUploadError.message || 'The reduced artwork preview could not be saved.');
+      onProgress?.({ phase: 'Saving thumbnail', detail: 'Preparing the Image Zone thumbnail...', percent: 94 });
       const { error: thumbnailUploadError } = await supabase.storage
         .from(SUPABASE_STORAGE_BUCKET)
         .uploadToSignedUrl(ticket.thumbnailStoragePath, ticket.thumbnailToken, preview.thumbnailFile, {
@@ -554,6 +656,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
           metadata: { originalName: file.name, hueAssetId: ticket.assetId },
         });
       if (thumbnailUploadError) throw new Error(thumbnailUploadError.message || 'The artwork thumbnail could not be saved.');
+      onProgress?.({ phase: 'Verifying production file', detail: 'Checking the original and connecting it to your library...', percent: 97 });
       const verifyResponse = await fetch('/api/artwork/upload', {
         method: 'POST',
         headers: requestHeaders,
@@ -569,6 +672,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
       if (!verifyResponse.ok) throw new Error(await getErrorMessage(verifyResponse));
       const result = await verifyResponse.json() as { storagePath?: string; storageUrl?: string; mimeType?: string; size?: number; width?: number; height?: number; dpiX?: number; dpiY?: number; previewStoragePath?: string; previewUrl?: string; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; provider?: 'b2' };
       if (!result.storagePath || !result.storageUrl) throw new Error('Secure storage did not return the saved artwork preview location.');
+      onProgress?.({ phase: 'Upload complete', detail: 'Production original and previews are ready.', percent: 100 });
       return {
         storagePath: result.storagePath,
         storageUrl: result.storageUrl,
@@ -599,6 +703,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
   }
 
   if (!ticket.storagePath || !ticket.token) throw new Error('Secure storage did not return an upload ticket.');
+  onProgress?.({ phase: 'Uploading artwork', detail: `Sending ${(file.size / 1024 / 1024).toFixed(1)} MB to secure storage...`, percent: 15 });
   const { error: uploadError } = await supabase.storage
     .from(SUPABASE_STORAGE_BUCKET)
     .uploadToSignedUrl(ticket.storagePath, ticket.token, file, {
@@ -607,6 +712,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
     });
   if (uploadError) throw new Error(uploadError.message || 'The artwork could not be uploaded to secure storage.');
 
+  onProgress?.({ phase: 'Verifying artwork', detail: 'Checking the saved file and preparing its preview...', percent: 92 });
   const verifyResponse = await fetch('/api/artwork/upload', {
     method: 'POST',
     headers: requestHeaders,
@@ -620,6 +726,7 @@ const uploadArtworkFileToSupabase = async (file: File, session: CustomerSession 
   if (!verifyResponse.ok) throw new Error(await getErrorMessage(verifyResponse));
   const result = await verifyResponse.json() as { storagePath?: string; storageUrl?: string; mimeType?: string; size?: number; width?: number; height?: number; previewStoragePath?: string; previewUrl?: string; previewWidth?: number; previewHeight?: number };
   if (!result.storagePath || !result.storageUrl) throw new Error('Secure storage did not return the saved artwork location.');
+  onProgress?.({ phase: 'Upload complete', detail: 'Artwork and preview are ready.', percent: 100 });
   return {
     storagePath: result.storagePath,
     storageUrl: result.storageUrl,
@@ -879,7 +986,9 @@ const getArtworkPrintSize = (width: number, height: number, resolution?: ImageRe
 const isUsableImageDpi = (dpi: number) => Number.isFinite(dpi) && dpi >= 20 && dpi <= 2400;
 
 const readEmbeddedImageResolution = async (blob: Blob): Promise<ImageResolution | null> => {
-  const buffer = await blob.arrayBuffer();
+  // Resolution metadata lives near the start of supported raster files. Avoid
+  // copying an entire production-sized image into browser memory just to read it.
+  const buffer = await blob.slice(0, Math.min(blob.size, 1024 * 1024)).arrayBuffer();
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
 
@@ -2161,6 +2270,7 @@ export default function Home() {
   const [imageZoneItems, setImageZoneItems] = useState<ImageZoneItem[]>([]);
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
+  const [imageUploadProgress, setImageUploadProgress] = useState<ArtworkUploadProgress | null>(null);
   const [isImageLibraryLoading, setIsImageLibraryLoading] = useState(false);
   const [failedImageZoneThumbnailIds, setFailedImageZoneThumbnailIds] = useState<Set<string>>(() => new Set());
   const [deletingImageZoneId, setDeletingImageZoneId] = useState<string | null>(null);
@@ -6751,8 +6861,11 @@ export default function Home() {
       setArtworkAnalysis(null);
       setArtworkAnalysisStatus(`${file.name} is being saved securely. Hue Studio will use a reduced working preview.`);
       setImageLibraryStatus(`Saving production original (${(file.size / 1024 / 1024).toFixed(1)} MB) and preparing a fast preview...`);
+      setImageUploadProgress({ fileName: file.name, phase: 'Preparing upload', detail: 'Starting secure artwork processing...', percent: 1 });
       try {
-        const storageInfo = await uploadArtworkFileToSupabase(file, customerSession);
+        const storageInfo = await uploadArtworkFileToSupabase(file, customerSession, (progress) => {
+          setImageUploadProgress({ fileName: file.name, ...progress });
+        });
         const originalWidth = Math.max(0, Number(storageInfo.width || 0));
         const originalHeight = Math.max(0, Number(storageInfo.height || 0));
         const previewUrl = storageInfo.previewUrl || storageInfo.storageUrl;
@@ -6812,8 +6925,10 @@ export default function Home() {
           await placeImageOnDesign(previewUrl, file.name);
         }
         setImageLibraryStatus(`${file.name} is securely saved to ${customerSession.user?.email || 'your account'}'s Image Zone. The fast preview is ready for ordering.`);
+        window.setTimeout(() => setImageUploadProgress((current) => current?.fileName === file.name ? null : current), 1200);
         return;
       } catch (error) {
+        setImageUploadProgress(null);
         setImageLibraryStatus(`Large upload failed: ${error instanceof Error ? error.message : 'unknown error'}`);
         return;
       }
@@ -10568,7 +10683,7 @@ export default function Home() {
               <button type="button" aria-label="Close Image Zone" onClick={() => { setShowImageZone(false); setRigidArtworkTarget('front'); }} className="hue-image-library-mobile-close hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] text-lg font-bold text-slate-300">×</button>
             </div>
             <div className="hue-image-library-actions contents">
-            <button type="button" onClick={() => requestArtworkUpload()} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8]">+ Upload artwork</button>
+            <button type="button" disabled={Boolean(imageUploadProgress)} onClick={() => requestArtworkUpload()} className="flex h-10 cursor-pointer items-center rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white shadow-[0_10px_24px_rgba(14,165,233,0.18)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{imageUploadProgress ? 'Uploading...' : '+ Upload artwork'}</button>
             <button type="button" onClick={openCanvaImport} className="h-10 rounded-xl border border-[#22d3ee]/35 bg-[#083044] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#0c3b55]">Import Canva</button>
             <button type="button" onClick={() => openNewArtworkCreator('image-zone-create')} className="h-10 rounded-xl border border-[#67d8ff]/45 bg-[#0c2a40] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f]">+ Create in Hue Designer</button>
             <button type="button" disabled={!imageZoneItems.some((item) => item.id === selectedImageZoneId && canPlaceImageZoneItem(item))} onClick={() => { void openArtworkEditor(); }} className="h-10 rounded-xl border border-[#67d8ff]/40 bg-[linear-gradient(135deg,rgba(14,165,233,0.22),rgba(59,130,246,0.10))] px-4 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.13)] hover:border-[#67d8ff] hover:bg-[#0c2a40] disabled:cursor-not-allowed disabled:opacity-35">Edit in Hue Designer</button>
@@ -10588,6 +10703,13 @@ export default function Home() {
             {imageLibraryStatus ? <span className="hidden max-w-xl truncate text-slate-400 lg:inline"><span className="mx-2 text-white/20">/</span>{isImageLibraryLoading ? 'Loading library... ' : ''}{imageLibraryStatus}</span> : null}
             {selectedImageZoneId ? <span className="ml-auto rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 font-bold text-emerald-300">● Artwork selected</span> : null}
           </div>
+          {imageUploadProgress ? <div role="status" aria-live="polite" className="border-b border-[#38bdf8]/25 bg-[linear-gradient(90deg,rgba(14,165,233,0.16),rgba(8,47,73,0.32))] px-4 py-3 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="block h-8 w-8 shrink-0 animate-spin rounded-full border-[3px] border-[#67d8ff]/20 border-t-[#67d8ff]" aria-hidden="true" />
+              <div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3"><p className="truncate text-xs font-black uppercase tracking-[0.12em] text-[#a9ecff]">{imageUploadProgress.phase}</p><span className="shrink-0 text-sm font-black text-white">{Math.round(imageUploadProgress.percent)}%</span></div><p className="mt-1 truncate text-xs text-slate-300"><strong className="text-white">{imageUploadProgress.fileName}</strong> · {imageUploadProgress.detail}</p></div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/35"><div className="h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#67e8f9)] shadow-[0_0_16px_rgba(103,232,249,0.5)] transition-[width] duration-300" style={{ width: `${Math.max(2, Math.min(100, imageUploadProgress.percent))}%` }} /></div>
+          </div> : null}
           {!customerSession?.access_token ? <div className="hue-image-library-guest flex flex-col gap-3 border-b border-amber-300/20 bg-[linear-gradient(90deg,rgba(245,158,11,0.13),rgba(14,165,233,0.06))] px-5 py-3 text-white sm:flex-row sm:items-center">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-300/35 bg-amber-300/10 text-base font-black text-amber-200">!</span>
             <div className="min-w-0 flex-1"><p className="text-xs font-black uppercase tracking-[0.15em] text-amber-200">Sign in to upload artwork</p><p className="mt-1 text-xs leading-5 text-slate-300">Production files require an account so originals stay private and your fast previews remain available for future orders.</p></div>
@@ -10610,7 +10732,7 @@ export default function Home() {
                 <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/20 bg-[#0d2a40] text-2xl text-[#67d8ff] shadow-[0_0_32px_rgba(14,165,233,0.15)]">+</span><p className="mt-5 text-lg font-black text-white">Your artwork vault is ready</p>
                 <p className="mt-2 text-sm text-slate-400">Upload finished artwork to use across any Hue product.</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  <button type="button" onClick={() => requestArtworkUpload()} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8]">Upload artwork</button>
+                  <button type="button" disabled={Boolean(imageUploadProgress)} onClick={() => requestArtworkUpload()} className="inline-flex cursor-pointer rounded-xl bg-[#1686c9] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-55">{imageUploadProgress ? 'Uploading...' : 'Upload artwork'}</button>
                   <button type="button" onClick={openCanvaImport} className="inline-flex rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-5 py-3 text-sm font-black uppercase text-[#a9ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Import Canva</button>
                 </div>
               </div>

@@ -1,6 +1,9 @@
 export const MAX_ARTWORK_BYTES = 150 * 1024 * 1024;
 export const MAX_PROJECT_BYTES = 25 * 1024 * 1024;
-export const MAX_IMAGE_PIXELS = 200_000_000;
+// Large-format artwork can legitimately be very tall. The byte and per-side
+// limits still bound uploads, while this ceiling accepts files such as a
+// 10,050 x 24,000 production JPEG without allowing unbounded dimensions.
+export const MAX_IMAGE_PIXELS = 300_000_000;
 export const MAX_IMAGE_DIMENSION = 50_000;
 
 export type ValidatedArtworkFile = {
