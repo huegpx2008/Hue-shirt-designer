@@ -3750,6 +3750,9 @@ export default function Home() {
   const signSurfacePreviewUrl = isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? rigidBackArtwork?.dataUrl || null : signArtworkDisplayUrl || signArtworkPreviewUrl;
   const hasPlacedSignArtwork = Boolean(signArtworkPreviewUrl) || Boolean(signSurfacePreviewUrl) || layers.length > 0;
   const bannerArtworkActualSize = signArtworkSourceSize || signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
+  const bannerArtworkDisplaySize = isHandheldBuilder && signArtworkPreviewUrl
+    ? { width: signWidth, height: signHeight }
+    : bannerArtworkActualSize;
   const rawBannerAspectMismatch = isBannerBuilder && Boolean(signArtworkPreviewUrl) && aspectRatioMismatch(bannerArtworkActualSize?.width, bannerArtworkActualSize?.height, signWidth, signHeight);
   const bannerFitResolved = isBannerBuilder && Boolean(signArtworkPreviewUrl) && (bannerArtworkFitState === 'fit' || bannerArtworkFitState === 'stretch');
   const bannerAspectMismatch = rawBannerAspectMismatch && !bannerFitResolved;
@@ -8018,9 +8021,11 @@ export default function Home() {
       setSignArtworkPreviewUrl(imageItem.dataUrl);
       setBannerArtworkName(imageItem.name);
       const savedPrintSize = imageItem.signWidth && imageItem.signHeight ? { width: imageItem.signWidth, height: imageItem.signHeight } : null;
-      const printSize = savedPrintSize || applySignSizeFromPixels(imageItem.width, imageItem.height) || getArtworkPrintSize(imageItem.width, imageItem.height);
+      const printSize = savedPrintSize || (isHandheldBuilder
+        ? getArtworkPrintSize(imageItem.width, imageItem.height)
+        : applySignSizeFromPixels(imageItem.width, imageItem.height)) || getArtworkPrintSize(imageItem.width, imageItem.height);
       const guidedTargetSize = guidedTourTargetSizeRef.current || guidedTourTargetSize;
-      if (savedPrintSize && !guidedTargetSize) {
+      if (savedPrintSize && !guidedTargetSize && !isHandheldBuilder) {
         setSignValues((prev) => ({ ...prev, width: String(savedPrintSize.width), height: String(savedPrintSize.height) }));
         setSignArtworkSize(savedPrintSize);
       }
@@ -8230,9 +8235,11 @@ export default function Home() {
         }
         setSignArtworkPreviewUrl(placementDataUrl);
         setBannerArtworkName(file.name);
-        const printSize = pdfPrintSize || applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
+        const printSize = pdfPrintSize || (isHandheldBuilder
+          ? getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution)
+          : applySignSizeFromPixels(imagePixels.width, imagePixels.height, embeddedResolution)) || getArtworkPrintSize(imagePixels.width, imagePixels.height, embeddedResolution);
         const guidedTargetSize = guidedTourTargetSizeRef.current || guidedTourTargetSize;
-        if (pdfPrintSize && !guidedTargetSize) {
+        if (pdfPrintSize && !guidedTargetSize && !isHandheldBuilder) {
           setSignValues((prev) => ({ ...prev, width: String(pdfPrintSize.width), height: String(pdfPrintSize.height) }));
           setSignArtworkSize(pdfPrintSize);
         }
@@ -8314,18 +8321,23 @@ export default function Home() {
         try {
           await placeImageOnDesign(placement.dataUrl, placement.name);
           if (canceled) return;
+          const selectedProductTargetSize = isHandheldBuilder && signWidth > 0 && signHeight > 0
+            ? { width: signWidth, height: signHeight }
+            : null;
           const guidedTargetSize = placement.targetWidth && placement.targetHeight
             ? { width: placement.targetWidth, height: placement.targetHeight }
             : guidedTourTargetSizeRef.current || guidedTourTargetSize;
-          const targetWidth = guidedTargetSize?.width || placement.printWidth;
-          const targetHeight = guidedTargetSize?.height || placement.printHeight;
+          const targetWidth = selectedProductTargetSize?.width || guidedTargetSize?.width || placement.printWidth;
+          const targetHeight = selectedProductTargetSize?.height || guidedTargetSize?.height || placement.printHeight;
           setSignArtworkPreviewUrl(placement.dataUrl);
           setBannerArtworkName(placement.name);
           setSignValues((prev) => ({ ...prev, width: String(targetWidth), height: String(targetHeight) }));
-          setSignArtworkSize({ width: placement.printWidth, height: placement.printHeight });
+          setSignArtworkSize(selectedProductTargetSize || { width: placement.printWidth, height: placement.printHeight });
           setSignArtworkSourceSize({ width: placement.printWidth, height: placement.printHeight });
           setBannerArtworkFitState('unresolved');
-          setImageLibraryStatus(guidedTargetSize
+          setImageLibraryStatus(selectedProductTargetSize
+            ? `${placement.name} placed on the ${targetWidth}" x ${targetHeight}" handheld artboard. Use Fit or Center to confirm its placement.`
+            : guidedTargetSize
             ? `${placement.name} placed on the banner. Guided tour size kept at ${targetWidth}" × ${targetHeight}". Use Fit or Center if the artwork ratio needs adjustment.`
             : `${placement.name} placed on the banner.`);
           if (guidedTargetSize) {
@@ -8341,7 +8353,7 @@ export default function Home() {
       })();
     });
     return () => { canceled = true; };
-  }, [guidedTourTargetSize, isBannerBuilder, pendingBannerPlacement]);
+  }, [guidedTourTargetSize, isBannerBuilder, isHandheldBuilder, pendingBannerPlacement, signHeight, signWidth]);
 
   const alignSelected = (axis: 'horizontal' | 'vertical') => editSelected((obj) => {
     const center = obj.getCenterPoint();
@@ -10575,7 +10587,7 @@ export default function Home() {
                     {signArtworkPreviewUrl ? <span className="w-full">
                       <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" />
                       <span className="mt-2 block font-bold text-slate-600">Front image</span>
-                      <span className="mt-1 block text-slate-500">{bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width.toFixed(2)}" x ${bannerArtworkActualSize.height.toFixed(2)}"` : 'Artwork uploaded'}</span>
+                      <span className="mt-1 block text-slate-500">{bannerArtworkDisplaySize ? `Actual: ${bannerArtworkDisplaySize.width.toFixed(2)}" x ${bannerArtworkDisplaySize.height.toFixed(2)}"` : 'Artwork uploaded'}</span>
                     </span> : <span>Click here to upload or select image</span>}
                   </button>
                   {showSeparateBackArtworkControl ? <div className={`${String(signValues.sides || 'single') === 'double' ? '' : 'mt-2'} rounded-xl border border-slate-200 bg-white p-2`}>
@@ -11002,8 +11014,8 @@ export default function Home() {
               <div className="mt-3 flex min-h-28 items-center justify-center border border-slate-300 bg-white p-2 text-center text-[10px] uppercase text-slate-400">
                 {signArtworkPreviewUrl ? <div className="w-full">
                   <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-20 max-w-full object-contain" />
-                  <p className="mt-2 text-[10px] text-slate-600">{selectedSignProduct.id === 'yard-sign' ? `Placed ${coroSheetLayout.signsPerSheet} times on sheet` : bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width}" x ${bannerArtworkActualSize.height}"` : 'Artwork uploaded'}</p>
-                </div> : bannerArtworkActualSize ? `Actual: ${bannerArtworkActualSize.width}" x ${bannerArtworkActualSize.height}"` : layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
+                  <p className="mt-2 text-[10px] text-slate-600">{selectedSignProduct.id === 'yard-sign' ? `Placed ${coroSheetLayout.signsPerSheet} times on sheet` : bannerArtworkDisplaySize ? `Actual: ${bannerArtworkDisplaySize.width}" x ${bannerArtworkDisplaySize.height}"` : 'Artwork uploaded'}</p>
+                </div> : bannerArtworkDisplaySize ? `Actual: ${bannerArtworkDisplaySize.width}" x ${bannerArtworkDisplaySize.height}"` : layers.length ? `${layers.length} design object${layers.length === 1 ? '' : 's'}` : 'Upload artwork or add text'}
               </div>
               <div className="mt-3 text-xs">
                 <button className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-slate-400">Contour Cut</button>
