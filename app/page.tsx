@@ -138,6 +138,7 @@ const getArtworkEditorWorkspaceSize = (sourceWidth: number, sourceHeight: number
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backDpi?: number; backSourceSignWidth?: number; backSourceSignHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ArtworkEditorDraft = { id: string; ownerKey: string; source: ImageZoneItem; front: string | null; back: string | null; side: CoroArtworkSide; hasBack: boolean; background: string; launchContext: 'home-create' | 'image-zone-create' | 'image-zone-edit' | 'order'; orderReturn: ArtworkEditorOrderReturn | null; updatedAt: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -255,10 +256,98 @@ const ORDER_CONFIRMATION_STORAGE_KEY = 'hue-order-confirmation';
 const CHECKOUT_SUBMISSION_STORAGE_KEY = 'hue-checkout-submission';
 const GUIDED_TOUR_STORAGE_KEY = 'hue-guided-tour-dismissed';
 const MOBILE_DESKTOP_NOTICE_STORAGE_KEY = 'hue-mobile-desktop-notice-dismissed';
+const ARTWORK_EDITOR_DRAFT_DB_NAME = 'hue-studio-designer-drafts';
+const ARTWORK_EDITOR_DRAFT_STORE = 'drafts';
+const ARTWORK_EDITOR_DRAFT_META_KEY = 'hue-designer-draft-owner';
+const TRANSPARENT_PIXEL_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
 const CUSTOMER_SESSION_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const CUSTOMER_SESSION_FALLBACK_REFRESH_MS = 45 * 60 * 1000;
+
+const getArtworkEditorDraftOwnerKey = (session: CustomerSession | null) => session?.user?.id || session?.user?.email?.trim().toLowerCase() || 'guest';
+
+const openArtworkEditorDraftDatabase = () => new Promise<IDBDatabase>((resolve, reject) => {
+  const request = window.indexedDB.open(ARTWORK_EDITOR_DRAFT_DB_NAME, 1);
+  request.onupgradeneeded = () => {
+    if (!request.result.objectStoreNames.contains(ARTWORK_EDITOR_DRAFT_STORE)) request.result.createObjectStore(ARTWORK_EDITOR_DRAFT_STORE, { keyPath: 'id' });
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error || new Error('Designer recovery storage could not be opened.'));
+});
+
+const writeArtworkEditorDraft = async (draft: ArtworkEditorDraft) => {
+  const database = await openArtworkEditorDraftDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = database.transaction(ARTWORK_EDITOR_DRAFT_STORE, 'readwrite').objectStore(ARTWORK_EDITOR_DRAFT_STORE).put(draft);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error || new Error('Designer draft could not be saved.'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const readArtworkEditorDraft = async (ownerKey: string) => {
+  const database = await openArtworkEditorDraftDatabase();
+  try {
+    return await new Promise<ArtworkEditorDraft | null>((resolve, reject) => {
+      const request = database.transaction(ARTWORK_EDITOR_DRAFT_STORE, 'readonly').objectStore(ARTWORK_EDITOR_DRAFT_STORE).get(`designer-${ownerKey}`);
+      request.onsuccess = () => resolve((request.result as ArtworkEditorDraft | undefined) || null);
+      request.onerror = () => reject(request.error || new Error('Designer draft could not be read.'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const deleteArtworkEditorDraft = async (ownerKey: string) => {
+  const database = await openArtworkEditorDraftDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = database.transaction(ARTWORK_EDITOR_DRAFT_STORE, 'readwrite').objectStore(ARTWORK_EDITOR_DRAFT_STORE).delete(`designer-${ownerKey}`);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error || new Error('Designer draft could not be removed.'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const blobToArtworkDraftDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Designer recovery image could not be encoded.'));
+  reader.onerror = () => reject(reader.error || new Error('Designer recovery image could not be encoded.'));
+  reader.readAsDataURL(blob);
+});
+
+const makeArtworkEditorDraftSnapshotPortable = async (snapshot: string | null) => {
+  if (!snapshot) return null;
+  const projectData = JSON.parse(snapshot) as Record<string, unknown>;
+  const embedTemporaryImages = async (value: unknown): Promise<void> => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const entry of value) await embedTemporaryImages(entry);
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    if (typeof object.src === 'string' && !object.src.startsWith('data:')) {
+      const originalSource = object.src;
+      try {
+        const response = await fetch(originalSource);
+        if (!response.ok) throw new Error('Artwork image could not be read.');
+        object.src = await blobToArtworkDraftDataUrl(await response.blob());
+      } catch (error) {
+        if (originalSource.startsWith('blob:')) throw new Error('A temporary Designer image could not be added to recovery storage.', { cause: error });
+        object.src = originalSource;
+      }
+    }
+    for (const entry of Object.values(object)) await embedTemporaryImages(entry);
+  };
+  await embedTemporaryImages(projectData);
+  return JSON.stringify(projectData);
+};
 
 const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
@@ -931,6 +1020,21 @@ const uploadArtworkFileToSupabase = async (
     previewHeight: result.previewHeight,
     originalProvider: 'supabase' as const,
   };
+};
+
+const validateSupabaseSession = async (session: CustomerSession | null) => {
+  if (!session?.access_token) return { valid: false, unauthorized: true, session: null as CustomerSession | null };
+  try {
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      cache: 'no-store',
+      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}` }
+    });
+    if (!response.ok) return { valid: false, unauthorized: response.status === 401 || response.status === 403, session: null as CustomerSession | null };
+    const user = await response.json() as { id?: string; email?: string };
+    return { valid: true, unauthorized: false, session: { ...session, user: { ...session.user, ...user } } };
+  } catch {
+    return { valid: false, unauthorized: false, session: null as CustomerSession | null };
+  }
 };
 
 
@@ -2663,7 +2767,11 @@ export default function Home() {
   const [artworkEditorReloadKey, setArtworkEditorReloadKey] = useState(0);
   const [artworkEditorCanUndo, setArtworkEditorCanUndo] = useState(false);
   const [artworkEditorCanRedo, setArtworkEditorCanRedo] = useState(false);
+  const [recoverableArtworkEditorDraft, setRecoverableArtworkEditorDraft] = useState<ArtworkEditorDraft | null>(null);
+  const [artworkEditorAutosaveStatus, setArtworkEditorAutosaveStatus] = useState('');
   const [customerSession, setCustomerSession] = useState<CustomerSession | null>(null);
+  const [customerSessionDraftOwnerHint, setCustomerSessionDraftOwnerHint] = useState<string | null>(null);
+  const [customerSessionRestoreComplete, setCustomerSessionRestoreComplete] = useState(false);
   const [showCustomerLogin, setShowCustomerLogin] = useState(false);
   const [showGuestArtworkWarning, setShowGuestArtworkWarning] = useState(false);
   const [, setPendingGuestUploadStatus] = useState('Choose an image or PDF artwork file.');
@@ -2731,6 +2839,9 @@ export default function Home() {
   const artworkEditorSideRef = useRef<CoroArtworkSide>('front');
   const artworkEditorSideSnapshotsRef = useRef<Record<CoroArtworkSide, string | null>>({ front: null, back: null });
   const artworkEditorClipboardRef = useRef<FabricObject | null>(null);
+  const artworkEditorAutosaveTimerRef = useRef<number | null>(null);
+  const artworkEditorDraftOwnerRef = useRef('guest');
+  const artworkEditorRecoveryCheckedOwnersRef = useRef(new Set<string>());
   const pendingCheckoutSubmissionRef = useRef<{ id: string; fingerprint: string } | null>(null);
   const pendingPayPalCheckoutRef = useRef<{ order: TestOrder; checkoutToken: string; paypalOrderId: string; paymentToken?: string; captureId?: string; paidAt?: string } | null>(null);
   const historyRef = useRef<string[]>([]);
@@ -2778,22 +2889,44 @@ export default function Home() {
         if (!storedSession) return;
         const parsedSession = JSON.parse(storedSession) as CustomerSession;
         if (!parsedSession?.access_token) return;
+        setCustomerSessionDraftOwnerHint(getArtworkEditorDraftOwnerKey(parsedSession));
+        setCustomerSessionRestoreComplete(true);
         const expiresAtMs = Number(parsedSession.expires_at || 0) * 1000;
         const needsRefresh = Boolean(parsedSession.refresh_token && (!expiresAtMs || expiresAtMs <= Date.now() + CUSTOMER_SESSION_REFRESH_BUFFER_MS));
-        const refreshedSession = needsRefresh ? await refreshSupabaseSession(parsedSession).catch(() => null) : null;
+        let activeSession = needsRefresh ? await refreshSupabaseSession(parsedSession).catch(() => null) : parsedSession;
         if (canceled) return;
-        if (needsRefresh && !refreshedSession && expiresAtMs && expiresAtMs <= Date.now()) {
+        if (!activeSession && expiresAtMs && expiresAtMs <= Date.now()) {
           window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
           setCustomerAuthStatus('Your secure session expired. Sign in again; your saved cart and artwork are still safe.');
           return;
         }
-        const activeSession = refreshedSession || parsedSession;
-        if (refreshedSession) window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
-        setCustomerSession(activeSession);
+        activeSession ||= parsedSession;
+        let validation = await validateSupabaseSession(activeSession);
+        if (!validation.valid && validation.unauthorized && activeSession.refresh_token) {
+          const refreshedSession = await refreshSupabaseSession(activeSession).catch(() => null);
+          if (refreshedSession) {
+            activeSession = refreshedSession;
+            validation = await validateSupabaseSession(activeSession);
+          }
+        }
+        if (canceled) return;
+        if (!validation.valid && validation.unauthorized) {
+          window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
+          setCustomerSession(null);
+          setCustomerAuthStatus('Your secure session expired. Sign in again; your saved cart and artwork are still safe.');
+          return;
+        }
+        const verifiedSession = validation.session || activeSession;
+        window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(verifiedSession));
+        setCustomerSession(verifiedSession);
+        setCustomerSessionDraftOwnerHint(getArtworkEditorDraftOwnerKey(verifiedSession));
         setIsGuestCheckout(false);
-        setCustomerAuthStatus(`Signed in as ${activeSession.user?.email || 'customer'}.`);
+        setCustomerAuthStatus(validation.valid ? `Signed in as ${verifiedSession.user?.email || 'customer'}.` : 'Your session is saved, but Hue Studio could not verify it while the connection is unavailable.');
       } catch {
         window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
+        setCustomerSession(null);
+      } finally {
+        if (!canceled) setCustomerSessionRestoreComplete(true);
       }
     };
     void restoreCustomerSession();
@@ -2812,7 +2945,9 @@ export default function Home() {
         if (!canceled && refreshedSession) {
           setCustomerSession(refreshedSession);
           window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
-        } else if (!canceled && Number(customerSession.expires_at || 0) * 1000 <= Date.now()) {
+        } else if (!canceled && Number(customerSession.expires_at || 0) > 0 && Number(customerSession.expires_at || 0) * 1000 <= Date.now()) {
+          setCustomerSession(null);
+          window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
           setCustomerAuthStatus('Hue Studio could not renew your session. Sign in again; your cart has not been deleted.');
         }
       } finally {
@@ -2836,6 +2971,54 @@ export default function Home() {
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [customerSession]);
+
+  useEffect(() => {
+    const syncCustomerSessionAcrossTabs = (event: StorageEvent) => {
+      if (event.key !== CUSTOMER_SESSION_STORAGE_KEY) return;
+      if (!event.newValue) {
+        setCustomerSession(null);
+        setCustomerSessionDraftOwnerHint(null);
+        setCustomerAuthStatus('Signed out in another Hue Studio tab. Your cart and Designer recovery draft remain saved.');
+        return;
+      }
+      try {
+        const nextSession = JSON.parse(event.newValue) as CustomerSession;
+        setCustomerSession(nextSession?.access_token ? nextSession : null);
+        setCustomerSessionDraftOwnerHint(nextSession?.access_token ? getArtworkEditorDraftOwnerKey(nextSession) : null);
+      } catch {
+        setCustomerSession(null);
+      }
+    };
+    window.addEventListener('storage', syncCustomerSessionAcrossTabs);
+    return () => window.removeEventListener('storage', syncCustomerSessionAcrossTabs);
+  }, []);
+
+  useEffect(() => {
+    if (!customerSessionRestoreComplete || showArtworkEditor) return;
+    const ownerKeys = Array.from(new Set([getArtworkEditorDraftOwnerKey(customerSession), customerSessionDraftOwnerHint].filter((value): value is string => Boolean(value))));
+    const uncheckedOwnerKeys = ownerKeys.filter((ownerKey) => !artworkEditorRecoveryCheckedOwnersRef.current.has(ownerKey));
+    if (!uncheckedOwnerKeys.length) return;
+    uncheckedOwnerKeys.forEach((ownerKey) => artworkEditorRecoveryCheckedOwnersRef.current.add(ownerKey));
+    let canceled = false;
+    void (async () => {
+      for (const ownerKey of uncheckedOwnerKeys) {
+        const draft = await readArtworkEditorDraft(ownerKey).catch(() => null);
+        if (canceled || !draft) continue;
+        const age = Date.now() - new Date(draft.updatedAt).getTime();
+        if (!Number.isFinite(age) || age > 30 * 24 * 60 * 60 * 1000) {
+          void deleteArtworkEditorDraft(ownerKey).catch(() => undefined);
+          continue;
+        }
+        setRecoverableArtworkEditorDraft(draft);
+        return;
+      }
+    })();
+    return () => { canceled = true; };
+  }, [customerSession?.user?.email, customerSession?.user?.id, customerSessionDraftOwnerHint, customerSessionRestoreComplete, showArtworkEditor]);
+
+  useEffect(() => () => {
+    if (artworkEditorAutosaveTimerRef.current) window.clearTimeout(artworkEditorAutosaveTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3073,18 +3256,34 @@ export default function Home() {
     const loadImageLibrary = async () => {
       setIsImageLibraryLoading(true);
       try {
-        const libraryResponse = await fetch('/api/artwork/library', {
-          cache: 'no-store',
-          headers: { Authorization: `Bearer ${customerSession.access_token}` },
-        });
-        const libraryPayload = await libraryResponse.json() as { items?: Array<{ id?: string; assetId?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string | null; thumbnailUrl?: string | null; width?: number; height?: number; dpiX?: number; dpiY?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive' }>; error?: string };
+        let librarySession = customerSession;
+        const requestLibrary = (accessToken: string) => fetch('/api/artwork/library', { cache: 'no-store', headers: { Authorization: `Bearer ${accessToken}` } });
+        let libraryResponse = await requestLibrary(librarySession.access_token);
+        if (libraryResponse.status === 401 || libraryResponse.status === 403) {
+          const refreshedSession = await refreshSupabaseSession(librarySession).catch(() => null);
+          if (!refreshedSession) {
+            window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
+            setCustomerSession(null);
+            throw new Error('Your secure session expired. Sign in again to reopen Image Zone; your artwork is still safe.');
+          }
+          librarySession = refreshedSession;
+          window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
+          libraryResponse = await requestLibrary(refreshedSession.access_token);
+        }
+        const libraryResponseText = await libraryResponse.text();
+        let libraryPayload: { items?: Array<{ id?: string; assetId?: string; name: string; storagePath: string; storageUrl?: string | null; previewStoragePath?: string | null; previewUrl?: string | null; previewDataUrl?: string | null; previewWidth?: number; previewHeight?: number; thumbnailStoragePath?: string | null; thumbnailUrl?: string | null; width?: number; height?: number; dpiX?: number; dpiY?: number; mimeType?: string; updatedAt?: string | null; createdAt?: string | null; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive' }>; error?: string };
+        try {
+          libraryPayload = JSON.parse(libraryResponseText) as typeof libraryPayload;
+        } catch {
+          throw new Error(libraryResponse.ok ? 'Image Zone returned an unreadable response. Please try again.' : libraryResponseText.slice(0, 180) || `Image Zone request failed (${libraryResponse.status}).`);
+        }
         if (!libraryResponse.ok) throw new Error(libraryPayload.error || 'Could not load Image Zone files.');
         if (!mounted) return;
         const ungroupedRemoteItems: ImageZoneItem[] = await Promise.all((libraryPayload.items || [])
           .filter((file) => file.name && file.storagePath && isLikelyArtworkPath(file.name))
           .map(async (file) => {
             const storagePath = file.storagePath;
-            const originalUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, customerSession).catch(() => getSupabasePublicUrl(storagePath));
+            const originalUrl = file.storageUrl || await getSupabaseSignedUrl(storagePath, librarySession).catch(() => getSupabasePublicUrl(storagePath));
             const isImageFile = Boolean(file.mimeType?.startsWith('image/') || isLikelyImagePath(file.name));
             const isPdfFile = file.mimeType === 'application/pdf' || /\.pdf$/i.test(file.name);
             const usesRasterCloudPreview = file.originalProvider === 'b2' || file.originalProvider === 'drive';
@@ -3097,8 +3296,8 @@ export default function Home() {
               ? [file.thumbnailStoragePath, file.previewStoragePath, storagePath]
               : [(isImageFile || usesRasterCloudPreview) ? file.previewStoragePath : storagePath, storagePath];
             const previewUrl = file.previewDataUrl || await (isImageFile || usesRasterCloudPreview
-              ? loadFirstAvailablePrivateArtworkImageFile(privatePreviewPaths, customerSession.access_token)
-              : loadFirstAvailablePrivateArtworkFile(privatePreviewPaths, customerSession.access_token))
+              ? loadFirstAvailablePrivateArtworkImageFile(privatePreviewPaths, librarySession.access_token)
+              : loadFirstAvailablePrivateArtworkFile(privatePreviewPaths, librarySession.access_token))
               .catch(() => file.thumbnailUrl || file.previewUrl || originalUrl);
             const pdfPreview = isPdfFile && !usesRasterCloudPreview ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
@@ -3176,7 +3375,7 @@ export default function Home() {
         try {
           const archiveResponse = await fetch('/api/artwork/archive', {
             cache: 'no-store',
-            headers: { Authorization: `Bearer ${customerSession.access_token}` },
+            headers: { Authorization: `Bearer ${librarySession.access_token}` },
           });
           if (archiveResponse.ok) {
             const archivePayload = await archiveResponse.json() as { items?: Array<{ id: string; originalName: string; mimeType?: string; storagePath?: string; previewUrl?: string | null; archivedAt?: string }> };
@@ -3208,10 +3407,11 @@ export default function Home() {
         });
         setFailedImageZoneThumbnailIds(new Set());
         const archivedMessage = visibleArchivedItems.length ? ` ${visibleArchivedItems.length} archived preview${visibleArchivedItems.length === 1 ? '' : 's'} available.` : '';
-        setImageLibraryStatus(`Signed in as ${customerSession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.${archivedMessage}`);
+        if (librarySession.access_token !== customerSession.access_token) setCustomerSession(librarySession);
+        setImageLibraryStatus(`Signed in as ${librarySession.user?.email || 'customer'}. ${remoteItems.length} saved file${remoteItems.length === 1 ? '' : 's'} found.${archivedMessage}`);
       } catch (error) {
         if (!mounted) return;
-        setImageLibraryStatus(`Supabase library not readable yet: ${error instanceof Error ? error.message : 'unknown error'}. Local previews still work.`);
+        setImageLibraryStatus(error instanceof Error ? error.message : 'Image Zone could not be opened. Please try again.');
       } finally {
         if (mounted) setIsImageLibraryLoading(false);
       }
@@ -4836,6 +5036,7 @@ export default function Home() {
     const refreshedSession = await refreshSupabaseSession(customerSession);
     if (!refreshedSession) return null;
     setCustomerSession(refreshedSession);
+    setCustomerSessionDraftOwnerHint(getArtworkEditorDraftOwnerKey(refreshedSession));
     window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
     setCustomerAuthStatus(`Signed in as ${refreshedSession.user?.email || 'customer'}.`);
     return refreshedSession;
@@ -5461,6 +5662,68 @@ export default function Home() {
     setArtworkEditorCanRedo(artworkEditorHistoryIndexRef.current >= 0 && artworkEditorHistoryIndexRef.current < artworkEditorHistoryRef.current.length - 1);
   };
 
+  const persistArtworkEditorDraftNow = async () => {
+    const source = artworkEditorSource;
+    const frontSnapshot = artworkEditorSideSnapshotsRef.current.front;
+    const backSnapshot = artworkEditorSideSnapshotsRef.current.back;
+    if (!source || !frontSnapshot) return;
+    try {
+      const [front, back] = await Promise.all([
+        makeArtworkEditorDraftSnapshotPortable(frontSnapshot),
+        makeArtworkEditorDraftSnapshotPortable(backSnapshot)
+      ]);
+      if (!front) return;
+      const ownerKey = artworkEditorDraftOwnerRef.current;
+      const draft: ArtworkEditorDraft = {
+        id: `designer-${ownerKey}`,
+        ownerKey,
+        source: { ...source, dataUrl: TRANSPARENT_PIXEL_DATA_URL, backDataUrl: back ? TRANSPARENT_PIXEL_DATA_URL : undefined, editorProject: undefined },
+        front,
+        back,
+        side: artworkEditorSideRef.current,
+        hasBack: Boolean(back),
+        background: typeof artworkEditorCanvasRef.current?.backgroundColor === 'string' ? artworkEditorCanvasRef.current.backgroundColor : artworkEditorBackground,
+        launchContext: artworkEditorLaunchContext,
+        orderReturn: artworkEditorOrderReturn,
+        updatedAt: new Date().toISOString()
+      };
+      await writeArtworkEditorDraft(draft);
+      window.localStorage.setItem(ARTWORK_EDITOR_DRAFT_META_KEY, ownerKey);
+      setArtworkEditorAutosaveStatus(`Recovery saved ${new Date(draft.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+    } catch (error) {
+      setArtworkEditorAutosaveStatus(error instanceof Error ? `Recovery unavailable: ${error.message}` : 'Recovery draft could not be saved.');
+    }
+  };
+
+  const queueArtworkEditorAutosave = () => {
+    if (artworkEditorAutosaveTimerRef.current) window.clearTimeout(artworkEditorAutosaveTimerRef.current);
+    setArtworkEditorAutosaveStatus('Saving recovery draft…');
+    artworkEditorAutosaveTimerRef.current = window.setTimeout(() => {
+      artworkEditorAutosaveTimerRef.current = null;
+      void persistArtworkEditorDraftNow();
+    }, 650);
+  };
+
+  useEffect(() => {
+    if (!showArtworkEditor) return;
+    const saveBeforeLeaving = () => {
+      if (artworkEditorAutosaveTimerRef.current) {
+        window.clearTimeout(artworkEditorAutosaveTimerRef.current);
+        artworkEditorAutosaveTimerRef.current = null;
+      }
+      void persistArtworkEditorDraftNow();
+    };
+    const saveWhenHidden = () => {
+      if (document.visibilityState === 'hidden') saveBeforeLeaving();
+    };
+    window.addEventListener('pagehide', saveBeforeLeaving);
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', saveBeforeLeaving);
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+    };
+  }, [showArtworkEditor, artworkEditorSource, artworkEditorBackground, artworkEditorLaunchContext, artworkEditorOrderReturn]);
+
   const captureArtworkEditorHistory = (canvas: Canvas) => {
     if (artworkEditorRestoringRef.current) return;
     const json = JSON.stringify(canvas.toObject(['data']));
@@ -5471,6 +5734,7 @@ export default function Home() {
     if (artworkEditorHistoryRef.current.length > 30) artworkEditorHistoryRef.current.shift();
     artworkEditorHistoryIndexRef.current = artworkEditorHistoryRef.current.length - 1;
     updateArtworkEditorHistoryButtons();
+    queueArtworkEditorAutosave();
   };
 
   const restoreArtworkEditorHistory = async (offset: number) => {
@@ -5535,6 +5799,8 @@ export default function Home() {
     const borderPrintSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
     const recommendedBorder = getRecommendedBorderSize(borderPrintSize.width, borderPrintSize.height);
     setArtworkEditorSource(source);
+    artworkEditorDraftOwnerRef.current = getArtworkEditorDraftOwnerKey(customerSession);
+    setArtworkEditorAutosaveStatus('Recovery draft will save automatically');
     setArtworkEditorArtboardWidth(borderPrintSize.width);
     setArtworkEditorArtboardHeight(borderPrintSize.height);
     setArtworkEditorResizeError('');
@@ -5592,6 +5858,44 @@ export default function Home() {
     setShowNewArtworkDialog(false);
     setArtworkEditorPrintView(false);
     if (returnToImageZone) setShowImageZone(true);
+  };
+
+  const resumeArtworkEditorDraft = () => {
+    const draft = recoverableArtworkEditorDraft;
+    if (!draft) return;
+    const source: ImageZoneItem = {
+      ...draft.source,
+      editorProject: {
+        version: 1,
+        front: draft.front,
+        back: draft.back,
+        width: draft.source.width,
+        height: draft.source.height,
+        signWidth: draft.source.signWidth,
+        signHeight: draft.source.signHeight,
+        dpi: draft.source.dpi,
+        updatedAt: draft.updatedAt
+      }
+    };
+    setArtworkEditorLaunchContext(draft.launchContext);
+    setArtworkEditorOrderReturn(draft.orderReturn);
+    startArtworkEditor(source, `Recovered your autosaved design from ${new Date(draft.updatedAt).toLocaleString()}.`);
+    setArtworkEditorBackground(draft.background || '#ffffff');
+    if (draft.side === 'back' && draft.back) {
+      artworkEditorSideRef.current = 'back';
+      setArtworkEditorSide('back');
+      setArtworkEditorHasBackSide(true);
+    }
+    setRecoverableArtworkEditorDraft(null);
+    setArtworkEditorAutosaveStatus('Recovered · autosave active');
+  };
+
+  const discardArtworkEditorDraft = async () => {
+    const draft = recoverableArtworkEditorDraft;
+    if (!draft) return;
+    await deleteArtworkEditorDraft(draft.ownerKey).catch(() => undefined);
+    if (window.localStorage.getItem(ARTWORK_EDITOR_DRAFT_META_KEY) === draft.ownerKey) window.localStorage.removeItem(ARTWORK_EDITOR_DRAFT_META_KEY);
+    setRecoverableArtworkEditorDraft(null);
   };
 
   const resizeArtworkEditorSnapshot = async (
@@ -6969,6 +7273,11 @@ export default function Home() {
         setActiveCoroOptionPanel('images');
         setArtworkEditorOrderReturn(null);
       }
+      if (artworkEditorAutosaveTimerRef.current) window.clearTimeout(artworkEditorAutosaveTimerRef.current);
+      await deleteArtworkEditorDraft(artworkEditorDraftOwnerRef.current).catch(() => undefined);
+      if (window.localStorage.getItem(ARTWORK_EDITOR_DRAFT_META_KEY) === artworkEditorDraftOwnerRef.current) window.localStorage.removeItem(ARTWORK_EDITOR_DRAFT_META_KEY);
+      setRecoverableArtworkEditorDraft(null);
+      setArtworkEditorAutosaveStatus('Saved to Image Zone');
       if (!artworkEditorOrderReturn) setShowImageZone(true);
       setShowArtworkEditor(false);
     } catch (error) {
@@ -8641,6 +8950,7 @@ export default function Home() {
 
   const saveCustomerSession = (session: CustomerSession) => {
     setCustomerSession(session);
+    setCustomerSessionDraftOwnerHint(getArtworkEditorDraftOwnerKey(session));
     window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(session));
   };
 
@@ -8747,6 +9057,7 @@ export default function Home() {
       }
     }
     setCustomerSession(null);
+    setCustomerSessionDraftOwnerHint(null);
     setIsGuestCheckout(true);
     window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
     setImageZoneItems([]);
@@ -11276,7 +11587,7 @@ export default function Home() {
         <section className="flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden border border-[#38bdf8]/25 bg-[#07111f] text-white shadow-[0_36px_140px_rgba(0,0,0,0.82),0_0_70px_rgba(14,165,233,0.18)] sm:rounded-[22px]">
           <header className="hue-mobile-editor-header flex max-h-[34vh] flex-wrap items-center gap-2 overflow-y-auto border-b border-white/10 bg-[#071522] px-3 py-3 sm:max-h-none sm:gap-3 sm:px-5 sm:overflow-visible">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#67d8ff]/25 bg-[#0c2a40] text-xl text-[#67d8ff]">✎</span>
-            <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Create New Artwork' : `Editing ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
+            <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Create New Artwork' : `Editing ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p>{artworkEditorAutosaveStatus ? <p className={`mt-1 flex items-center gap-1.5 text-[10px] font-bold ${artworkEditorAutosaveStatus.startsWith('Recovery unavailable') ? 'text-amber-300' : 'text-emerald-300'}`}><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />{artworkEditorAutosaveStatus}</p> : null}</div>
             <div className="flex items-center gap-1 rounded-xl border border-[#38bdf8]/25 bg-black/25 p-1"><button type="button" onClick={() => switchArtworkEditorSide('front')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'front' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>Front</button><button type="button" onClick={() => switchArtworkEditorSide('back')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'back' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{artworkEditorHasBackSide ? 'Back' : '+ Add Back'}</button></div>
             <button type="button" disabled={isArtworkEditorSaving || isArtworkEditorResizing} onClick={() => { if (artworkEditorSource) { const size = artworkEditorSource.signWidth && artworkEditorSource.signHeight ? { width: artworkEditorSource.signWidth, height: artworkEditorSource.signHeight } : getArtworkPrintSize(artworkEditorSource.width, artworkEditorSource.height); setArtworkEditorArtboardWidth(size.width); setArtworkEditorArtboardHeight(size.height); } setArtworkEditorResizeError(''); setShowArtworkEditorResizeDialog(true); }} className="rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f] disabled:opacity-40">Artboard Size</button>
             <button type="button" disabled={isArtworkEditorSaving} onClick={runArtworkEditorPreflight} className="rounded-xl border border-emerald-300/35 bg-emerald-500/10 px-4 py-2.5 text-xs font-black uppercase text-emerald-100 hover:border-emerald-300/65 hover:bg-emerald-500/20 disabled:opacity-40">Print Check</button>
@@ -11409,6 +11720,15 @@ export default function Home() {
               <div aria-hidden="true" className="h-24 w-full" />
             </aside>
           </div>
+        </section>
+      </div> : null}
+
+      {recoverableArtworkEditorDraft && !showArtworkEditor ? <div className="fixed inset-0 z-[122] flex items-center justify-center bg-[#02070d]/86 p-4 backdrop-blur-md">
+        <section role="dialog" aria-modal="true" aria-labelledby="designer-recovery-title" className="w-[min(520px,94vw)] overflow-hidden rounded-3xl border border-[#38bdf8]/35 bg-[#071522] text-white shadow-[0_32px_110px_rgba(0,0,0,0.82),0_0_60px_rgba(14,165,233,0.18)]">
+          <div className="bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.22),transparent_48%),#071522] px-6 py-6">
+            <div className="flex items-start gap-4"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#67d8ff]/30 bg-[#0c2a40] text-xl text-[#8be8ff]" aria-hidden="true">↻</span><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Autosaved on this device</p><h3 id="designer-recovery-title" className="mt-1 text-2xl font-black">Continue your Hue Designer project?</h3><p className="mt-2 text-sm leading-6 text-slate-300">We found unsaved work for <strong className="text-white">{recoverableArtworkEditorDraft.source.name}</strong> from {new Date(recoverableArtworkEditorDraft.updatedAt).toLocaleString()}.</p></div></div>
+          </div>
+          <div className="border-t border-white/10 bg-[#050d16] px-6 py-5"><p className="text-xs leading-5 text-slate-400">Resume puts the editable artboard back exactly where you left it. The draft stays only in this browser until you save it to Image Zone.</p><div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={() => { void discardArtworkEditorDraft(); }} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1]">Discard draft</button><button type="button" onClick={resumeArtworkEditorDraft} className="rounded-xl bg-[#1686c9] px-6 py-3 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(14,165,233,0.25)] hover:bg-[#0f75b5]">Resume design</button></div></div>
         </section>
       </div> : null}
 
