@@ -459,6 +459,20 @@ body {
   display: none;
 }
 
+/* Keep the Designer action bar from covering the final controls on short
+   landscape/tablet viewports. The side rails scroll independently, and the
+   extra landing space lets their last option clear the persistent footer. */
+.hue-mobile-editor-footer {
+  flex: 0 0 auto;
+}
+
+.hue-mobile-editor-tools,
+.hue-mobile-editor-properties {
+  overscroll-behavior: contain;
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)) !important;
+  scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+
 @media (max-width: 767px) {
   html,
   body {
