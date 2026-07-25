@@ -220,6 +220,15 @@ export async function GET(request: NextRequest) {
     const registeredPreviewPaths = new Set(registeredAssets.map((asset) => asset.preview_storage_path));
     const originalFiles = allFiles.filter((file) => !isManagedDerivativePath(file.path) && !isOrderArtifactPath(file.path) && !registeredPreviewPaths.has(file.path));
     originalFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
+    // Flattened order-production files remain registered for Admin, Drive
+    // archival, and cleanup, but they are not reusable customer uploads.
+    const reusableAssets = registeredAssets.filter((asset) => !isOrderProductionAsset(asset.original_name));
+    if (request.nextUrl.searchParams.get('summary') === '1') {
+      return NextResponse.json(
+        { count: reusableAssets.length + originalFiles.length },
+        { headers: { 'Cache-Control': 'private, no-store, max-age=0' } },
+      );
+    }
     const metadataPaths = new Set(allFiles.filter((file) => /\/previews\/[^/]+-metadata\.json$/i.test(file.path)).map((file) => file.path));
     const storedMetadataEntries = await Promise.all(originalFiles.map(async (file) => {
       const metadataPath = getMetadataPath(file.path);
@@ -278,9 +287,6 @@ export async function GET(request: NextRequest) {
       };
     }));
 
-    // Flattened order-production files remain registered for Admin, Drive
-    // archival, and cleanup, but they are not reusable customer uploads.
-    const reusableAssets = registeredAssets.filter((asset) => !isOrderProductionAsset(asset.original_name));
     const assetItems = await Promise.all(reusableAssets.map(async (asset) => {
       const signedPreviewUrl = await getStorageSignedUrl(asset.preview_storage_path, 3600).catch(() => null);
       const signedThumbnailUrl = await getStorageSignedUrl(asset.thumbnail_storage_path, 3600).catch(() => null);

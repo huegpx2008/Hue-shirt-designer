@@ -3042,8 +3042,14 @@ export default function Home() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('open') !== 'account') return;
-    setShowCustomerLogin(true);
+    const requestedView = params.get('open');
+    if (requestedView === 'account') {
+      window.location.replace('/account');
+      return;
+    }
+    if (requestedView !== 'image-zone') return;
+    setShowCustomerLogin(false);
+    setShowImageZone(true);
     params.delete('open');
     const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
     window.history.replaceState({}, '', cleanUrl);
@@ -9700,7 +9706,7 @@ export default function Home() {
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
             {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
             {isProductionBuilder ? <button type="button" onClick={openCanvaImport} className="rounded border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-2 font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.34),0_0_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva</button> : null}
-            <button type="button" onClick={openCustomerAccount} className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</button>
+            <a href="/account" className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</a>
             <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart &amp; Checkout{cartItems.length ? ` (${cartItems.length})` : ''}</button>
             {isProductionBuilder ? <button type="button" onClick={() => setShowMainMenu((current) => !current)} aria-expanded={showMainMenu} className="rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500">Menu</button> : null}
           </div>
@@ -9718,7 +9724,7 @@ export default function Home() {
             <a href="/products" onClick={() => setShowMainMenu(false)} className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Product Catalog<span className="mt-0.5 block text-xs font-normal text-slate-500">Browse banners, signs, apparel, and more</span></a>
             <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Image Zone<span className="mt-0.5 block text-xs font-normal text-slate-500">Open saved artwork and uploads</span></button>
             <button type="button" onClick={() => { openCanvaImport(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Import Canva<span className="mt-0.5 block text-xs font-normal text-slate-500">Bring a Canva design into Image Zone</span></button>
-            <button type="button" onClick={() => { openCustomerAccount(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">My Account<span className="mt-0.5 block text-xs font-normal text-slate-500">Sign in, create an account, or view saved artwork</span></button>
+            <a href="/account" onClick={() => setShowMainMenu(false)} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">My Account<span className="mt-0.5 block text-xs font-normal text-slate-500">Sign in, create an account, or view saved artwork</span></a>
             <button type="button" onClick={() => { setShowCart(true); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Cart &amp; Checkout<span className="mt-0.5 block text-xs font-normal text-slate-500">Review items and submit your order</span></button>
             <a href="/help" onClick={() => setShowMainMenu(false)} className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Help / Contact Hue<span className="mt-0.5 block text-xs font-normal text-slate-500">Learn how Hue Studio works</span></a>
           </div>
@@ -9763,7 +9769,7 @@ export default function Home() {
                   <p className="mt-2 text-lg font-black text-white">{customerSession?.user?.email ? `Signed in as ${customerSession.user.email}` : 'Not signed in yet'}</p>
                   <p className="mt-2 text-sm leading-6 text-slate-300">{customerSession?.user?.email ? 'Great — saved artwork and order history can stay connected to this customer.' : 'Customers can still browse first, but signing in before uploading is the safer path for saved artwork.'}</p>
                   <div className="mt-4 flex flex-wrap gap-3">
-                    <button type="button" onClick={() => { setResumeGuidedTourAfterAccount(true); openCustomerAccount(); setShowGuidedTour(false); }} className="rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">{customerSession?.user?.email ? 'Open my account' : 'Sign in / create account'}</button>
+                    <a href="/account" className="rounded-xl bg-[#1686c9] px-5 py-3 text-xs font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5]">{customerSession?.user?.email ? 'Open my account' : 'Sign in / create account'}</a>
                     <button type="button" onClick={() => setGuidedTourStep(1)} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-xs font-black uppercase text-slate-200 hover:bg-white/[0.1]">Continue for now</button>
                   </div>
                 </div>
