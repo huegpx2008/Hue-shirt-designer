@@ -7,6 +7,7 @@ import PayPalCheckoutButton from '@/components/paypal-checkout-button';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 import { CUSTOM_ORDER_ACKNOWLEDGMENT_STATEMENT, createCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
+import { getOrderWorkflowLabel } from '@/lib/order-workflow';
 import type { ProductionArtworkRecipe, ProductionPlacement } from '@/lib/production-artwork';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
 import { recommendPrintMethodByCost } from '@/lib/pricing/recommend-print-method';
@@ -11152,12 +11153,12 @@ export default function Home() {
                       <span className="font-black text-white">{order.orderNumber}</span>
                       <span className="font-black text-green-300">{formatSignPrice(order.total, order.currency)}</span>
                     </div>
-                    <p className="mt-1 text-slate-400">{new Date(order.createdAt).toLocaleDateString()} / {order.items.length} item{order.items.length === 1 ? '' : 's'} / {order.items.reduce((total, item) => total + item.artworkFiles.length, 0)} artwork file{order.items.reduce((total, item) => total + item.artworkFiles.length, 0) === 1 ? '' : 's'}</p>
+                    <p className="mt-1 font-bold text-[#8be3ff]">{getOrderWorkflowLabel(order.status)}</p><p className="mt-1 text-slate-400">{new Date(order.createdAt).toLocaleDateString()} / {order.items.length} item{order.items.length === 1 ? '' : 's'} / {order.items.reduce((total, item) => total + item.artworkFiles.length, 0)} artwork file{order.items.reduce((total, item) => total + item.artworkFiles.length, 0) === 1 ? '' : 's'}</p>
                     <span className="mt-1 block font-bold text-[#8be3ff]">View order details →</span>
                   </button>)}
                 </div> : <p className="mt-2 text-xs leading-5 text-slate-400">{accountOrdersLoading ? printShopQuip : 'Orders placed with this signed-in email will appear here.'}</p>}
               </div>
-              {printavoProfileUrl ? <a href={printavoProfileUrl} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-violet-300/30 bg-[linear-gradient(135deg,rgba(124,58,237,0.18),rgba(14,165,233,0.08))] p-4 transition hover:border-violet-200 hover:bg-violet-400/15"><span className="block text-xs font-black uppercase tracking-[0.18em] text-violet-200">Previous Hue Orders</span><span className="mt-2 block text-lg font-black text-white">View my Printavo order history →</span><span className="mt-1 block text-xs leading-5 text-slate-300">Opens your Printavo customer profile with earlier quotes, invoices, and order statuses.</span></a> : printavoProfileLoading ? <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4 text-xs text-slate-400">Checking for earlier Printavo orders...</div> : null}
+              {printavoProfileUrl ? <a href={printavoProfileUrl} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-violet-300/30 bg-[linear-gradient(135deg,rgba(124,58,237,0.18),rgba(14,165,233,0.08))] p-4 transition hover:border-violet-200 hover:bg-violet-400/15"><span className="block text-xs font-black uppercase tracking-[0.18em] text-violet-200">Complete Order History</span><span className="mt-2 block text-lg font-black text-white">View Previous Hue Orders →</span><span className="mt-1 block text-xs leading-5 text-slate-300">View earlier Hue Graphics quotes, invoices, and order statuses.</span></a> : printavoProfileLoading ? <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4 text-xs text-slate-400">Checking for earlier Hue orders...</div> : null}
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
               <label className="block text-sm font-bold text-slate-200">Email
                 <input type="email" value={customerAuthEmail} onChange={(event) => setCustomerAuthEmail(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete="email" />

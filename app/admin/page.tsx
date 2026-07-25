@@ -2,12 +2,13 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import type { ProductionArtworkRecipe } from '@/lib/production-artwork';
+import { getOrderWorkflowLabel, normalizeOrderWorkflowStatus, ORDER_WORKFLOW_STATUSES, type OrderWorkflow, type OrderWorkflowStatus } from '@/lib/order-workflow';
 
 type AdminUser = { id?: string; email?: string; created_at?: string; last_sign_in_at?: string; user_metadata?: { full_name?: string; name?: string }; app_metadata?: { printavo_profile_url?: string } };
 type AdminProductionArtwork = { id?: string; label?: string; quantity?: number; sizeLabel?: string; sheetLabel?: string; frontName?: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
 type AdminArtworkFile = { role?: string; name?: string; storagePath?: string; storageUrl?: string; source?: string };
 type AdminOrderItem = { id?: string; productId?: string; productName?: string; quantity?: number; sizeLabel?: string; optionSummary?: string[]; productionSummary?: string[]; price?: { total?: number | null; each?: number | null; currency?: string; sheetCount?: number; pricePerSheet?: number | null }; artworkFiles?: AdminArtworkFile[]; productionBreakdown?: AdminProductionArtwork[]; productionRecipes?: ProductionArtworkRecipe[] };
-type AdminOrderData = { status?: string; paymentMode?: string; payment?: { provider?: string; status?: string; paypalOrderId?: string; captureId?: string; paidAt?: string }; currency?: string; subtotal?: number; total?: number; promotion?: { code?: string; description?: string; discountAmount?: number }; shipping?: { amount?: number; label?: string }; tax?: { rate?: number; amount?: number; label?: string }; items?: AdminOrderItem[]; fulfillment?: { method?: string; address?: { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string } }; customer?: { phone?: string; userId?: string; email?: string; name?: string; organization?: string; notes?: string; taxExempt?: boolean; checkoutMode?: string } };
+type AdminOrderData = { status?: string; workflow?: OrderWorkflow; paymentMode?: string; payment?: { provider?: string; status?: string; paypalOrderId?: string; captureId?: string; paidAt?: string }; currency?: string; subtotal?: number; total?: number; promotion?: { code?: string; description?: string; discountAmount?: number }; shipping?: { amount?: number; label?: string }; tax?: { rate?: number; amount?: number; label?: string }; items?: AdminOrderItem[]; fulfillment?: { method?: string; address?: { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string } }; customer?: { phone?: string; userId?: string; email?: string; name?: string; organization?: string; notes?: string; taxExempt?: boolean; checkoutMode?: string } };
 type AdminOrder = { id?: string; order_number?: string; created_at?: string; status?: string; customer_user_id?: string; customer_email?: string; customer_name?: string; subtotal?: number; discount?: number; promo_code?: string; shipping?: number; tax?: number; total?: number; currency?: string; payment_provider?: string | null; payment_status?: string | null; paypal_order_id?: string | null; paypal_capture_id?: string | null; paid_at?: string | null; payment_data?: Record<string, unknown> | null; printavo_status?: 'not_added' | 'added'; printavo_order_number?: string | null; printavo_added_at?: string | null; drive_archive_status?: 'pending' | 'processing' | 'archived' | 'failed' | 'not_configured' | null; drive_folder_id?: string | null; drive_folder_url?: string | null; drive_archived_at?: string | null; drive_archive_error?: string | null; drive_archive_attempts?: number | null; order_data?: AdminOrderData };
 type AdminFile = { id?: string | null; name?: string; path?: string; created_at?: string; updated_at?: string; metadata?: { size?: number; mimetype?: string }; preview_url?: string; asset_id?: string; owner_user_id?: string; production_reference?: string; original_provider?: 'b2' | 'supabase' | 'drive'; archive_status?: string; derivative_count?: number; drive_recovery_ready?: boolean; artifact_kind?: 'customer-original' | 'legacy-original' | 'order-artifact' };
 type AdminPromo = { id?: string; code?: string; description?: string; discount_type?: 'percent' | 'fixed'; discount_value?: number; minimum_order?: number; expires_at?: string; max_uses?: number; uses_count?: number; active?: boolean };
@@ -41,6 +42,7 @@ const guestSessionFromPath = (path?: string) => {
 };
 const fileSearchText = (file: AdminFile) => `${file.name || ''} ${file.path || ''} ${file.production_reference || ''} ${file.original_provider || ''} ${file.archive_status || ''}`;
 const isCustomerLibraryFile = (file: AdminFile) => file.artifact_kind === 'customer-original' || file.artifact_kind === 'legacy-original' || (!file.artifact_kind && !file.path?.startsWith('orders/') && !/^(?:FINAL-PRODUCTION|APPROVED-PROOF)-/i.test(file.name || ''));
+const dateInputValue = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 
 const friendlyAdminError = (message?: string) => {
   const value = String(message || '');
@@ -104,6 +106,10 @@ export default function AdminPage() {
   const [assignmentBusy, setAssignmentBusy] = useState(false);
   const [assignmentProgress, setAssignmentProgress] = useState(0);
   const [assignmentMessage, setAssignmentMessage] = useState('');
+  const [exportFromDate, setExportFromDate] = useState(() => dateInputValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
+  const [exportToDate, setExportToDate] = useState(() => dateInputValue(new Date()));
+  const [exportingOrders, setExportingOrders] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
 
   const loadDashboard = async () => {
     setStatus('Loading Hue Studio data...');
@@ -195,6 +201,46 @@ export default function AdminPage() {
       setAssignmentMessage(error instanceof Error ? error.message : 'The artwork could not be assigned.');
     } finally {
       setAssignmentBusy(false);
+    }
+  };
+
+  const exportOrdersPdf = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const fromDate = new Date(`${exportFromDate}T00:00:00`);
+    const toExclusive = new Date(`${exportToDate}T00:00:00`);
+    toExclusive.setDate(toExclusive.getDate() + 1);
+    if (!exportFromDate || !exportToDate || Number.isNaN(fromDate.getTime()) || Number.isNaN(toExclusive.getTime()) || fromDate >= toExclusive) {
+      setExportMessage('Choose a valid beginning and ending date.');
+      return;
+    }
+    setExportingOrders(true);
+    setExportMessage('Building a detailed Hue Studio order PDF...');
+    try {
+      const response = await fetch('/api/admin/orders/export-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromLabel: exportFromDate, toLabel: exportToDate, fromIso: fromDate.toISOString(), toIso: toExclusive.toISOString() }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || 'The order PDF could not be generated.');
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') || '';
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `Hue-Studio-Orders_${exportFromDate}_to_${exportToDate}.pdf`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setExportMessage(`Downloaded ${filename}.`);
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'The order PDF could not be generated.');
+    } finally {
+      setExportingOrders(false);
     }
   };
 
@@ -453,7 +499,7 @@ export default function AdminPage() {
       <aside className="h-fit rounded-2xl border border-white/10 bg-[#071522] p-3 lg:sticky lg:top-24"><p className="px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Management</p>{(['overview', 'orders', 'users', 'guests', 'files', 'pricing', 'promos', 'maintenance'] as AdminTab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`mb-1 w-full rounded-xl px-3 py-3 text-left text-sm font-bold capitalize ${tab === item ? 'bg-[#1686c9] text-white' : 'text-slate-300 hover:bg-white/[0.06]'}`}>{item === 'users' ? 'customers' : item}<span className="float-right text-xs opacity-60">{item === 'orders' ? data.orders.length : item === 'users' ? data.users.length : item === 'guests' ? guestGroups.length : item === 'files' ? data.files.length : item === 'pricing' ? adjustedPricingCount : item === 'promos' ? data.promos.length : ''}</span></button>)}<p className="mt-3 border-t border-white/10 px-3 pt-3 text-[10px] leading-5 text-slate-500">{status}</p></aside>
       <section className="min-w-0">
         {tab === 'overview' ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[[data.users.length, 'Customer accounts'], [data.orders.length, 'Orders'], [awaitingPrintavoCount, 'Awaiting Printavo'], [money(revenue), 'Recorded revenue'], [fileSize(storageBytes), 'Artwork storage']].map(([value, label]) => <div key={String(label)} className={`rounded-2xl border p-5 ${label === 'Awaiting Printavo' && Number(value) > 0 ? 'border-amber-300/25 bg-amber-300/[0.07]' : 'border-white/10 bg-[#071522]'}`}><p className={`text-3xl font-black ${label === 'Awaiting Printavo' && Number(value) > 0 ? 'text-amber-200' : 'text-white'}`}>{value}</p><p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p></div>)}</div><div className="mt-5 grid gap-5 xl:grid-cols-2"><AdminList title="Recent orders">{data.orders.slice(0, 8).map((order) => <Row key={order.id || order.order_number} title={order.order_number || 'Order'} detail={`${order.customer_email || 'No email'} · ${date(order.created_at)}`} value={money(order.total, order.currency)} />)}</AdminList><AdminList title="Recent customers">{data.users.slice(0, 8).map((user) => <Row key={user.id || user.email} title={user.email || 'Customer'} detail={`Joined ${date(user.created_at)}`} value={user.last_sign_in_at ? 'Active' : 'New'} />)}</AdminList></div></> : null}
-        {tab === 'orders' ? <AdminList title="All orders — complete order details">{filteredOrders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={data.files} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />)}</AdminList> : null}
+        {tab === 'orders' ? <div className="space-y-5"><form onSubmit={(event) => void exportOrdersPdf(event)} className="rounded-2xl border border-[#38bdf8]/25 bg-[linear-gradient(135deg,rgba(14,165,233,0.10),#071522)] p-5"><div className="flex flex-col gap-4 xl:flex-row xl:items-end"><div className="min-w-0 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Order records</p><h2 className="mt-1 text-xl font-black">Export detailed order PDF</h2><p className="mt-1 text-sm leading-6 text-slate-400">Choose a date range to download every matching order with customer, payment, fulfillment, production, artwork, status, tracking, and totals.</p></div><label className="text-xs font-bold text-slate-400">Beginning date<input type="date" value={exportFromDate} onChange={(event) => setExportFromDate(event.target.value)} disabled={exportingOrders} className="mt-1 block h-11 rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /></label><label className="text-xs font-bold text-slate-400">Ending date<input type="date" value={exportToDate} onChange={(event) => setExportToDate(event.target.value)} disabled={exportingOrders} className="mt-1 block h-11 rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-[#38bdf8] disabled:opacity-50" /></label><button type="submit" disabled={exportingOrders} className="h-11 rounded-xl bg-[#1686c9] px-5 text-xs font-black uppercase text-white hover:bg-[#0f75b5] disabled:cursor-wait disabled:opacity-50">{exportingOrders ? 'Building PDF...' : 'Export PDF'}</button></div>{exportMessage ? <p className="mt-3 text-xs leading-5 text-[#b9eaff]">{exportMessage}</p> : null}</form><AdminList title="All orders — complete order details">{filteredOrders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={data.files} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />)}</AdminList></div> : null}
         {tab === 'users' ? <AdminList title="Customers — orders and artwork">{filteredUsers.map((user) => {
           const group = customerGroups.find((entry) => entry.user.id === user.id || entry.user.email === user.email);
           return <CustomerRow key={user.id || user.email} user={user} orders={group?.orders || []} files={group?.files || []} onPreview={setPreviewFile} onOrderUpdated={updateOrder} onUserUpdated={updateUser} />;
@@ -581,6 +627,13 @@ function CustomerFiles({ user, orders, files, onPreview }: { user: AdminUser; or
 }
 function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrder; files: AdminFile[]; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void }) {
   const [open, setOpen] = useState(false);
+  const [workflowStatus, setWorkflowStatus] = useState<OrderWorkflowStatus>(normalizeOrderWorkflowStatus(order.order_data?.workflow?.currentStatus || order.status));
+  const [trackingCarrier, setTrackingCarrier] = useState(order.order_data?.workflow?.carrier || '');
+  const [trackingNumber, setTrackingNumber] = useState(order.order_data?.workflow?.trackingNumber || '');
+  const [trackingUrl, setTrackingUrl] = useState(order.order_data?.workflow?.trackingUrl || '');
+  const [notifyCustomer, setNotifyCustomer] = useState(true);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
+  const [workflowMessage, setWorkflowMessage] = useState('');
   const [printavoStatus, setPrintavoStatus] = useState<'not_added' | 'added'>(order.printavo_status === 'added' ? 'added' : 'not_added');
   const [printavoOrderNumber, setPrintavoOrderNumber] = useState(order.printavo_order_number || '');
   const [savingPrintavo, setSavingPrintavo] = useState(false);
@@ -591,6 +644,12 @@ function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrd
     setPrintavoStatus(order.printavo_status === 'added' ? 'added' : 'not_added');
     setPrintavoOrderNumber(order.printavo_order_number || '');
   }, [order.printavo_status, order.printavo_order_number]);
+  useEffect(() => {
+    setWorkflowStatus(normalizeOrderWorkflowStatus(order.order_data?.workflow?.currentStatus || order.status));
+    setTrackingCarrier(order.order_data?.workflow?.carrier || '');
+    setTrackingNumber(order.order_data?.workflow?.trackingNumber || '');
+    setTrackingUrl(order.order_data?.workflow?.trackingUrl || '');
+  }, [order.order_data?.workflow, order.status]);
   const items = order.order_data?.items || [];
   const artworkCount = items.reduce((total, item) => total + (item.productionBreakdown?.length || 0), 0);
   const previewFor = (storagePath?: string) => files.find((file) => storagePath && file.path === storagePath)?.preview_url;
@@ -616,6 +675,34 @@ function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrd
     }
     setSavingPrintavo(false);
   };
+  const saveWorkflow = async () => {
+    if (!order.id) return;
+    setSavingWorkflow(true);
+    setWorkflowMessage('Saving order status...');
+    try {
+      const shipped = workflowStatus === 'shipped';
+      const response = await fetch('/api/admin/orders/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: order.id,
+          status: workflowStatus,
+          notifyCustomer,
+          carrier: shipped ? trackingCarrier : '',
+          trackingNumber: shipped ? trackingNumber : '',
+          trackingUrl: shipped ? trackingUrl : '',
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as { order?: AdminOrder; message?: string; error?: string; warning?: string };
+      if (!response.ok || !payload.order) throw new Error(payload.error || 'The order status could not be saved.');
+      onOrderUpdated(payload.order);
+      setWorkflowMessage(payload.message || (payload.warning ? `Status saved, but email failed: ${payload.warning}` : 'Order status saved.'));
+    } catch (error) {
+      setWorkflowMessage(error instanceof Error ? error.message : 'The order status could not be saved.');
+    } finally {
+      setSavingWorkflow(false);
+    }
+  };
   const archiveToDrive = async () => {
     if (!order.id) return;
     setSavingDrive(true);
@@ -633,9 +720,10 @@ function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrd
   return <div className="px-5 py-4">
     <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full flex-wrap items-start justify-between gap-3 text-left">
       <div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{order.order_number || 'Order'}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{order.customer_name || 'Customer'} · {order.customer_email || 'No email'} · {date(order.created_at)}</p></div>
-      <div className="text-right"><p className="text-xs font-bold text-[#8be3ff]">{money(order.total, order.currency)} · {order.status || 'received'}</p><div className="mt-1 flex flex-wrap justify-end gap-1"><span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${order.printavo_status === 'added' ? 'bg-green-400/15 text-green-300' : 'bg-amber-300/15 text-amber-200'}`}>{order.printavo_status === 'added' ? 'Added to Printavo' : 'Not added to Printavo'}</span><span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${driveBadge}`}>Drive: {driveStatus.replace('_', ' ')}</span></div><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Hide details' : `View ${artworkCount || ''} artwork detail${artworkCount === 1 ? '' : 's'}`}</p></div>
+      <div className="text-right"><p className="text-xs font-bold text-[#8be3ff]">{money(order.total, order.currency)} · {getOrderWorkflowLabel(order.order_data?.workflow?.currentStatus || order.status)}</p><div className="mt-1 flex flex-wrap justify-end gap-1"><span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${order.printavo_status === 'added' ? 'bg-green-400/15 text-green-300' : 'bg-amber-300/15 text-amber-200'}`}>{order.printavo_status === 'added' ? 'Added to Printavo' : 'Not added to Printavo'}</span><span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${driveBadge}`}>Drive: {driveStatus.replace('_', ' ')}</span></div><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Hide details' : `View ${artworkCount || ''} artwork detail${artworkCount === 1 ? '' : 's'}`}</p></div>
     </button>
     {open ? <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+      <section className="rounded-xl border border-violet-300/25 bg-[linear-gradient(135deg,rgba(124,58,237,0.11),rgba(14,165,233,0.04))] p-4"><div className="flex flex-col gap-3 xl:flex-row xl:items-end"><div className="min-w-52 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-200">Customer order status</p><p className="mt-1 text-xs leading-5 text-slate-400">Save the production stage and optionally email the customer once. Re-saving the identical update will not send a duplicate email.</p></div><label className="text-xs font-bold text-slate-300">Current status<select value={workflowStatus} onChange={(event) => setWorkflowStatus(normalizeOrderWorkflowStatus(event.target.value))} disabled={savingWorkflow} className="mt-1 block h-10 min-w-56 rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-violet-300 disabled:opacity-50">{ORDER_WORKFLOW_STATUSES.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}</select></label><label className="flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 text-xs font-bold text-slate-300"><input type="checkbox" checked={notifyCustomer} onChange={(event) => setNotifyCustomer(event.target.checked)} disabled={savingWorkflow} className="h-4 w-4 accent-violet-500" />Email customer</label><button type="button" onClick={() => void saveWorkflow()} disabled={savingWorkflow || !order.id} className="h-10 rounded-xl bg-violet-600 px-4 text-xs font-black uppercase text-white hover:bg-violet-500 disabled:cursor-wait disabled:opacity-50">{savingWorkflow ? 'Saving...' : 'Save status'}</button></div>{workflowStatus === 'shipped' ? <div className="mt-3 grid gap-3 md:grid-cols-3"><label className="text-xs font-bold text-slate-300">Carrier<input value={trackingCarrier} onChange={(event) => setTrackingCarrier(event.target.value)} placeholder="UPS, FedEx, USPS..." disabled={savingWorkflow} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-violet-300 disabled:opacity-50" /></label><label className="text-xs font-bold text-slate-300">Tracking number<input value={trackingNumber} onChange={(event) => setTrackingNumber(event.target.value)} placeholder="Required for shipped status" disabled={savingWorkflow} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-violet-300 disabled:opacity-50" /></label><label className="text-xs font-bold text-slate-300">Tracking link (optional)<input type="url" value={trackingUrl} onChange={(event) => setTrackingUrl(event.target.value)} placeholder="https://..." disabled={savingWorkflow} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-violet-300 disabled:opacity-50" /></label></div> : null}{workflowMessage ? <p className={`mt-3 text-xs leading-5 ${/failed|could not|unavailable/i.test(workflowMessage) ? 'text-amber-200' : 'text-green-300'}`}>{workflowMessage}</p> : null}{order.order_data?.workflow?.history?.length ? <div className="mt-3 border-t border-white/10 pt-3"><p className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">Recent updates</p><div className="mt-2 space-y-1">{order.order_data.workflow.history.slice(0, 5).map((event) => <p key={event.id} className="text-[10px] leading-4 text-slate-400">{date(event.createdAt)} · <span className="font-black text-slate-200">{event.label}</span> · Email {event.emailStatus.replace('_', ' ')}</p>)}</div></div> : null}</section>
       <section className={`rounded-xl border p-4 ${printavoStatus === 'added' ? 'border-green-400/20 bg-green-400/[0.05]' : 'border-amber-300/20 bg-amber-300/[0.05]'}`}>
         <div className="flex flex-wrap items-end gap-3"><div className="min-w-52 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Printavo workflow</p><p className="mt-1 text-xs text-slate-400">Track whether this Hue order has been entered into Printavo manually.</p></div><label className="text-xs font-bold text-slate-300">Tracking status<select value={printavoStatus} onChange={(event) => setPrintavoStatus(event.target.value === 'added' ? 'added' : 'not_added')} className="mt-1 block h-10 min-w-48 rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-[#38bdf8]"><option value="not_added">Not added</option><option value="added">Added to Printavo</option></select></label><label className="min-w-52 flex-1 text-xs font-bold text-slate-300">Printavo order number (optional)<input value={printavoOrderNumber} onChange={(event) => setPrintavoOrderNumber(event.target.value)} placeholder="Example: 12345" className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-white outline-none focus:border-[#38bdf8]" /></label><button type="button" disabled={savingPrintavo || !order.id} onClick={() => void savePrintavo()} className="h-10 rounded-xl bg-[#1686c9] px-4 text-xs font-black uppercase text-white disabled:opacity-50">{savingPrintavo ? 'Saving...' : 'Save tracking'}</button></div>
         {order.printavo_added_at && order.printavo_status === 'added' ? <p className="mt-2 text-[10px] text-green-300">Marked added {date(order.printavo_added_at)}{order.printavo_order_number ? ` · Printavo #${order.printavo_order_number}` : ''}</p> : null}{printavoMessage ? <p className={`mt-2 text-xs ${printavoMessage.startsWith('Could') ? 'text-red-300' : 'text-green-300'}`}>{printavoMessage}</p> : null}
@@ -645,7 +733,7 @@ function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrd
       </section>
       <div className="grid gap-3 xl:grid-cols-3">
         <section className="rounded-xl border border-white/10 bg-[#020a12] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Customer</p><div className="mt-3 space-y-1 text-xs leading-5 text-slate-300"><p className="font-black text-white">{customer?.name || order.customer_name || 'Name not provided'}</p>{customer?.organization ? <p>{customer.organization}</p> : null}<p>{customer?.email || order.customer_email || 'No email'}</p><p>{customer?.phone || 'No phone'}</p><p>{customer?.checkoutMode === 'account' || order.customer_user_id ? 'Hue account customer' : 'Guest checkout'}</p><p>Tax exempt: {customer?.taxExempt ? 'Yes — verify form' : 'No'}</p>{customer?.notes ? <p className="mt-2 rounded-lg bg-white/[0.04] p-2 text-amber-100"><span className="font-black">Order notes:</span> {customer.notes}</p> : null}</div></section>
-        <section className="rounded-xl border border-white/10 bg-[#020a12] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Fulfillment</p><div className="mt-3 space-y-1 text-xs leading-5 text-slate-300"><p className="font-black text-white">{fulfillment?.method === 'direct_ship' ? 'Direct shipping' : 'Local pickup'}</p>{fulfillment?.method === 'direct_ship' ? <><p>{address?.line1 || 'Address not provided'}</p>{address?.line2 ? <p>{address.line2}</p> : null}<p>{[address?.city, address?.state, address?.postalCode].filter(Boolean).join(', ')}</p></> : <p>Customer will pick up at Hue Graphics.</p>}<p className="pt-2 text-slate-500">Submitted {date(order.created_at)}</p><p className="text-slate-500">Status: {order.status || order.order_data?.status || 'received'}</p><p className="text-slate-500">Payment: {order.payment_status || order.order_data?.payment?.status || order.order_data?.paymentMode || 'Not recorded'}{order.payment_provider ? ` via ${order.payment_provider}` : ''}</p>{order.paypal_order_id || order.order_data?.payment?.paypalOrderId ? <p className="break-all text-slate-500">PayPal order: {order.paypal_order_id || order.order_data?.payment?.paypalOrderId}</p> : null}{order.paypal_capture_id || order.order_data?.payment?.captureId ? <p className="break-all text-slate-500">Capture: {order.paypal_capture_id || order.order_data?.payment?.captureId}</p> : null}{order.paid_at || order.order_data?.payment?.paidAt ? <p className="text-slate-500">Paid: {date(order.paid_at || order.order_data?.payment?.paidAt)}</p> : null}</div></section>
+        <section className="rounded-xl border border-white/10 bg-[#020a12] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Fulfillment</p><div className="mt-3 space-y-1 text-xs leading-5 text-slate-300"><p className="font-black text-white">{fulfillment?.method === 'direct_ship' ? 'Direct shipping' : 'Local pickup'}</p>{fulfillment?.method === 'direct_ship' ? <><p>{address?.line1 || 'Address not provided'}</p>{address?.line2 ? <p>{address.line2}</p> : null}<p>{[address?.city, address?.state, address?.postalCode].filter(Boolean).join(', ')}</p></> : <p>Customer will pick up at Hue Graphics.</p>}<p className="pt-2 text-slate-500">Submitted {date(order.created_at)}</p><p className="text-slate-500">Status: {getOrderWorkflowLabel(order.order_data?.workflow?.currentStatus || order.status || order.order_data?.status)}</p>{order.order_data?.workflow?.trackingNumber ? <p className="text-slate-500">Tracking: {[order.order_data.workflow.carrier, order.order_data.workflow.trackingNumber].filter(Boolean).join(' · ')}</p> : null}<p className="text-slate-500">Payment: {order.payment_status || order.order_data?.payment?.status || order.order_data?.paymentMode || 'Not recorded'}{order.payment_provider ? ` via ${order.payment_provider}` : ''}</p>{order.paypal_order_id || order.order_data?.payment?.paypalOrderId ? <p className="break-all text-slate-500">PayPal order: {order.paypal_order_id || order.order_data?.payment?.paypalOrderId}</p> : null}{order.paypal_capture_id || order.order_data?.payment?.captureId ? <p className="break-all text-slate-500">Capture: {order.paypal_capture_id || order.order_data?.payment?.captureId}</p> : null}{order.paid_at || order.order_data?.payment?.paidAt ? <p className="text-slate-500">Paid: {date(order.paid_at || order.order_data?.payment?.paidAt)}</p> : null}</div></section>
         <section className="rounded-xl border border-green-400/15 bg-[#03130f] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-green-300">Order totals</p><div className="mt-3 space-y-2 text-xs text-slate-300"><OrderMoney label="Subtotal" value={subtotal} currency={currency} />{discount ? <OrderMoney label={`Discount${order.promo_code || order.order_data?.promotion?.code ? ` (${order.promo_code || order.order_data?.promotion?.code})` : ''}`} value={-discount} currency={currency} /> : null}<OrderMoney label={order.order_data?.shipping?.label || 'Shipping'} value={shipping} currency={currency} /><OrderMoney label={order.order_data?.tax?.label || 'Tax'} value={tax} currency={currency} /><div className="mt-2 flex items-center justify-between border-t border-green-300/20 pt-3 text-base font-black text-green-300"><span>Total</span><span>{money(total, currency)}</span></div></div></section>
       </div>
       {items.length === 0 ? <p className="text-xs text-amber-200">This older order does not contain a structured item breakdown.</p> : items.map((item, itemIndex) => <section key={item.id || `${order.order_number}-item-${itemIndex}`} className="rounded-xl border border-white/10 bg-[#020a12] p-3">
