@@ -5664,7 +5664,7 @@ export default function Home() {
       setArtworkEditorActiveObject(null);
       setArtworkEditorResizeError('');
       setShowArtworkEditorResizeDialog(false);
-      setArtworkEditorStatus(`Artboard resized to ${width}\" × ${height}\". Existing artwork kept its original size and was centered on the new artboard.`);
+      setArtworkEditorStatus(`Artboard resized to ${width}\" × ${height}\". Existing artwork kept its original size. Choose Move Original Image to reposition it.`);
     } catch (error) {
       setArtworkEditorResizeError(error instanceof Error ? `The artboard could not be resized: ${error.message}` : 'The artboard could not be resized.');
     } finally {
@@ -6546,7 +6546,10 @@ export default function Home() {
   const applyArtworkEditorTemplate = (template: string) => {
     const canvas = artworkEditorCanvasRef.current;
     if (!canvas) return;
-    canvas.getObjects().filter((object) => (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole !== 'base').forEach((object) => canvas.remove(object));
+    canvas.getObjects().filter((object) => {
+      const data = (object as FabricObject & { data?: { editorRole?: string; editorTool?: string } }).data;
+      return data?.editorRole !== 'base' && data?.editorTool !== 'original-artwork';
+    }).forEach((object) => canvas.remove(object));
     const templateCopy = ARTWORK_EDITOR_TEMPLATES.find((entry) => entry.id === template) || ARTWORK_EDITOR_TEMPLATES[0];
     canvas.backgroundColor = '#ffffff';
     setArtworkEditorBackground('#ffffff');
@@ -6573,7 +6576,10 @@ export default function Home() {
 
   const adjustArtworkEditorBase = (mode: 'fit' | 'fill' | 'stretch' | 'center') => {
     const canvas = artworkEditorCanvasRef.current;
-    const image = canvas?.getObjects().find((entry) => (entry as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') as FabricImage | undefined;
+    const image = canvas?.getObjects().find((entry) => {
+      const data = (entry as FabricObject & { data?: { editorRole?: string; editorTool?: string } }).data;
+      return data?.editorRole === 'base' || data?.editorTool === 'original-artwork';
+    }) as FabricImage | undefined;
     if (!canvas || !image) return;
     const imageWidth = Math.max(1, image.width || canvas.getWidth());
     const imageHeight = Math.max(1, image.height || canvas.getHeight());
@@ -6590,6 +6596,45 @@ export default function Home() {
     canvas.requestRenderAll();
     captureArtworkEditorHistory(canvas);
     setArtworkEditorStatus(mode === 'fill' ? 'Artwork filled the canvas; artwork outside the edge is cropped.' : mode === 'center' ? 'Artwork centered on the canvas.' : `Artwork ${mode === 'fit' ? 'fit inside' : 'stretched to'} the canvas.`);
+  };
+
+  const makeArtworkEditorOriginalMovable = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const image = canvas?.getObjects().find((entry) => {
+      const data = (entry as FabricObject & { data?: { editorRole?: string; editorTool?: string } }).data;
+      return data?.editorRole === 'base' || data?.editorTool === 'original-artwork';
+    }) as (FabricImage & { data?: { editorRole?: string; layerId?: string; layerName?: string; locked?: boolean; editorTool?: string } }) | undefined;
+    if (!canvas || !image) {
+      setArtworkEditorStatus('No original image layer was found on this side.');
+      return;
+    }
+    image.data = {
+      ...(image.data || {}),
+      editorRole: undefined,
+      editorTool: 'original-artwork',
+      layerId: image.data?.layerId || `artwork-editor-original-${artworkEditorSide}-${Date.now()}`,
+      layerName: image.data?.layerName || `Original ${artworkEditorSide} image`,
+      locked: false
+    };
+    image.set({
+      selectable: true,
+      evented: true,
+      hasControls: true,
+      lockMovementX: false,
+      lockMovementY: false,
+      lockScalingX: false,
+      lockScalingY: false,
+      lockRotation: false,
+      ...FABRIC_CONTROL_STYLE
+    });
+    image.setCoords();
+    canvas.setActiveObject(image);
+    canvas.requestRenderAll();
+    syncArtworkEditorControls(image);
+    refreshArtworkEditorLayers(canvas);
+    captureArtworkEditorHistory(canvas);
+    setArtworkEditorMobileView('canvas');
+    setArtworkEditorStatus('Original image is now an editable layer. Drag it to move, use the corner handles to resize, or select it from Layers.');
   };
 
   const switchArtworkEditorSide = (side: CoroArtworkSide) => {
@@ -11114,7 +11159,8 @@ export default function Home() {
               <div className="mt-6 rounded-xl border border-[#38bdf8]/15 bg-[#0c2a40]/55 p-3 text-xs leading-5 text-slate-300"><strong className="text-[#8be3ff]">Next phase:</strong> smart removal, background replacement, recoloring, and restoration through Cloudinary.</div>
               </div>}
             </aside>
-            <main onPointerDown={(event: ReactPointerEvent<HTMLElement>) => { const target = event.target as HTMLElement; if (!target.closest('[data-artwork-artboard]') && !target.closest('[data-print-view-toggle]')) clearArtworkEditorSelection(); }} className="hue-mobile-editor-canvas relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-3 sm:p-5">
+            <main onPointerDown={(event: ReactPointerEvent<HTMLElement>) => { const target = event.target as HTMLElement; if (!target.closest('[data-artwork-artboard]') && !target.closest('[data-print-view-toggle]') && !target.closest('[data-original-image-toggle]')) clearArtworkEditorSelection(); }} className="hue-mobile-editor-canvas relative flex min-h-[420px] min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_58%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%),linear-gradient(45deg,rgba(255,255,255,0.025)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.025)_75%)] bg-[length:auto,24px_24px,24px_24px] bg-[position:center,0_0,12px_12px] p-3 sm:p-5">
+              {!artworkEditorPrintView && artworkEditorSource && !artworkEditorSource.id.startsWith('new-artwork-') ? <button data-original-image-toggle type="button" onClick={makeArtworkEditorOriginalMovable} className="absolute left-3 top-3 z-40 rounded-xl border border-[#38bdf8]/40 bg-[#071827]/90 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-[#9be8ff] shadow-[0_10px_28px_rgba(0,0,0,0.3)] backdrop-blur hover:border-[#67d8ff] hover:bg-[#0c2a40] sm:left-5 sm:top-5">Move Original Image</button> : null}
               <button data-print-view-toggle type="button" onClick={toggleArtworkEditorPrintView} className={`absolute right-3 top-3 z-40 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-[0_10px_28px_rgba(0,0,0,0.3)] backdrop-blur sm:right-5 sm:top-5 ${artworkEditorPrintView ? 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25' : 'border-[#38bdf8]/40 bg-[#071827]/90 text-[#9be8ff] hover:border-[#67d8ff] hover:bg-[#0c2a40]'}`}>{artworkEditorPrintView ? 'Exit Print View' : 'Print View'}</button>
               <div className="relative max-h-full max-w-full overflow-visible pl-5 pt-5">
                 {artworkEditorShowGuides && !artworkEditorPrintView && artworkEditorSource ? <>
