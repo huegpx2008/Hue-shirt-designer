@@ -37,3 +37,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Promo code could not be saved.' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  if (!verifyAdminRequest(request)) return NextResponse.json({ error: 'Admin sign-in required.' }, { status: 401 });
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: 'Cross-site admin changes are not allowed.' }, { status: 403 });
+  const retryAfter = enforceRateLimit(request, 'admin-promos', 30, 60 * 1000);
+  if (retryAfter) return NextResponse.json({ error: 'Too many promo changes. Wait a moment.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
+  if (contentLengthExceeds(request, 8192)) return NextResponse.json({ error: 'The promo request is too large.' }, { status: 413 });
+
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const id = String(body.id || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return NextResponse.json({ error: 'A valid promo code ID is required.' }, { status: 400 });
+  }
+
+  try {
+    const deleted = await supabaseAdminFetch(`/rest/v1/hue_promo_codes?id=eq.${encodeURIComponent(id)}&select=id,code`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=representation' },
+    }) as Array<{ id?: string; code?: string }>;
+    if (!deleted.length) return NextResponse.json({ error: 'That promo code no longer exists.' }, { status: 404 });
+    return NextResponse.json({ deleted: deleted[0] });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Promo code could not be deleted.' }, { status: 500 });
+  }
+}
