@@ -3,7 +3,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import type { ProductionArtworkRecipe } from '@/lib/production-artwork';
 
-type AdminUser = { id?: string; email?: string; created_at?: string; last_sign_in_at?: string; user_metadata?: { full_name?: string; name?: string } };
+type AdminUser = { id?: string; email?: string; created_at?: string; last_sign_in_at?: string; user_metadata?: { full_name?: string; name?: string }; app_metadata?: { printavo_profile_url?: string } };
 type AdminProductionArtwork = { id?: string; label?: string; quantity?: number; sizeLabel?: string; sheetLabel?: string; frontName?: string; frontPreviewUrl?: string; frontStoragePath?: string; backName?: string; backPreviewUrl?: string; backStoragePath?: string };
 type AdminArtworkFile = { role?: string; name?: string; storagePath?: string; storageUrl?: string; source?: string };
 type AdminOrderItem = { id?: string; productId?: string; productName?: string; quantity?: number; sizeLabel?: string; optionSummary?: string[]; productionSummary?: string[]; price?: { total?: number | null; each?: number | null; currency?: string; sheetCount?: number; pricePerSheet?: number | null }; artworkFiles?: AdminArtworkFile[]; productionBreakdown?: AdminProductionArtwork[]; productionRecipes?: ProductionArtworkRecipe[] };
@@ -434,6 +434,7 @@ export default function AdminPage() {
   const adjustedPricingCount = data.pricing.filter((item) => item.active && item.percentage !== 100).length;
   const pricingCategories = useMemo(() => Array.from(new Set(data.pricing.map((item) => item.category))), [data.pricing]);
   const updateOrder = (updatedOrder: AdminOrder) => setData((current) => ({ ...current, orders: current.orders.map((order) => order.id === updatedOrder.id ? updatedOrder : order) }));
+  const updateUser = (updatedUser: AdminUser) => setData((current) => ({ ...current, users: current.users.map((user) => user.id === updatedUser.id ? updatedUser : user) }));
   const resetPreviewCards = resetPreview ? [[resetPreview.users, 'Customer accounts'], [resetPreview.orders, 'Orders'], [resetPreview.paymentAttempts, 'Payment attempts'], [resetPreview.totalFiles, 'Supabase files'], [resetPreview.artworkAssets, 'Asset records'], [resetPreview.b2Originals, 'B2 originals'], [resetPreview.driveCopies, 'Drive archives'], [resetPreview.archiveRows, 'Legacy archive rows'], [fileSize(resetPreview.totalBytes + resetPreview.b2Bytes), 'Tracked artwork size']] : [];
 
   if (authenticated !== true) return <main className="flex min-h-screen items-center justify-center bg-[#030a12] p-5 text-white">
@@ -455,7 +456,7 @@ export default function AdminPage() {
         {tab === 'orders' ? <AdminList title="All orders — complete order details">{filteredOrders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={data.files} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />)}</AdminList> : null}
         {tab === 'users' ? <AdminList title="Customers — orders and artwork">{filteredUsers.map((user) => {
           const group = customerGroups.find((entry) => entry.user.id === user.id || entry.user.email === user.email);
-          return <CustomerRow key={user.id || user.email} user={user} orders={group?.orders || []} files={group?.files || []} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />;
+          return <CustomerRow key={user.id || user.email} user={user} orders={group?.orders || []} files={group?.files || []} onPreview={setPreviewFile} onOrderUpdated={updateOrder} onUserUpdated={updateUser} />;
         })}</AdminList> : null}
         {tab === 'guests' ? <div className="space-y-4"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Guest checkout</p><h2 className="mt-1 text-2xl font-black">Guest orders and artwork</h2><p className="mt-1 text-sm text-slate-400">Artwork is grouped by guest upload session and connected to its submitted order whenever possible.</p></div>{guestGroups.map((group) => {
           const groupText = `${group.label} ${group.detail} ${group.orders.map((order) => order.order_number).join(' ')} ${group.files.map(fileSearchText).join(' ')}`.toLowerCase();
@@ -510,16 +511,44 @@ function PricingLegend() { return <div className="flex flex-wrap gap-2 text-[10p
 function StorageStat({ label, value, detail }: { label: string; value: string; detail?: string }) { return <div className="rounded-xl border border-white/10 bg-black/20 p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</p><p className="mt-1 text-2xl font-black text-white">{value}</p>{detail ? <p className="mt-1 text-xs font-bold text-[#67d8ff]">{detail}</p> : null}</div>; }
 function AdminList({ title, children }: { title: string; children: ReactNode }) { return <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#071522]"><div className="border-b border-white/10 px-5 py-4"><h2 className="text-lg font-black">{title}</h2></div><div className="divide-y divide-white/10">{children || <p className="p-5 text-sm text-slate-500">Nothing to show yet.</p>}</div></div>; }
 function Row({ title, detail, value }: { title: string; detail: string; value: string }) { return <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{title}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{detail}</p></div><p className="text-xs font-bold text-[#8be3ff]">{value}</p></div>; }
-function CustomerRow({ user, orders, files, onPreview, onOrderUpdated }: { user: AdminUser; orders: AdminOrder[]; files: AdminFile[]; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void }) {
+function CustomerRow({ user, orders, files, onPreview, onOrderUpdated, onUserUpdated }: { user: AdminUser; orders: AdminOrder[]; files: AdminFile[]; onPreview: (file: AdminFile) => void; onOrderUpdated: (order: AdminOrder) => void; onUserUpdated: (user: AdminUser) => void }) {
   const [open, setOpen] = useState(false);
+  const [printavoProfileUrl, setPrintavoProfileUrl] = useState(user.app_metadata?.printavo_profile_url || '');
+  const [savingPrintavoProfile, setSavingPrintavoProfile] = useState(false);
+  const [printavoProfileMessage, setPrintavoProfileMessage] = useState('');
   const name = user.user_metadata?.full_name || user.user_metadata?.name;
   const libraryFiles = files.filter(isCustomerLibraryFile);
+  useEffect(() => {
+    setPrintavoProfileUrl(user.app_metadata?.printavo_profile_url || '');
+  }, [user.app_metadata?.printavo_profile_url]);
+  const savePrintavoProfile = async () => {
+    if (!user.id) return;
+    setSavingPrintavoProfile(true);
+    setPrintavoProfileMessage(printavoProfileUrl.trim() ? 'Saving customer order-history link...' : 'Removing customer order-history link...');
+    try {
+      const response = await fetch('/api/admin/customers/printavo-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, printavoProfileUrl: printavoProfileUrl.trim() }),
+      });
+      const payload = await response.json().catch(() => ({})) as { user?: AdminUser; error?: string };
+      if (!response.ok || !payload.user) throw new Error(payload.error || 'The Printavo profile link could not be saved.');
+      onUserUpdated(payload.user);
+      setPrintavoProfileUrl(payload.user.app_metadata?.printavo_profile_url || '');
+      setPrintavoProfileMessage(payload.user.app_metadata?.printavo_profile_url ? 'Printavo order history is now available in this customer\'s Studio account.' : 'The Printavo link was removed from this customer\'s account.');
+    } catch (error) {
+      setPrintavoProfileMessage(error instanceof Error ? error.message : 'The Printavo profile link could not be saved.');
+    } finally {
+      setSavingPrintavoProfile(false);
+    }
+  };
   return <div className="px-5 py-4">
     <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full flex-wrap items-start justify-between gap-3 text-left">
       <div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-white">{name || user.email || 'Customer'}</p><p className="mt-1 break-all text-xs leading-5 text-slate-400">{name ? `${user.email} · ` : ''}Created ${date(user.created_at)} · Last sign-in ${date(user.last_sign_in_at)}</p></div>
       <div className="text-right"><p className="text-xs font-black text-[#8be3ff]">{orders.length} order{orders.length === 1 ? '' : 's'} · {libraryFiles.length} original{libraryFiles.length === 1 ? '' : 's'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{open ? 'Close customer' : 'Open customer'}</p></div>
     </button>
     {open ? <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
+      <div className="rounded-xl border border-violet-300/20 bg-[linear-gradient(135deg,rgba(124,58,237,0.12),#030b13)] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-200">Printavo order history</p><p className="mt-1 text-xs leading-5 text-slate-400">Paste this customer's Printavo public-profile URL. Only this signed-in Studio customer will see the button in their account.</p><div className="mt-3 flex flex-col gap-2 lg:flex-row"><input type="url" value={printavoProfileUrl} onChange={(event) => setPrintavoProfileUrl(event.target.value)} placeholder="https://www.printavo.com/..." disabled={savingPrintavoProfile} className="h-11 min-w-0 flex-1 rounded-lg border border-white/15 bg-[#02070d] px-3 text-sm text-white outline-none focus:border-violet-300 disabled:opacity-60" /><button type="button" onClick={() => void savePrintavoProfile()} disabled={savingPrintavoProfile || !user.id} className="h-11 rounded-lg bg-violet-600 px-4 text-xs font-black uppercase text-white hover:bg-violet-500 disabled:cursor-wait disabled:opacity-50">{savingPrintavoProfile ? 'Saving...' : printavoProfileUrl.trim() ? 'Save link' : 'Remove link'}</button>{user.app_metadata?.printavo_profile_url ? <a href={user.app_metadata.printavo_profile_url} target="_blank" rel="noopener noreferrer" className="h-11 rounded-lg border border-violet-300/30 px-4 py-3 text-center text-xs font-black uppercase text-violet-100 hover:bg-violet-400/10">Test link</a> : null}</div>{printavoProfileMessage ? <p className="mt-2 text-xs leading-5 text-violet-100">{printavoProfileMessage}</p> : null}</div>
       <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Orders</p>{orders.length ? <div className="overflow-hidden rounded-xl border border-white/10 bg-[#030b13] divide-y divide-white/10">{orders.map((order) => <OrderRow key={order.id || order.order_number} order={order} files={files} onPreview={onPreview} onOrderUpdated={onOrderUpdated} />)}</div> : <p className="rounded-xl border border-white/10 bg-[#030b13] p-4 text-xs text-slate-500">No submitted orders for this customer yet.</p>}</div>
       <div><p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#67d8ff]">Reusable production originals</p>{libraryFiles.length ? <div className="overflow-hidden rounded-xl border border-white/10 bg-[#030b13] divide-y divide-white/10">{libraryFiles.map((file, index) => <FileRow key={file.id || file.path || `${file.name}-${index}`} file={file} onPreview={() => onPreview(file)} />)}</div> : <p className="rounded-xl border border-white/10 bg-[#030b13] p-4 text-xs text-slate-500">No reusable production originals found.</p>}</div>
     </div> : null}

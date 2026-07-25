@@ -2795,6 +2795,8 @@ export default function Home() {
   const [accountOrders, setAccountOrders] = useState<TestOrder[]>([]);
   const [accountOrdersLoading, setAccountOrdersLoading] = useState(false);
   const [accountOrdersError, setAccountOrdersError] = useState('');
+  const [printavoProfileUrl, setPrintavoProfileUrl] = useState('');
+  const [printavoProfileLoading, setPrintavoProfileLoading] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState<'contact' | 'fulfillment' | 'review' | 'complete'>('contact');
   const [checkoutStatus, setCheckoutStatus] = useState('');
   const [checkoutContact, setCheckoutContact] = useState({ name: '', organization: '', email: '', phone: '', notes: '' });
@@ -3242,6 +3244,36 @@ export default function Home() {
     void loadAccountOrders();
     return () => controller.abort();
   }, [customerSession?.access_token]);
+
+  useEffect(() => {
+    const accessToken = customerSession?.access_token;
+    if (!accessToken) {
+      setPrintavoProfileUrl('');
+      setPrintavoProfileLoading(false);
+      return;
+    }
+    if (!showCustomerLogin) return;
+    const controller = new AbortController();
+    const loadCustomerProfile = async () => {
+      setPrintavoProfileLoading(true);
+      try {
+        const response = await fetch('/api/account/profile', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => ({})) as { printavoProfileUrl?: string; error?: string };
+        if (!response.ok) throw new Error(payload.error || 'Order history link unavailable.');
+        if (!controller.signal.aborted) setPrintavoProfileUrl(payload.printavoProfileUrl || '');
+      } catch {
+        if (!controller.signal.aborted) setPrintavoProfileUrl('');
+      } finally {
+        if (!controller.signal.aborted) setPrintavoProfileLoading(false);
+      }
+    };
+    void loadCustomerProfile();
+    return () => controller.abort();
+  }, [customerSession?.access_token, showCustomerLogin]);
 
   useEffect(() => {
     if (!customerSession?.access_token || !customerSession.user?.id) {
@@ -11125,6 +11157,7 @@ export default function Home() {
                   </button>)}
                 </div> : <p className="mt-2 text-xs leading-5 text-slate-400">{accountOrdersLoading ? printShopQuip : 'Orders placed with this signed-in email will appear here.'}</p>}
               </div>
+              {printavoProfileUrl ? <a href={printavoProfileUrl} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-violet-300/30 bg-[linear-gradient(135deg,rgba(124,58,237,0.18),rgba(14,165,233,0.08))] p-4 transition hover:border-violet-200 hover:bg-violet-400/15"><span className="block text-xs font-black uppercase tracking-[0.18em] text-violet-200">Previous Hue Orders</span><span className="mt-2 block text-lg font-black text-white">View my Printavo order history →</span><span className="mt-1 block text-xs leading-5 text-slate-300">Opens your Printavo customer profile with earlier quotes, invoices, and order statuses.</span></a> : printavoProfileLoading ? <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4 text-xs text-slate-400">Checking for earlier Printavo orders...</div> : null}
             </div> : <form onSubmit={(event) => { event.preventDefault(); void handleCustomerAuth(); }} className="space-y-3">
               <label className="block text-sm font-bold text-slate-200">Email
                 <input type="email" value={customerAuthEmail} onChange={(event) => setCustomerAuthEmail(event.target.value)} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" autoComplete="email" />
