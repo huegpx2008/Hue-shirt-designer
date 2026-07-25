@@ -45,6 +45,7 @@ type BannerGrommetPoint = { key: string; x: number; y: number };
 type ArtworkEditorStrokeStyle = 'solid' | 'dashed' | 'dotted';
 type ArtworkEditorSmartGuides = { x: number | null; y: number | null };
 type ArtworkEditorPreflightIssue = { id: string; severity: 'warning' | 'error'; title: string; detail: string };
+type ArtworkEditorVersion = { id: string; label: string; front: string | null; back: string | null; preview?: string };
 
 const BANNER_GROMMET_DIAMETER_INCHES = 0.5;
 const BANNER_GROMMET_EDGE_INSET_INCHES = 0.5;
@@ -2656,7 +2657,9 @@ export default function Home() {
   const [artworkEditorRepeatDirection, setArtworkEditorRepeatDirection] = useState<'horizontal' | 'vertical'>('horizontal');
   const [artworkEditorPreflightIssues, setArtworkEditorPreflightIssues] = useState<ArtworkEditorPreflightIssue[]>([]);
   const [showArtworkEditorPreflight, setShowArtworkEditorPreflight] = useState(false);
-  const [artworkEditorVersions, setArtworkEditorVersions] = useState<Array<{ id: string; label: string; front: string | null; back: string | null }>>([]);
+  const [artworkEditorVersions, setArtworkEditorVersions] = useState<ArtworkEditorVersion[]>([]);
+  const [showArtworkEditorVersions, setShowArtworkEditorVersions] = useState(false);
+  const [artworkEditorCurrentVersionPreview, setArtworkEditorCurrentVersionPreview] = useState<string | null>(null);
   const [artworkEditorReloadKey, setArtworkEditorReloadKey] = useState(0);
   const [artworkEditorCanUndo, setArtworkEditorCanUndo] = useState(false);
   const [artworkEditorCanRedo, setArtworkEditorCanRedo] = useState(false);
@@ -5572,6 +5575,8 @@ export default function Home() {
     setArtworkEditorPreflightIssues([]);
     setShowArtworkEditorPreflight(false);
     setArtworkEditorVersions([]);
+    setShowArtworkEditorVersions(false);
+    setArtworkEditorCurrentVersionPreview(null);
     setArtworkEditorReloadKey(0);
     setArtworkEditorStatus(status);
     setShowImageZone(false);
@@ -6837,9 +6842,19 @@ export default function Home() {
   const saveArtworkEditorVersion = () => {
     const canvas = artworkEditorCanvasRef.current;
     if (canvas) captureArtworkEditorHistory(canvas);
-    const version = { id: `version-${Date.now()}`, label: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), front: artworkEditorSideSnapshotsRef.current.front, back: artworkEditorSideSnapshotsRef.current.back };
+    const version: ArtworkEditorVersion = { id: `version-${Date.now()}`, label: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), front: artworkEditorSideSnapshotsRef.current.front, back: artworkEditorSideSnapshotsRef.current.back, preview: canvas?.toDataURL({ format: 'png', quality: 0.75, multiplier: 0.35 }) };
     setArtworkEditorVersions((previous) => [version, ...previous].slice(0, 10));
     setArtworkEditorStatus(`Version saved at ${version.label}.`);
+  };
+
+  const openArtworkEditorVersionHistory = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    if (canvas) {
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+      setArtworkEditorCurrentVersionPreview(canvas.toDataURL({ format: 'png', quality: 0.8, multiplier: 0.35 }));
+    }
+    setShowArtworkEditorVersions(true);
   };
 
   const restoreArtworkEditorVersion = (versionId: string) => {
@@ -6850,6 +6865,7 @@ export default function Home() {
     artworkEditorSideRef.current = 'front';
     setArtworkEditorSide('front');
     setArtworkEditorReloadKey((value) => value + 1);
+    setShowArtworkEditorVersions(false);
     setArtworkEditorStatus(`Version from ${version.label} restored.`);
   };
 
@@ -11265,7 +11281,7 @@ export default function Home() {
             <button type="button" disabled={isArtworkEditorSaving || isArtworkEditorResizing} onClick={() => { if (artworkEditorSource) { const size = artworkEditorSource.signWidth && artworkEditorSource.signHeight ? { width: artworkEditorSource.signWidth, height: artworkEditorSource.signHeight } : getArtworkPrintSize(artworkEditorSource.width, artworkEditorSource.height); setArtworkEditorArtboardWidth(size.width); setArtworkEditorArtboardHeight(size.height); } setArtworkEditorResizeError(''); setShowArtworkEditorResizeDialog(true); }} className="rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f] disabled:opacity-40">Artboard Size</button>
             <button type="button" disabled={isArtworkEditorSaving} onClick={runArtworkEditorPreflight} className="rounded-xl border border-emerald-300/35 bg-emerald-500/10 px-4 py-2.5 text-xs font-black uppercase text-emerald-100 hover:border-emerald-300/65 hover:bg-emerald-500/20 disabled:opacity-40">Print Check</button>
             <button type="button" disabled={isArtworkEditorSaving || isAiEditing} onClick={() => { void openArtworkEditorAiTools(); }} className="rounded-xl border border-violet-300/35 bg-violet-500/10 px-4 py-2.5 text-xs font-black uppercase text-violet-100 shadow-[0_0_24px_rgba(139,92,246,0.12)] hover:border-violet-300/65 hover:bg-violet-500/20 disabled:opacity-40">✦ AI Tools</button>
-            <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <select value="" onChange={(event) => restoreArtworkEditorVersion(event.target.value)} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-2 text-[10px] text-slate-200"><option value="" disabled>Restore…</option>{artworkEditorVersions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}</select> : null}</div>
+            <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <button type="button" onClick={openArtworkEditorVersionHistory} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-3 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/45">Compare ({artworkEditorVersions.length})</button> : null}</div>
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
               <button type="button" disabled={!artworkEditorCanUndo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(-1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">↶ Undo</button>
               <button type="button" disabled={!artworkEditorCanRedo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">Redo ↷</button>
@@ -11403,6 +11419,13 @@ export default function Home() {
           <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.18),transparent_48%),#071522] px-6 py-5"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-300">Hue production preflight</p><h3 id="print-check-title" className="mt-1 text-2xl font-black">Print Check</h3><p className="mt-2 text-sm leading-6 text-slate-300">A quick review of common print problems. Warnings do not prevent you from saving.</p></div>
           <div className="min-h-0 flex-1 overflow-y-auto p-5">{artworkEditorPreflightIssues.length === 0 ? <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5"><p className="text-lg font-black text-emerald-100">Looks ready to print</p><p className="mt-2 text-sm leading-6 text-emerald-50/75">No objects outside the artboard, low-resolution images, tiny text, thin outlines, or unexpected transparency were detected.</p></div> : <div className="space-y-3">{artworkEditorPreflightIssues.map((issue) => <div key={issue.id} className={`rounded-xl border p-4 ${issue.severity === 'error' ? 'border-red-300/30 bg-red-500/10' : 'border-amber-300/25 bg-amber-300/[0.07]'}`}><div className="flex items-start gap-3"><span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${issue.severity === 'error' ? 'bg-red-400/20 text-red-200' : 'bg-amber-300/15 text-amber-200'}`}>{issue.severity === 'error' ? '!' : 'i'}</span><div><p className="text-sm font-black text-white">{issue.title}</p><p className="mt-1 text-xs leading-5 text-slate-300">{issue.detail}</p></div></div></div>)}</div>}</div>
           <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4"><p className="text-xs text-slate-500">Final production review is still recommended.</p><button type="button" onClick={() => setShowArtworkEditorPreflight(false)} className="rounded-xl bg-emerald-600 px-6 py-3 text-xs font-black uppercase text-white hover:bg-emerald-500">Return to Designer</button></footer>
+        </section>
+      </div> : null}
+
+      {showArtworkEditor && showArtworkEditorVersions ? <div className="fixed inset-0 z-[118] flex items-center justify-center bg-[#02070d]/85 p-4 backdrop-blur-md">
+        <section role="dialog" aria-modal="true" aria-labelledby="version-history-title" className="flex max-h-[90dvh] w-[min(920px,96vw)] flex-col overflow-hidden rounded-2xl border border-[#38bdf8]/35 bg-[#071522] text-white shadow-[0_30px_100px_rgba(0,0,0,0.8)]">
+          <div className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-5"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#67d8ff]">Non-destructive history</p><h3 id="version-history-title" className="mt-1 text-2xl font-black">Compare saved versions</h3><p className="mt-2 text-sm text-slate-400">The current design appears first. Restoring a saved version does not change Image Zone until you save the design.</p></div><button type="button" onClick={() => setShowArtworkEditorVersions(false)} className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2 text-xs font-bold text-slate-300">Close</button></div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><article className="overflow-hidden rounded-2xl border border-emerald-300/35 bg-emerald-400/[0.06]"><div className="flex aspect-[4/3] items-center justify-center bg-white/95 p-3">{artworkEditorCurrentVersionPreview ? <img src={artworkEditorCurrentVersionPreview} alt="Current Hue Designer version" className="max-h-full max-w-full object-contain" /> : null}</div><div className="p-4"><p className="text-sm font-black text-emerald-100">Current design</p><p className="mt-1 text-xs text-emerald-100/60">What is on the artboard now</p></div></article>{artworkEditorVersions.map((version) => <article key={version.id} className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.035]"><div className="flex aspect-[4/3] items-center justify-center bg-white/95 p-3">{version.preview ? <img src={version.preview} alt={`Hue Designer version saved at ${version.label}`} className="max-h-full max-w-full object-contain" /> : <span className="text-xs font-bold text-slate-500">Preview unavailable</span>}</div><div className="p-4"><div className="flex items-center justify-between gap-2"><div><p className="text-sm font-black">Saved {version.label}</p><p className="mt-1 text-xs text-slate-500">{version.back ? 'Front + back' : 'Front only'}</p></div><button type="button" onClick={() => restoreArtworkEditorVersion(version.id)} className="rounded-lg bg-[#1686c9] px-3 py-2 text-[9px] font-black uppercase text-white">Restore</button></div></div></article>)}</div></div>
         </section>
       </div> : null}
 
