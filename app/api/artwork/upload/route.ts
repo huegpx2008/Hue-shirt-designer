@@ -209,13 +209,19 @@ export async function POST(request: Request) {
         await downloadBackblazeObjectToFile(asset.original_object_key, temporaryPath);
         const generated = await createOversizedJpegPreviews(temporaryPath);
         const storage = getSupabaseAdminClient().storage.from(getStorageBucket());
+        // Use real binary Blobs here. Passing a Node Buffer through this
+        // serverless storage path can coerce high bytes through UTF-8, replacing
+        // them with EF BF BD and leaving an object that looks like WebP but is
+        // not decodable.
+        const previewBody = new Blob([Uint8Array.from(generated.preview)], { type: 'image/webp' });
+        const thumbnailBody = new Blob([Uint8Array.from(generated.thumbnail)], { type: 'image/webp' });
         const [{ error: previewError }, { error: thumbnailError }] = await Promise.all([
-          storage.upload(asset.preview_storage_path, generated.preview, {
+          storage.upload(asset.preview_storage_path, previewBody, {
             contentType: 'image/webp',
             cacheControl: '604800',
             upsert: true,
           }),
-          storage.upload(asset.thumbnail_storage_path, generated.thumbnail, {
+          storage.upload(asset.thumbnail_storage_path, thumbnailBody, {
             contentType: 'image/webp',
             cacheControl: '604800',
             upsert: true,
@@ -223,6 +229,24 @@ export async function POST(request: Request) {
         ]);
         if (previewError) throw new Error(previewError.message || 'The reduced artwork preview could not be saved.');
         if (thumbnailError) throw new Error(thumbnailError.message || 'The artwork thumbnail could not be saved.');
+        const [{ data: storedPreview, error: storedPreviewError }, { data: storedThumbnail, error: storedThumbnailError }] = await Promise.all([
+          storage.download(asset.preview_storage_path),
+          storage.download(asset.thumbnail_storage_path),
+        ]);
+        if (storedPreviewError || !storedPreview) throw new Error(storedPreviewError?.message || 'The saved designer preview could not be verified.');
+        if (storedThumbnailError || !storedThumbnail) throw new Error(storedThumbnailError?.message || 'The saved artwork thumbnail could not be verified.');
+        await Promise.all([
+          inspectOptimizedWebp(Buffer.from(await storedPreview.arrayBuffer()), {
+            label: 'designer preview',
+            maxBytes: MAX_PREVIEW_BYTES,
+            maxDimension: PREVIEW_MAX_DIMENSION,
+          }),
+          inspectOptimizedWebp(Buffer.from(await storedThumbnail.arrayBuffer()), {
+            label: 'artwork thumbnail',
+            maxBytes: MAX_THUMBNAIL_BYTES,
+            maxDimension: 480,
+          }),
+        ]);
         const width = generated.width || validated.width || undefined;
         const height = generated.height || validated.height || undefined;
         const dpiX = generated.dpiX || undefined;

@@ -1250,6 +1250,21 @@ const loadFirstAvailablePrivateArtworkFile = async (storagePaths: Array<string |
   throw lastError;
 };
 
+const loadFirstAvailablePrivateArtworkImageFile = async (storagePaths: Array<string | null | undefined>, accessToken: string) => {
+  const uniquePaths = Array.from(new Set(storagePaths.filter(Boolean) as string[]));
+  let lastError: unknown = new Error('No private artwork image path was available.');
+  for (const storagePath of uniquePaths) {
+    try {
+      const dataUrl = await loadPrivateArtworkFile(storagePath, accessToken);
+      await getImageNaturalSize(dataUrl);
+      return dataUrl;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+};
+
 const loadImageElement = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
   const image = new Image();
   image.onload = () => resolve(image);
@@ -2907,7 +2922,9 @@ export default function Home() {
             const privatePreviewPaths = usesRasterCloudPreview
               ? [file.thumbnailStoragePath, file.previewStoragePath, storagePath]
               : [(isImageFile || usesRasterCloudPreview) ? file.previewStoragePath : storagePath, storagePath];
-            const previewUrl = file.previewDataUrl || await loadFirstAvailablePrivateArtworkFile(privatePreviewPaths, customerSession.access_token)
+            const previewUrl = file.previewDataUrl || await (isImageFile || usesRasterCloudPreview
+              ? loadFirstAvailablePrivateArtworkImageFile(privatePreviewPaths, customerSession.access_token)
+              : loadFirstAvailablePrivateArtworkFile(privatePreviewPaths, customerSession.access_token))
               .catch(() => file.thumbnailUrl || file.previewUrl || originalUrl);
             const pdfPreview = isPdfFile && !usesRasterCloudPreview ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
@@ -4672,7 +4689,7 @@ export default function Home() {
   const refreshArchiveThumbnail = async (item: ImageZoneItem) => {
     if (item.source === 'supabase' && customerSession?.access_token) {
       try {
-        const refreshedUrl = await loadFirstAvailablePrivateArtworkFile([
+        const refreshedUrl = await loadFirstAvailablePrivateArtworkImageFile([
           item.thumbnailStoragePath,
           item.previewStoragePath,
           item.storagePath,
@@ -4685,6 +4702,43 @@ export default function Home() {
         });
         return;
       } catch {
+        if (item.assetId && item.originalProvider === 'b2') {
+          try {
+            setImageLibraryStatus('Recharging the preview pixels from the production original...');
+            const repairResponse = await fetch('/api/artwork/upload', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${customerSession.access_token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ action: 'generate-previews', assetId: item.assetId }),
+            });
+            if (!repairResponse.ok) throw new Error(await getErrorMessage(repairResponse));
+            const repaired = await repairResponse.json() as { previewDataUrl?: string; previewStoragePath?: string; previewUrl?: string; thumbnailStoragePath?: string; thumbnailUrl?: string };
+            const repairedUrl = repaired.previewDataUrl
+              || await loadFirstAvailablePrivateArtworkImageFile([
+                repaired.thumbnailStoragePath,
+                repaired.previewStoragePath,
+              ], customerSession.access_token);
+            setImageZoneItems((previous) => previous.map((entry) => entry.id === item.id ? {
+              ...entry,
+              dataUrl: repairedUrl,
+              previewStoragePath: repaired.previewStoragePath || entry.previewStoragePath,
+              thumbnailStoragePath: repaired.thumbnailStoragePath || entry.thumbnailStoragePath,
+              thumbnailUrl: repaired.thumbnailUrl || entry.thumbnailUrl,
+            } : entry));
+            setFailedImageZoneThumbnailIds((previous) => {
+              const next = new Set(previous);
+              next.delete(item.id);
+              return next;
+            });
+            setImageLibraryStatus(`${item.name}'s preview was rebuilt from its safely stored production original.`);
+            return;
+          } catch {
+            // Fall through to the durable error state below. The B2 original is
+            // intentionally untouched even when a derivative repair fails.
+          }
+        }
         setFailedImageZoneThumbnailIds((previous) => new Set(previous).add(item.id));
         setImageLibraryStatus(`${item.name} is safely stored, but its preview could not load. Refresh Image Zone to try again.`);
         return;
