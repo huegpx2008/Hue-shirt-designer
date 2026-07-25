@@ -240,8 +240,8 @@ const GUIDED_TOUR_STORAGE_KEY = 'hue-guided-tour-dismissed';
 const MOBILE_DESKTOP_NOTICE_STORAGE_KEY = 'hue-mobile-desktop-notice-dismissed';
 const GEORGIA_SALES_TAX_RATE = 0.08;
 const HUE_STUDIO_US_SHIPPING_FEE = 10;
-const CART_CHECKOUT_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
-const CART_CHECKOUT_MAX_AGE_LABEL = '3 days';
+const CUSTOMER_SESSION_REFRESH_BUFFER_MS = 2 * 60 * 1000;
+const CUSTOMER_SESSION_FALLBACK_REFRESH_MS = 45 * 60 * 1000;
 
 const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
@@ -255,6 +255,20 @@ const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
     backPreviewUrl: artwork.backPreviewUrl?.startsWith('data:') ? undefined : artwork.backPreviewUrl
   }))
 }));
+
+const cartItemBelongsToCustomer = (item: CartItem, user: NonNullable<CustomerSession['user']>) => {
+  const itemUserId = item.customer?.userId;
+  const itemEmail = item.customer?.email?.trim().toLowerCase();
+  const userEmail = user.email?.trim().toLowerCase();
+  if (itemUserId) return itemUserId === user.id;
+  return item.customer?.checkoutMode === 'account' && Boolean(itemEmail && userEmail && itemEmail === userEmail);
+};
+
+const mergeCartItemsById = (baseItems: CartItem[], newerItems: CartItem[]) => {
+  const merged = new Map(baseItems.map((item) => [item.id, item]));
+  newerItems.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values()).sort((a, b) => Date.parse(a.addedAt || '') - Date.parse(b.addedAt || ''));
+};
 
 const getPersistableTestOrders = (orders: TestOrder[]) => orders.map((order) => ({
   ...order,
@@ -2629,6 +2643,7 @@ export default function Home() {
   const [isCustomerAuthLoading, setIsCustomerAuthLoading] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartStorageHydrated, setIsCartStorageHydrated] = useState(false);
+  const [cloudCartHydratedUserId, setCloudCartHydratedUserId] = useState<string | null>(null);
   const [isPreparingCartArtwork, setIsPreparingCartArtwork] = useState(false);
   const [showCart, setShowCart] = useState(false);
   const [cartStatus, setCartStatus] = useState('');
@@ -2685,6 +2700,7 @@ export default function Home() {
   const pendingPayPalCheckoutRef = useRef<{ order: TestOrder; checkoutToken: string; paypalOrderId: string; paymentToken?: string; captureId?: string; paidAt?: string } | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
+  const cartItemsRef = useRef<CartItem[]>([]);
   const isPrintShopBusy = Boolean(
     imageUploadProgress
     || isImageLibraryLoading
@@ -2720,19 +2736,71 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    try {
-      const storedSession = window.localStorage.getItem(CUSTOMER_SESSION_STORAGE_KEY);
-      if (!storedSession) return;
-      const parsedSession = JSON.parse(storedSession) as CustomerSession;
-      if (parsedSession?.access_token) {
-        setCustomerSession(parsedSession);
+    let canceled = false;
+    const restoreCustomerSession = async () => {
+      try {
+        const storedSession = window.localStorage.getItem(CUSTOMER_SESSION_STORAGE_KEY);
+        if (!storedSession) return;
+        const parsedSession = JSON.parse(storedSession) as CustomerSession;
+        if (!parsedSession?.access_token) return;
+        const expiresAtMs = Number(parsedSession.expires_at || 0) * 1000;
+        const needsRefresh = Boolean(parsedSession.refresh_token && (!expiresAtMs || expiresAtMs <= Date.now() + CUSTOMER_SESSION_REFRESH_BUFFER_MS));
+        const refreshedSession = needsRefresh ? await refreshSupabaseSession(parsedSession).catch(() => null) : null;
+        if (canceled) return;
+        if (needsRefresh && !refreshedSession && expiresAtMs && expiresAtMs <= Date.now()) {
+          window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
+          setCustomerAuthStatus('Your secure session expired. Sign in again; your saved cart and artwork are still safe.');
+          return;
+        }
+        const activeSession = refreshedSession || parsedSession;
+        if (refreshedSession) window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
+        setCustomerSession(activeSession);
         setIsGuestCheckout(false);
-        setCustomerAuthStatus(`Signed in as ${parsedSession.user?.email || 'customer'}.`);
+        setCustomerAuthStatus(`Signed in as ${activeSession.user?.email || 'customer'}.`);
+      } catch {
+        window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
       }
-    } catch {
-      window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
-    }
+    };
+    void restoreCustomerSession();
+    return () => { canceled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!customerSession?.access_token || !customerSession.refresh_token) return;
+    let canceled = false;
+    let refreshing = false;
+    const renewSession = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const refreshedSession = await refreshSupabaseSession(customerSession);
+        if (!canceled && refreshedSession) {
+          setCustomerSession(refreshedSession);
+          window.localStorage.setItem(CUSTOMER_SESSION_STORAGE_KEY, JSON.stringify(refreshedSession));
+        } else if (!canceled && Number(customerSession.expires_at || 0) * 1000 <= Date.now()) {
+          setCustomerAuthStatus('Hue Studio could not renew your session. Sign in again; your cart has not been deleted.');
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+    const expiresAtMs = Number(customerSession.expires_at || 0) * 1000;
+    const refreshDelay = expiresAtMs
+      ? Math.max(1_000, expiresAtMs - Date.now() - CUSTOMER_SESSION_REFRESH_BUFFER_MS)
+      : CUSTOMER_SESSION_FALLBACK_REFRESH_MS;
+    const timer = window.setTimeout(() => { void renewSession(); }, refreshDelay);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const currentExpiry = Number(customerSession.expires_at || 0) * 1000;
+      if (!currentExpiry || currentExpiry <= Date.now() + CUSTOMER_SESSION_REFRESH_BUFFER_MS) void renewSession();
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      canceled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [customerSession]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2790,12 +2858,77 @@ export default function Home() {
 
   useEffect(() => {
     if (!isCartStorageHydrated) return;
+    cartItemsRef.current = cartItems;
     try {
       window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(getPersistableCartItems(cartItems)));
     } catch {
       setCartStatus('Cart is open, but browser storage is full. Original artwork files remain attached by Supabase path.');
     }
   }, [cartItems, isCartStorageHydrated]);
+
+  useEffect(() => {
+    const user = customerSession?.user;
+    const accessToken = customerSession?.access_token;
+    if (!isCartStorageHydrated || !user?.id || !accessToken) {
+      setCloudCartHydratedUserId(null);
+      return;
+    }
+    const userId = user.id;
+    let canceled = false;
+    const loadCloudCart = async () => {
+      try {
+        const response = await fetch('/api/account/cart', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const payload = await response.json() as { exists?: boolean; items?: CartItem[]; updatedAt?: string; error?: string };
+        if (!response.ok) throw new Error(payload.error || 'Unable to load the saved cart.');
+        if (canceled) return;
+        const localItems = getPersistableCartItems(cartItemsRef.current).filter((item) => cartItemBelongsToCustomer(item, user));
+        const cloudItems = Array.isArray(payload.items)
+          ? getPersistableCartItems(payload.items).filter((item) => cartItemBelongsToCustomer(item, user))
+          : [];
+        const cloudUpdatedAt = Date.parse(payload.updatedAt || '');
+        const locallyAddedAfterCloud = Number.isFinite(cloudUpdatedAt)
+          ? localItems.filter((item) => Date.parse(item.addedAt || '') > cloudUpdatedAt)
+          : localItems;
+        const mergedItems = payload.exists
+          ? mergeCartItemsById(cloudItems, locallyAddedAfterCloud)
+          : localItems;
+        cartItemsRef.current = mergedItems;
+        setCartItems(mergedItems);
+        setCloudCartHydratedUserId(userId);
+        if (cloudItems.length && mergedItems.length) setCartStatus('Your saved cart is synced across your signed-in devices.');
+      } catch (error) {
+        if (!canceled) setCartStatus(error instanceof Error ? `${error.message} This device's cart is still saved locally.` : 'This device\'s cart is still saved locally.');
+      }
+    };
+    void loadCloudCart();
+    return () => { canceled = true; };
+  }, [customerSession?.access_token, customerSession?.user, isCartStorageHydrated]);
+
+  useEffect(() => {
+    const userId = customerSession?.user?.id;
+    const accessToken = customerSession?.access_token;
+    if (!userId || !accessToken || cloudCartHydratedUserId !== userId) return;
+    const timer = window.setTimeout(async () => {
+      const accountItems = getPersistableCartItems(cartItemsRef.current).filter((item) => item.customer?.checkoutMode === 'account' && cartItemBelongsToCustomer(item, customerSession.user!));
+      try {
+        const response = await fetch('/api/account/cart', {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: accountItems })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(payload.error || 'Cloud cart sync is temporarily unavailable.');
+        }
+      } catch (error) {
+        setCartStatus(error instanceof Error ? `${error.message} This device's cart remains saved locally.` : 'This device\'s cart remains saved locally.');
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [cartItems, cloudCartHydratedUserId, customerSession]);
 
   const cartStoragePathKey = Array.from(new Set(cartItems.flatMap((item) => [
     ...item.artworkFiles.map((file) => file.storagePath),
@@ -3455,14 +3588,9 @@ export default function Home() {
   const coroReadyTotalLabel = `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${effectiveCoroQuantity} total ${coroPieceLabel}`;
   const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);
   const getCartCheckoutIssue = () => {
-    const now = Date.now();
     const sessionUserId = customerSession?.user?.id;
     const sessionEmail = customerSession?.user?.email?.trim().toLowerCase();
     for (const item of cartItems) {
-      const addedAt = Date.parse(item.addedAt || '');
-      if (!Number.isFinite(addedAt) || now - addedAt > CART_CHECKOUT_MAX_AGE_MS) {
-        return `This cart has been sitting for more than ${CART_CHECKOUT_MAX_AGE_LABEL}. Please rebuild it so artwork links, pricing, and checkout session data are fresh before payment.`;
-      }
       const cartUserId = item.customer.userId;
       const cartEmail = item.customer.email?.trim().toLowerCase();
       if (cartUserId && sessionUserId && cartUserId !== sessionUserId) return 'This cart was created under a different customer account. Please clear the cart and add the artwork again under the current account.';
@@ -8227,6 +8355,18 @@ export default function Home() {
         setCartStatus('Your cart is still open in this tab, but the browser could not save it for a later visit.');
       }
     }
+    if (sessionToClose?.access_token && sessionToClose.user?.id && cloudCartHydratedUserId === sessionToClose.user.id) {
+      try {
+        const accountItems = getPersistableCartItems(cartItems).filter((item) => cartItemBelongsToCustomer(item, sessionToClose.user!));
+        await fetch('/api/account/cart', {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${sessionToClose.access_token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: accountItems })
+        });
+      } catch {
+        // Browser storage above still preserves this device's cart if cloud sync is temporarily unavailable.
+      }
+    }
     setCustomerSession(null);
     setIsGuestCheckout(true);
     window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
@@ -10344,11 +10484,11 @@ export default function Home() {
             </div>
             {cartStatus ? <p className="mt-3 rounded border border-[#0ea5e9]/20 bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-300">{cartStatus}</p> : null}
             {cartCheckoutIssue ? <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-3 text-xs leading-5 text-amber-100">
-              <p className="font-black uppercase tracking-[0.14em] text-amber-200">{cartNeedsAccountSignIn ? 'Sign in to continue' : 'Cart needs refresh'}</p>
+              <p className="font-black uppercase tracking-[0.14em] text-amber-200">{cartNeedsAccountSignIn ? 'Sign in to continue' : 'Cart needs attention'}</p>
               <p className="mt-1">{cartCheckoutIssue}</p>
               {cartNeedsAccountSignIn
                 ? <button type="button" onClick={() => { setShowCart(false); setCustomerAuthMode('signin'); setCartStatus('Your cart is saved and will remain here while you sign in.'); openCustomerAccount(); }} className="mt-2 rounded border border-[#38bdf8]/40 bg-[#0b263d] px-3 py-2 text-[11px] font-black uppercase text-[#b7ecff] hover:border-[#67d8ff] hover:bg-[#10364f]">Sign in — keep my cart</button>
-                : <button type="button" onClick={() => { setCartItems([]); setCartStatus('Stale cart cleared. Please add the product and artwork again before checkout.'); }} className="mt-2 rounded border border-amber-200/40 bg-amber-300/10 px-3 py-2 text-[11px] font-black uppercase text-amber-100 hover:bg-amber-300/[0.2]">Clear stale cart</button>}
+                : null}
             </div> : null}
             {testOrders[0] ? <p className="mt-2 text-xs text-slate-400">Latest test order: <span className="font-bold text-[#9be6ff]">{testOrders[0].orderNumber}</span></p> : null}
           </div>
