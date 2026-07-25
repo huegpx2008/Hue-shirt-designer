@@ -55,7 +55,15 @@ const listAllUsers = async () => {
     const payload = await supabaseAdminFetch(`/auth/v1/admin/users?page=${page}&per_page=${perPage}`) as { users?: unknown[] };
     const pageUsers = payload.users || [];
     users.push(...pageUsers);
-    if (pageUsers.length < perPage) return { users };
+    if (pageUsers.length < perPage) {
+      return {
+        users: users.sort((left, right) => {
+          const leftCreatedAt = String((left as { created_at?: unknown })?.created_at || '');
+          const rightCreatedAt = String((right as { created_at?: unknown })?.created_at || '');
+          return rightCreatedAt.localeCompare(leftCreatedAt);
+        }),
+      };
+    }
   }
 };
 
