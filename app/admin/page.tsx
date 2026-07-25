@@ -48,6 +48,26 @@ const friendlyAdminError = (message?: string) => {
   return value || 'Admin data could not be loaded.';
 };
 
+const uploadAdminArtworkWithProgress = (
+  url: string,
+  file: File,
+  contentType: string,
+  onProgress: (percent: number) => void,
+) => new Promise<void>((resolve, reject) => {
+  const request = new XMLHttpRequest();
+  request.open('PUT', url, true);
+  request.setRequestHeader('Content-Type', contentType);
+  request.upload.onprogress = (event) => {
+    if (event.lengthComputable && event.total > 0) onProgress(Math.round((event.loaded / event.total) * 82));
+  };
+  request.onerror = () => reject(new Error('The production upload lost its network connection.'));
+  request.onabort = () => reject(new Error('The production upload was canceled.'));
+  request.onload = () => request.status >= 200 && request.status < 300
+    ? resolve()
+    : reject(new Error(`Backblaze B2 could not save the production original (${request.status || 'network error'}).`));
+  request.send(file);
+});
+
 const dashboardStatus = (sectionErrors?: Record<string, string>) => {
   const updated = `Updated ${new Date().toLocaleTimeString()}`;
   const missingPricing = Boolean(sectionErrors?.pricing);
@@ -79,6 +99,11 @@ export default function AdminPage() {
   const [resetMessage, setResetMessage] = useState('');
   const [resetPreview, setResetPreview] = useState<PrelaunchResetPreview | null>(null);
   const [resetConfirmation, setResetConfirmation] = useState('');
+  const [assignmentUserId, setAssignmentUserId] = useState('');
+  const [assignmentFile, setAssignmentFile] = useState<File | null>(null);
+  const [assignmentBusy, setAssignmentBusy] = useState(false);
+  const [assignmentProgress, setAssignmentProgress] = useState(0);
+  const [assignmentMessage, setAssignmentMessage] = useState('');
 
   const loadDashboard = async () => {
     setStatus('Loading Hue Studio data...');
@@ -107,6 +132,71 @@ export default function AdminPage() {
   };
 
   useEffect(() => { void loadDashboard(); }, []);
+
+  const assignArtworkToCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!assignmentUserId || !assignmentFile) {
+      setAssignmentMessage('Choose a customer and an artwork file first.');
+      return;
+    }
+    if (!/\.(png|jpe?g|webp|gif)$/i.test(assignmentFile.name)) {
+      setAssignmentMessage('Choose a PNG, JPG, WebP, or GIF file.');
+      return;
+    }
+    if (assignmentFile.size < 1 || assignmentFile.size > 150 * 1024 * 1024) {
+      setAssignmentMessage('The production file must be smaller than 150 MB.');
+      return;
+    }
+
+    setAssignmentBusy(true);
+    setAssignmentProgress(1);
+    setAssignmentMessage('Preparing a private customer artwork record...');
+    let assetId = '';
+    try {
+      const ticketResponse = await fetch('/api/admin/artwork/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'ticket',
+          userId: assignmentUserId,
+          fileName: assignmentFile.name,
+          fileSize: assignmentFile.size,
+          mimeType: assignmentFile.type,
+        }),
+      });
+      const ticket = await ticketResponse.json().catch(() => ({})) as { assetId?: string; uploadUrl?: string; mimeType?: string; error?: string };
+      if (!ticketResponse.ok || !ticket.assetId || !ticket.uploadUrl) throw new Error(ticket.error || 'The secure upload ticket could not be created.');
+      assetId = ticket.assetId;
+      setAssignmentMessage(`Uploading ${assignmentFile.name} to the customer's private production storage...`);
+      await uploadAdminArtworkWithProgress(ticket.uploadUrl, assignmentFile, ticket.mimeType || assignmentFile.type || 'application/octet-stream', (percent) => setAssignmentProgress(Math.max(2, percent)));
+      setAssignmentProgress(88);
+      setAssignmentMessage('Creating the customer’s Image Zone preview and thumbnail...');
+      const finalizeResponse = await fetch('/api/admin/artwork/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'finalize', assetId }),
+      });
+      const result = await finalizeResponse.json().catch(() => ({})) as { originalName?: string; productionReference?: string; error?: string };
+      if (!finalizeResponse.ok) throw new Error(result.error || 'The customer artwork record could not be finalized.');
+      const customer = data.users.find((user) => user.id === assignmentUserId);
+      setAssignmentProgress(100);
+      setAssignmentMessage(`${result.originalName || assignmentFile.name} is now available in ${customer?.email || 'the customer'}’s Image Zone${result.productionReference ? ` as ${result.productionReference}` : ''}.`);
+      setAssignmentFile(null);
+      await loadDashboard();
+    } catch (error) {
+      if (assetId) {
+        await fetch('/api/admin/artwork/assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'abort', assetId }),
+        }).catch(() => undefined);
+      }
+      setAssignmentProgress(0);
+      setAssignmentMessage(error instanceof Error ? error.message : 'The artwork could not be assigned.');
+    } finally {
+      setAssignmentBusy(false);
+    }
+  };
 
   const loadArchiveStats = async () => {
     const response = await fetch('/api/admin/storage-cleanup', { cache: 'no-store' });
@@ -372,6 +462,7 @@ export default function AdminPage() {
           if (query && !groupText.includes(query)) return null;
           return <GuestFiles key={group.key} group={group} onPreview={setPreviewFile} onOrderUpdated={updateOrder} />;
         })}{guestGroups.length === 0 ? <p className="rounded-2xl border border-white/10 bg-[#071522] p-5 text-sm text-slate-500">No guest uploads or guest orders found.</p> : null}</div> : null}
+        {tab === 'files' ? <form onSubmit={assignArtworkToCustomer} className="mb-5 rounded-2xl border border-emerald-300/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.10),#071522)] p-5"><div className="flex flex-col gap-4 xl:flex-row xl:items-end"><div className="min-w-0 flex-1"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">Customer Image Zone</p><h2 className="mt-1 text-xl font-black">Add production artwork to a customer</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">Choose a file from this computer or a synced Google Drive folder. The untouched original goes to private production storage while Image Zone receives optimized previews.</p></div><label className="min-w-64 text-xs font-bold text-slate-400">Customer<select value={assignmentUserId} onChange={(event) => setAssignmentUserId(event.target.value)} disabled={assignmentBusy} className="mt-1 h-12 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 text-sm text-white outline-none focus:border-emerald-300 disabled:opacity-50"><option value="">Choose customer account</option>{[...data.users].sort((left, right) => String(left.email || '').localeCompare(String(right.email || ''))).map((user) => <option key={user.id || user.email} value={user.id || ''}>{user.email || user.id || 'Customer'}</option>)}</select></label><label className="min-w-72 text-xs font-bold text-slate-400">Production file<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" disabled={assignmentBusy} onChange={(event) => setAssignmentFile(event.target.files?.[0] || null)} className="mt-1 block h-12 w-full rounded-xl border border-white/15 bg-[#02070d] px-3 py-2 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-[#0c2a40] file:px-3 file:py-1.5 file:font-black file:text-[#9be8ff] disabled:opacity-50" /></label><button type="submit" disabled={assignmentBusy || !assignmentUserId || !assignmentFile} className="h-12 shrink-0 rounded-xl bg-emerald-600 px-5 text-xs font-black uppercase text-white shadow-[0_10px_28px_rgba(16,185,129,0.2)] hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-40">{assignmentBusy ? 'Adding artwork...' : 'Add to Image Zone'}</button></div>{assignmentBusy || assignmentProgress > 0 ? <div className="mt-4 h-2 overflow-hidden rounded-full bg-black/35"><div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-300 transition-[width] duration-300" style={{ width: `${Math.max(2, assignmentProgress)}%` }} /></div> : null}{assignmentMessage ? <p className={`mt-3 rounded-xl border px-4 py-3 text-sm ${assignmentProgress === 100 ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100' : 'border-white/10 bg-black/20 text-slate-300'}`}>{assignmentMessage}</p> : null}</form> : null}
         {tab === 'files' ? <div className="space-y-4"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Customer artwork</p><h2 className="mt-1 text-2xl font-black">Production originals organized by customer</h2><p className="mt-1 text-sm text-slate-400">This view contains reusable customer originals only. Approved proofs and production recipes stay with their order; printable finals stay in the order&apos;s Google Drive folder.</p></div><section className="rounded-2xl border border-[#38bdf8]/25 bg-[#071522] p-5"><div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Storage safety</p><h3 className="mt-1 text-xl font-black">Artwork archive cleanup</h3><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">B2 holds active production originals. Unordered originals move to the customer&apos;s Drive library after 90 days and retain a 14-day B2 safety copy. Ordered originals, approved proofs, and final production files are organized inside the order&apos;s Drive folder.</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={cleanupBusy} onClick={() => void runStorageCleanup(false)} className="rounded-xl border border-[#38bdf8]/40 bg-[#0b2537] px-4 py-3 text-xs font-black uppercase text-[#8be2ff] hover:bg-[#10334a] disabled:opacity-50">{cleanupBusy ? 'Working...' : 'Archive & clean eligible'}</button><button type="button" disabled={cleanupBusy} onClick={() => void runStorageCleanup(true)} className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-xs font-black uppercase text-amber-200 hover:bg-amber-400/15 disabled:opacity-50">Emergency cleanup now</button></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><StorageStat label="Tracked originals" value={String(archiveStats?.trackedFiles ?? 0)} /><StorageStat label="Still in Supabase" value={String(archiveStats?.activeOriginals ?? 0)} detail={fileSize(archiveStats?.activeBytes)} /><StorageStat label="Eligible now" value={String(archiveStats?.eligibleFiles ?? 0)} detail={fileSize(archiveStats?.eligibleBytes)} /><StorageStat label="Already cleaned" value={String(archiveStats?.cleanedFiles ?? 0)} /></div>{cleanupMessage ? <p className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">{cleanupMessage}</p> : null}</section>{customerGroups.map((group) => {
           const groupText = `${group.user.email || ''} ${group.user.user_metadata?.full_name || group.user.user_metadata?.name || ''} ${group.orders.map((order) => order.order_number).join(' ')} ${group.files.map(fileSearchText).join(' ')}`.toLowerCase();
           if (query && !groupText.includes(query)) return null;

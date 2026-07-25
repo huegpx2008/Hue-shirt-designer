@@ -6037,10 +6037,10 @@ export default function Home() {
     setArtworkEditorStatus(nextPrintView ? 'Print View is showing the clean design. Editing controls and production guides are temporarily hidden.' : 'Print View closed. Select an element to continue editing.');
   };
 
-  const openArtworkEditor = async () => {
+  const openArtworkEditor = async (selectedSource?: ImageZoneItem) => {
     setArtworkEditorOrderReturn(null);
     setArtworkEditorLaunchContext('image-zone-edit');
-    const source = imageZoneItems.find((item) => item.id === selectedImageZoneId);
+    const source = selectedSource || imageZoneItems.find((item) => item.id === selectedImageZoneId);
     if (!source || !canPlaceImageZoneItem(source)) {
       setImageLibraryStatus('Select a PNG, JPG, or other previewable image before opening Hue Designer.');
       return;
@@ -7250,7 +7250,7 @@ export default function Home() {
         savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.previewUrl || item.dataUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, previewStoragePath: storageInfo.previewStoragePath, thumbnailStoragePath: storageInfo.thumbnailStoragePath, thumbnailUrl: storageInfo.thumbnailUrl, assetId: storageInfo.assetId, productionReference: storageInfo.productionReference, originalProvider: storageInfo.originalProvider, source: 'supabase', backDataUrl: backStorageInfo?.previewUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, backPreviewStoragePath: backStorageInfo?.previewStoragePath, projectStoragePath: projectStorageInfo.storagePath };
         setImageZoneItems((previous) => [savedItem, ...previous]);
         setSelectedImageZoneId(storageInfo.storagePath);
-        setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
+        setImageLibraryStatus(`Editable ${isNewArtwork ? 'design' : 'design copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
       } else {
         setImageZoneItems((previous) => [savedItem, ...previous]);
         setSelectedImageZoneId(localId);
@@ -11602,7 +11602,7 @@ export default function Home() {
               <button type="button" disabled={!artworkEditorCanRedo || isArtworkEditorSaving} onClick={() => { void restoreArtworkEditorHistory(1); }} className="rounded-lg px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 disabled:opacity-30">Redo ↷</button>
             </div>
             <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs font-bold uppercase text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
-            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-5 py-2.5 text-xs font-black uppercase text-white shadow-[0_10px_26px_rgba(14,165,233,0.24)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Bottling print magic...' : artworkEditorOrderReturn ? 'Save & Return' : 'Save to Image Zone'}</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-5 py-2.5 text-xs font-black uppercase text-white shadow-[0_10px_26px_rgba(14,165,233,0.24)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Bottling print magic...' : artworkEditorOrderReturn ? 'Save Editable Copy & Return' : 'Save Editable Copy'}</button>
           </header>
           <nav className={`hue-mobile-editor-tabs ${artworkEditorPrintView ? 'hidden' : ''}`} aria-label="Hue Designer mobile workspace">
             <button type="button" onClick={() => setArtworkEditorMobileView('canvas')} className={artworkEditorMobileView === 'canvas' ? 'is-active' : ''}>Canvas</button>
@@ -12017,7 +12017,7 @@ export default function Home() {
                     <p className={`text-xs ${selected ? 'text-slate-600' : 'text-slate-400'}`}>{item.dpi} DPI</p>
                     <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${selected ? 'text-[#1678b8]' : 'text-[#67d8ff]'}`}>{item.source === 'archive' ? 'Hue Vault saved' : item.source === 'supabase' ? 'Hue Library ready' : 'Session preview'}</p>
                     <p className={`mt-2 truncate text-[10px] ${selected ? 'text-slate-400' : 'text-slate-500'}`}>{item.uploadedAt}</p>
-                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await applyImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">{item.source === 'archive' ? 'Restore & Use' : 'Use'}</button>{item.source !== 'archive' ? <button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button> : null}</div>
+                    <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedImageZoneId(item.id)} className={`rounded-lg px-3 py-1.5 text-[10px] font-black uppercase ${selected ? 'bg-[#0d2a40] text-[#8be3ff]' : 'border border-white/15 bg-white/[0.06] text-slate-300'}`}>{selected ? 'Selected' : 'Select'}</button><button type="button" onClick={async () => { await applyImageZoneItem(item); }} className="rounded-lg bg-[#1686c9] px-3 py-1.5 text-[10px] font-black uppercase text-white shadow-sm hover:bg-[#0f6da8]">{item.source === 'archive' ? 'Restore & Use' : 'Use'}</button>{item.editorProject ? <button type="button" onClick={() => { setSelectedImageZoneId(item.id); void openArtworkEditor(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-emerald-500/35 bg-emerald-50 text-emerald-800 hover:bg-emerald-100' : 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100 hover:bg-emerald-400/20'}`}>Edit design</button> : null}{item.source !== 'archive' ? <button type="button" disabled={deletingImageZoneId === item.id} onClick={() => { void deleteImageZoneItem(item); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase ${selected ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'border-red-400/30 bg-red-500/10 text-red-200 hover:bg-red-500/20'} disabled:cursor-wait disabled:opacity-50`}>{deletingImageZoneId === item.id ? 'Deleting...' : 'Delete'}</button> : null}</div>
                   </div>
                 </article>;
               })}
