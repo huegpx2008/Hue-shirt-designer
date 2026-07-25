@@ -118,6 +118,19 @@ const usePrintShopQuip = (active: boolean) => {
   }, [active]);
   return PRINT_SHOP_QUIPS[quipIndex];
 };
+
+const getArtworkEditorWorkspaceSize = (sourceWidth: number, sourceHeight: number) => {
+  const safeWidth = Math.max(1, sourceWidth);
+  const safeHeight = Math.max(1, sourceHeight);
+  const isCompactEditor = window.matchMedia('(max-width: 767px)').matches;
+  const workspaceMaxWidth = isCompactEditor ? Math.max(240, window.innerWidth - 64) : 940;
+  const workspaceMaxHeight = isCompactEditor ? Math.max(280, window.innerHeight - 250) : 620;
+  const workspaceScale = Math.min(workspaceMaxWidth / safeWidth, workspaceMaxHeight / safeHeight);
+  return {
+    width: Math.max(1, Math.round(safeWidth * workspaceScale)),
+    height: Math.max(1, Math.round(safeHeight * workspaceScale))
+  };
+};
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
 type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backDpi?: number; backSourceSignWidth?: number; backSourceSignHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
@@ -2563,6 +2576,11 @@ export default function Home() {
   const [newArtworkCustomHeight, setNewArtworkCustomHeight] = useState(18);
   const [newArtworkError, setNewArtworkError] = useState('');
   const [artworkEditorSource, setArtworkEditorSource] = useState<ImageZoneItem | null>(null);
+  const [showArtworkEditorResizeDialog, setShowArtworkEditorResizeDialog] = useState(false);
+  const [artworkEditorArtboardWidth, setArtworkEditorArtboardWidth] = useState(24);
+  const [artworkEditorArtboardHeight, setArtworkEditorArtboardHeight] = useState(18);
+  const [artworkEditorResizeError, setArtworkEditorResizeError] = useState('');
+  const [isArtworkEditorResizing, setIsArtworkEditorResizing] = useState(false);
   const [artworkEditorSide, setArtworkEditorSide] = useState<CoroArtworkSide>('front');
   const [artworkEditorHasBackSide, setArtworkEditorHasBackSide] = useState(false);
   const [artworkEditorStatus, setArtworkEditorStatus] = useState('');
@@ -5491,6 +5509,10 @@ export default function Home() {
     const borderPrintSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
     const recommendedBorder = getRecommendedBorderSize(borderPrintSize.width, borderPrintSize.height);
     setArtworkEditorSource(source);
+    setArtworkEditorArtboardWidth(borderPrintSize.width);
+    setArtworkEditorArtboardHeight(borderPrintSize.height);
+    setArtworkEditorResizeError('');
+    setShowArtworkEditorResizeDialog(false);
     setArtworkEditorSide('front');
     artworkEditorSideRef.current = 'front';
     setArtworkEditorHasBackSide(Boolean(source.backDataUrl || source.editorProject?.back));
@@ -5529,10 +5551,109 @@ export default function Home() {
   const closeArtworkEditor = () => {
     const returnToImageZone = artworkEditorLaunchContext === 'image-zone-edit' || artworkEditorLaunchContext === 'image-zone-create';
     setShowArtworkEditor(false);
+    setShowArtworkEditorResizeDialog(false);
     setArtworkEditorOrderReturn(null);
     setShowNewArtworkDialog(false);
     setArtworkEditorPrintView(false);
     if (returnToImageZone) setShowImageZone(true);
+  };
+
+  const resizeArtworkEditorSnapshot = async (snapshot: string | null, oldWidth: number, oldHeight: number, newWidth: number, newHeight: number) => {
+    if (!snapshot) return null;
+    const element = document.createElement('canvas');
+    const snapshotCanvas = new Canvas(element, { width: oldWidth, height: oldHeight, backgroundColor: artworkEditorBackground, preserveObjectStacking: true });
+    try {
+      await snapshotCanvas.loadFromJSON(snapshot);
+      const scale = Math.min(newWidth / Math.max(1, oldWidth), newHeight / Math.max(1, oldHeight));
+      const offsetX = (newWidth - oldWidth * scale) / 2;
+      const offsetY = (newHeight - oldHeight * scale) / 2;
+      snapshotCanvas.getObjects().forEach((object) => {
+        object.set({
+          left: (object.left || 0) * scale + offsetX,
+          top: (object.top || 0) * scale + offsetY,
+          scaleX: (object.scaleX || 1) * scale,
+          scaleY: (object.scaleY || 1) * scale
+        });
+        object.setCoords();
+      });
+      snapshotCanvas.setDimensions({ width: newWidth, height: newHeight });
+      snapshotCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+      snapshotCanvas.discardActiveObject();
+      snapshotCanvas.requestRenderAll();
+      return JSON.stringify(snapshotCanvas.toObject(['data']));
+    } finally {
+      snapshotCanvas.dispose();
+    }
+  };
+
+  const resizeArtworkEditorArtboard = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    const width = Number(artworkEditorArtboardWidth);
+    const height = Number(artworkEditorArtboardHeight);
+    if (!canvas || !source) return;
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 || width > 240 || height > 240) {
+      setArtworkEditorResizeError('Enter a width and height between 1 and 240 inches.');
+      return;
+    }
+    const currentPrintSize = source.signWidth && source.signHeight
+      ? { width: source.signWidth, height: source.signHeight }
+      : getArtworkPrintSize(source.width, source.height);
+    if (Math.abs(width - currentPrintSize.width) < 0.001 && Math.abs(height - currentPrintSize.height) < 0.001) {
+      setShowArtworkEditorResizeDialog(false);
+      setArtworkEditorResizeError('');
+      return;
+    }
+
+    setIsArtworkEditorResizing(true);
+    setArtworkEditorResizeError('');
+    try {
+      captureArtworkEditorHistory(canvas);
+      const oldWorkspaceWidth = canvas.getWidth();
+      const oldWorkspaceHeight = canvas.getHeight();
+      const renderDpi = Math.max(25, Math.min(source.dpi || 150, GENERATED_ARTWORK_MAX_DPI));
+      const requestedPixelWidth = Math.max(1, Math.round(width * renderDpi));
+      const requestedPixelHeight = Math.max(1, Math.round(height * renderDpi));
+      const safePixelSize = getPrintSafePixelSize(requestedPixelWidth, requestedPixelHeight, { width, height });
+      const newWorkspace = getArtworkEditorWorkspaceSize(safePixelSize.width, safePixelSize.height);
+      const [front, back] = await Promise.all([
+        resizeArtworkEditorSnapshot(artworkEditorSideSnapshotsRef.current.front, oldWorkspaceWidth, oldWorkspaceHeight, newWorkspace.width, newWorkspace.height),
+        resizeArtworkEditorSnapshot(artworkEditorSideSnapshotsRef.current.back, oldWorkspaceWidth, oldWorkspaceHeight, newWorkspace.width, newWorkspace.height)
+      ]);
+      artworkEditorSideSnapshotsRef.current = { front, back };
+      const nextSource: ImageZoneItem = {
+        ...source,
+        width: safePixelSize.width,
+        height: safePixelSize.height,
+        signWidth: width,
+        signHeight: height,
+        backSourceSignWidth: source.backDataUrl || back ? width : source.backSourceSignWidth,
+        backSourceSignHeight: source.backDataUrl || back ? height : source.backSourceSignHeight,
+        editorProject: source.editorProject ? {
+          ...source.editorProject,
+          front,
+          back,
+          width: safePixelSize.width,
+          height: safePixelSize.height,
+          signWidth: width,
+          signHeight: height,
+          updatedAt: new Date().toISOString()
+        } : source.editorProject
+      };
+      setArtworkEditorSource(nextSource);
+      setArtworkEditorOrderReturn((current) => current ? { ...current, width, height } : current);
+      const recommendedBorder = getRecommendedBorderSize(width, height);
+      setArtworkEditorBorderInset(recommendedBorder.inset);
+      setArtworkEditorBorderThickness(recommendedBorder.thickness);
+      setArtworkEditorActiveObject(null);
+      setArtworkEditorResizeError('');
+      setShowArtworkEditorResizeDialog(false);
+      setArtworkEditorStatus(`Artboard resized to ${width}\" × ${height}\". Existing artwork stayed proportional and centered.`);
+    } catch (error) {
+      setArtworkEditorResizeError(error instanceof Error ? `The artboard could not be resized: ${error.message}` : 'The artboard could not be resized.');
+    } finally {
+      setIsArtworkEditorResizing(false);
+    }
   };
 
   const clearArtworkEditorSelection = () => {
@@ -6624,12 +6745,9 @@ export default function Home() {
     const source = artworkEditorSource;
     const sourceWidth = Math.max(1, source.width);
     const sourceHeight = Math.max(1, source.height);
-    const isCompactEditor = window.matchMedia('(max-width: 767px)').matches;
-    const workspaceMaxWidth = isCompactEditor ? Math.max(240, window.innerWidth - 64) : 940;
-    const workspaceMaxHeight = isCompactEditor ? Math.max(280, window.innerHeight - 250) : 620;
-    const workspaceScale = Math.min(workspaceMaxWidth / sourceWidth, workspaceMaxHeight / sourceHeight);
-    const workspaceWidth = Math.max(1, Math.round(sourceWidth * workspaceScale));
-    const workspaceHeight = Math.max(1, Math.round(sourceHeight * workspaceScale));
+    const workspaceSize = getArtworkEditorWorkspaceSize(sourceWidth, sourceHeight);
+    const workspaceWidth = workspaceSize.width;
+    const workspaceHeight = workspaceSize.height;
     const canvas = new Canvas(artworkEditorCanvasElRef.current, {
       width: workspaceWidth,
       height: workspaceHeight,
@@ -10899,6 +11017,7 @@ export default function Home() {
             <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#67d8ff]/25 bg-[#0c2a40] text-xl text-[#67d8ff]">✎</span>
             <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Create New Artwork' : `Editing ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
             <div className="flex items-center gap-1 rounded-xl border border-[#38bdf8]/25 bg-black/25 p-1"><button type="button" onClick={() => switchArtworkEditorSide('front')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'front' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>Front</button><button type="button" onClick={() => switchArtworkEditorSide('back')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'back' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{artworkEditorHasBackSide ? 'Back' : '+ Add Back'}</button></div>
+            <button type="button" disabled={isArtworkEditorSaving || isArtworkEditorResizing} onClick={() => { if (artworkEditorSource) { const size = artworkEditorSource.signWidth && artworkEditorSource.signHeight ? { width: artworkEditorSource.signWidth, height: artworkEditorSource.signHeight } : getArtworkPrintSize(artworkEditorSource.width, artworkEditorSource.height); setArtworkEditorArtboardWidth(size.width); setArtworkEditorArtboardHeight(size.height); } setArtworkEditorResizeError(''); setShowArtworkEditorResizeDialog(true); }} className="rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f] disabled:opacity-40">Artboard Size</button>
             <button type="button" disabled={isArtworkEditorSaving || isAiEditing} onClick={() => { void openArtworkEditorAiTools(); }} className="rounded-xl border border-violet-300/35 bg-violet-500/10 px-4 py-2.5 text-xs font-black uppercase text-violet-100 shadow-[0_0_24px_rgba(139,92,246,0.12)] hover:border-violet-300/65 hover:bg-violet-500/20 disabled:opacity-40">✦ AI Tools</button>
             <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <select value="" onChange={(event) => restoreArtworkEditorVersion(event.target.value)} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-2 text-[10px] text-slate-200"><option value="" disabled>Restore…</option>{artworkEditorVersions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}</select> : null}</div>
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
@@ -11024,6 +11143,33 @@ export default function Home() {
             <p className={`min-w-0 flex-1 text-xs leading-5 ${artworkEditorStatus.toLowerCase().includes('could not') ? 'font-bold text-amber-300' : 'text-slate-400'}`}>{artworkEditorStatus}</p>
             <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Bottling the print magic...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
+          </footer>
+        </section>
+      </div> : null}
+
+      {showArtworkEditor && showArtworkEditorResizeDialog ? <div className="fixed inset-0 z-[115] flex items-center justify-center bg-[#02070d]/85 p-4 backdrop-blur-md">
+        <section role="dialog" aria-modal="true" aria-labelledby="artboard-size-title" className="w-[min(520px,94vw)] overflow-hidden rounded-2xl border border-[#38bdf8]/35 bg-[#071522] text-white shadow-[0_30px_100px_rgba(0,0,0,0.78),0_0_54px_rgba(14,165,233,0.16)]">
+          <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.20),transparent_48%),#071522] px-6 py-5">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Designer</p>
+            <h3 id="artboard-size-title" className="mt-2 text-2xl font-black">Change artboard size</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Enter the finished print size. Existing artwork stays proportional and centered on the new artboard.</p>
+          </div>
+          <div className="space-y-4 px-6 py-6">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-black uppercase tracking-wide text-slate-400">Width
+                <div className="mt-2 flex items-center rounded-xl border border-white/15 bg-black/25 px-3 focus-within:border-[#38bdf8]"><input autoFocus type="number" min="1" max="240" step="0.01" value={artworkEditorArtboardWidth} onChange={(event) => setArtworkEditorArtboardWidth(Number(event.target.value))} className="h-12 min-w-0 flex-1 bg-transparent text-lg font-black text-white outline-none" /><span className="text-sm font-bold text-slate-500">in</span></div>
+              </label>
+              <label className="text-xs font-black uppercase tracking-wide text-slate-400">Height
+                <div className="mt-2 flex items-center rounded-xl border border-white/15 bg-black/25 px-3 focus-within:border-[#38bdf8]"><input type="number" min="1" max="240" step="0.01" value={artworkEditorArtboardHeight} onChange={(event) => setArtworkEditorArtboardHeight(Number(event.target.value))} className="h-12 min-w-0 flex-1 bg-transparent text-lg font-black text-white outline-none" /><span className="text-sm font-bold text-slate-500">in</span></div>
+              </label>
+            </div>
+            <button type="button" onClick={() => { const width = artworkEditorArtboardWidth; setArtworkEditorArtboardWidth(artworkEditorArtboardHeight); setArtworkEditorArtboardHeight(width); }} className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-bold text-slate-300 hover:border-[#38bdf8]/45 hover:text-white">Swap width and height</button>
+            {artworkEditorOrderReturn ? <p className="rounded-xl border border-amber-300/25 bg-amber-300/[0.08] px-4 py-3 text-xs leading-5 text-amber-100">This design came from an order. The order size will update to match this artboard when you save and return.</p> : null}
+            {artworkEditorResizeError ? <p className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100">{artworkEditorResizeError}</p> : null}
+          </div>
+          <footer className="flex justify-end gap-3 border-t border-white/10 bg-[#050d16] px-6 py-4">
+            <button type="button" disabled={isArtworkEditorResizing} onClick={() => { setShowArtworkEditorResizeDialog(false); setArtworkEditorResizeError(''); }} className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/10 disabled:opacity-40">Cancel</button>
+            <button type="button" disabled={isArtworkEditorResizing} onClick={() => { void resizeArtworkEditorArtboard(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorResizing ? 'Resizing…' : 'Resize Artboard'}</button>
           </footer>
         </section>
       </div> : null}
