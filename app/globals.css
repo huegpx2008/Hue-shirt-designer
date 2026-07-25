@@ -463,6 +463,8 @@ body {
    landscape/tablet viewports. The side rails scroll independently, and the
    extra landing space lets their last option clear the persistent footer. */
 .hue-mobile-editor-footer {
+  position: relative !important;
+  bottom: auto !important;
   flex: 0 0 auto;
 }
 
