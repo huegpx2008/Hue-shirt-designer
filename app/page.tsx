@@ -386,7 +386,11 @@ const getPersistableTestOrders = (orders: TestOrder[]) => orders.map((order) => 
 }));
 
 const isLikelyImagePath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg)(\?.*)?$/i.test(value);
-const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf)(\?.*)?$/i.test(value);
+// Hue Designer saves a rendered front/back image plus a private JSON project.
+// Keep only that recognized JSON shape in the library so it can be paired back
+// to the visible artwork after a new session without exposing metadata files.
+const isLikelyArtworkPath = (value: string) => /\.(png|jpe?g|webp|gif|bmp|svg|pdf)(\?.*)?$/i.test(value)
+  || /-huedesign-\d+-project\.json(\?.*)?$/i.test(value);
 const getImageZoneFallbackLabel = (item: ImageZoneItem, archivedLabel = 'Preview unavailable') => item.source === 'archive'
   ? archivedLabel
   : item.mimeType === 'application/pdf' || /\.pdf$/i.test(item.name)
