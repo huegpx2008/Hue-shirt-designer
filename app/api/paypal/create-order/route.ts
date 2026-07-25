@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { hasValidCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { applyAuthoritativeOrderPricing, type ServerPricedOrderItem } from '@/lib/server/order-pricing';
-import { createPayPalOrder, createPayPalToken, getPayPalConfig } from '@/lib/server/paypal';
+import { createPayPalOrder, createPayPalToken, createStudioOrderNumber, getPayPalConfig } from '@/lib/server/paypal';
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { hasSupabaseAdminConfig, supabaseAdminFetch, verifySupabaseAccessToken } from '@/lib/server/supabase-admin';
 
@@ -52,8 +52,9 @@ export async function POST(request: Request) {
     if (verifiedUser?.email && verifiedUser.email.toLowerCase() !== customerEmail) throw new Error('The signed-in account does not match the checkout email.');
     order.customer = { ...order.customer, userId: verifiedUser?.id };
 
-    const pricedOrder = await applyAuthoritativeOrderPricing(order);
-    const paypalOrder = await createPayPalOrder({ submissionKey, amount: Number(pricedOrder.total), currency: 'USD', customerEmail });
+    const studioOrderNumber = createStudioOrderNumber(submissionKey);
+    const pricedOrder = { ...await applyAuthoritativeOrderPricing(order), orderNumber: studioOrderNumber };
+    const paypalOrder = await createPayPalOrder({ submissionKey, studioOrderNumber, amount: Number(pricedOrder.total), currency: 'USD', customerEmail });
     if (!paypalOrder.id) throw new Error('PayPal did not create an order.');
 
     const amount = Number(pricedOrder.total).toFixed(2);

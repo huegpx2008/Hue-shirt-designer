@@ -47,6 +47,18 @@ const normalizeMoney = (value: unknown) => {
   return amount.toFixed(2);
 };
 
+export const createStudioOrderNumber = (submissionKey: string) => {
+  const secret = getPayPalConfig().signingSecret;
+  if (!secret) throw new Error('PayPal order signing is not configured.');
+  const timestampMatch = String(submissionKey).match(/^checkout-(\d{10,})-/i);
+  const parsedTimestamp = Number(timestampMatch?.[1]);
+  const timestampToken = Number.isFinite(parsedTimestamp) && parsedTimestamp > 0
+    ? parsedTimestamp.toString(36).toUpperCase().slice(-6).padStart(6, '0')
+    : createHmac('sha256', secret).update(`time:${submissionKey}`).digest('hex').slice(0, 6).toUpperCase();
+  const referenceToken = createHmac('sha256', secret).update(`order:${submissionKey}`).digest('hex').slice(0, 3).toUpperCase();
+  return `HS-${timestampToken}-${referenceToken}`;
+};
+
 export const getPayPalConfig = () => {
   const environment: PayPalEnvironment = process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox';
   const clientId = (process.env.PAYPAL_CLIENT_ID || '').trim();
@@ -105,7 +117,7 @@ const paypalRequest = async <T>(path: string, init: RequestInit = {}) => {
   return payload;
 };
 
-export const createPayPalOrder = async (input: { submissionKey: string; amount: number; currency: string; customerEmail: string }) => {
+export const createPayPalOrder = async (input: { submissionKey: string; studioOrderNumber: string; amount: number; currency: string; customerEmail: string }) => {
   const value = normalizeMoney(input.amount);
   return paypalRequest<PayPalOrderResponse>('/v2/checkout/orders', {
     method: 'POST',
@@ -114,7 +126,8 @@ export const createPayPalOrder = async (input: { submissionKey: string; amount: 
       intent: 'CAPTURE',
       purchase_units: [{
         custom_id: input.submissionKey,
-        description: 'Hue Studio print-ready order',
+        invoice_id: input.studioOrderNumber,
+        description: `Hue Studio Order ${input.studioOrderNumber}`,
         amount: { currency_code: input.currency, value },
       }],
       payer: { email_address: input.customerEmail },

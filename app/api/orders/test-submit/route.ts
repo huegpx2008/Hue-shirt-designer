@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { hasValidCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { createArtworkAccessUrl } from "@/lib/server/artwork-access";
 import { applyAuthoritativeOrderPricing } from "@/lib/server/order-pricing";
-import { verifyPayPalToken, type PayPalPaymentToken } from "@/lib/server/paypal";
+import { createStudioOrderNumber, verifyPayPalToken, type PayPalPaymentToken } from "@/lib/server/paypal";
 import { getPromoCode, getStorageSignedUrl, hasSupabaseAdminConfig, moveStorageObject, supabaseAdminFetch, verifySupabaseAccessToken } from "@/lib/server/supabase-admin";
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
@@ -699,7 +699,7 @@ export async function POST(request: Request) {
       if (!order.customer || !order.items?.length) throw new Error('Customer details and at least one item are required.');
       verifiedPayment = await verifyCompletedPayPalPayment(order, submissionKey, payload.paymentToken);
       order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
-      order.orderNumber = createServerOrderNumber();
+      order.orderNumber = verifiedPayment ? createStudioOrderNumber(submissionKey) : createServerOrderNumber();
       order.createdAt = new Date().toISOString();
       const organizationWarnings = await organizeOrderProductionFiles(order);
       if (organizationWarnings.length) throw new Error(organizationWarnings.join(' '));
