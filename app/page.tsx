@@ -42,6 +42,9 @@ type ImageResolution = { dpiX: number; dpiY: number };
 type ArtworkUploadProgress = { fileName: string; phase: string; detail: string; percent: number };
 type ArtworkUploadProgressUpdate = Omit<ArtworkUploadProgress, 'fileName'>;
 type BannerGrommetPoint = { key: string; x: number; y: number };
+type ArtworkEditorStrokeStyle = 'solid' | 'dashed' | 'dotted';
+type ArtworkEditorSmartGuides = { x: number | null; y: number | null };
+type ArtworkEditorPreflightIssue = { id: string; severity: 'warning' | 'error'; title: string; detail: string };
 
 const BANNER_GROMMET_DIAMETER_INCHES = 0.5;
 const BANNER_GROMMET_EDGE_INSET_INCHES = 0.5;
@@ -2596,6 +2599,8 @@ export default function Home() {
   const [artworkEditorFill, setArtworkEditorFill] = useState('#0b1f44');
   const [artworkEditorStroke, setArtworkEditorStroke] = useState('#ffffff');
   const [artworkEditorStrokeWidth, setArtworkEditorStrokeWidth] = useState(0);
+  const [artworkEditorStrokeStyle, setArtworkEditorStrokeStyle] = useState<ArtworkEditorStrokeStyle>('solid');
+  const [artworkEditorCornerRadius, setArtworkEditorCornerRadius] = useState(0);
   const [artworkEditorOpacity, setArtworkEditorOpacity] = useState(100);
   const [artworkEditorBackground, setArtworkEditorBackground] = useState('#ffffff');
   const [artworkEditorBorderInset, setArtworkEditorBorderInset] = useState(0.5);
@@ -2605,6 +2610,7 @@ export default function Home() {
   const [artworkEditorLeftPanelOpen, setArtworkEditorLeftPanelOpen] = useState(true);
   const [artworkEditorMobileView, setArtworkEditorMobileView] = useState<'canvas' | 'tools' | 'properties'>('canvas');
   const [artworkEditorSnapToCenter, setArtworkEditorSnapToCenter] = useState(true);
+  const [artworkEditorSmartGuides, setArtworkEditorSmartGuides] = useState<ArtworkEditorSmartGuides>({ x: null, y: null });
   const [artworkEditorShowGuides, setArtworkEditorShowGuides] = useState(true);
   const [artworkEditorPrintView, setArtworkEditorPrintView] = useState(false);
   const [showSmartTemplateLibrary, setShowSmartTemplateLibrary] = useState(false);
@@ -2645,6 +2651,11 @@ export default function Home() {
   const [artworkEditorExactWidth, setArtworkEditorExactWidth] = useState(0);
   const [artworkEditorExactHeight, setArtworkEditorExactHeight] = useState(0);
   const [artworkEditorExactRotation, setArtworkEditorExactRotation] = useState(0);
+  const [artworkEditorRepeatCount, setArtworkEditorRepeatCount] = useState(3);
+  const [artworkEditorRepeatGap, setArtworkEditorRepeatGap] = useState(0.25);
+  const [artworkEditorRepeatDirection, setArtworkEditorRepeatDirection] = useState<'horizontal' | 'vertical'>('horizontal');
+  const [artworkEditorPreflightIssues, setArtworkEditorPreflightIssues] = useState<ArtworkEditorPreflightIssue[]>([]);
+  const [showArtworkEditorPreflight, setShowArtworkEditorPreflight] = useState(false);
   const [artworkEditorVersions, setArtworkEditorVersions] = useState<Array<{ id: string; label: string; front: string | null; back: string | null }>>([]);
   const [artworkEditorReloadKey, setArtworkEditorReloadKey] = useState(0);
   const [artworkEditorCanUndo, setArtworkEditorCanUndo] = useState(false);
@@ -2711,6 +2722,9 @@ export default function Home() {
   const artworkEditorRestoringRef = useRef(false);
   const artworkEditorObjectUrlsRef = useRef<string[]>([]);
   const artworkEditorSnapToCenterRef = useRef(true);
+  const artworkEditorZoomRef = useRef(1);
+  const artworkEditorVerticalGuidesRef = useRef<number[]>([]);
+  const artworkEditorHorizontalGuidesRef = useRef<number[]>([]);
   const artworkEditorSideRef = useRef<CoroArtworkSide>('front');
   const artworkEditorSideSnapshotsRef = useRef<Record<CoroArtworkSide, string | null>>({ front: null, back: null });
   const artworkEditorClipboardRef = useRef<FabricObject | null>(null);
@@ -2839,6 +2853,12 @@ export default function Home() {
       // If browser storage is unavailable, the menu can still launch the tour manually.
     }
   }, []);
+
+  useEffect(() => {
+    artworkEditorZoomRef.current = artworkEditorZoom;
+    artworkEditorVerticalGuidesRef.current = artworkEditorVerticalGuides;
+    artworkEditorHorizontalGuidesRef.current = artworkEditorHorizontalGuides;
+  }, [artworkEditorZoom, artworkEditorVerticalGuides, artworkEditorHorizontalGuides]);
 
   useEffect(() => {
     try {
@@ -5491,6 +5511,9 @@ export default function Home() {
     }
     if (typeof object.stroke === 'string') setArtworkEditorStroke(object.stroke);
     setArtworkEditorStrokeWidth(Number(object.strokeWidth || 0));
+    const dash = object.strokeDashArray || [];
+    setArtworkEditorStrokeStyle(dash.length === 0 ? 'solid' : dash[0] <= Math.max(2, Number(object.strokeWidth || 1) * 1.5) ? 'dotted' : 'dashed');
+    setArtworkEditorCornerRadius(object.type === 'rect' ? Number((object as Rect).rx || 0) : 0);
     setArtworkEditorOpacity(Math.round((object.opacity ?? 1) * 100));
     const canvas = artworkEditorCanvasRef.current;
     const source = artworkEditorSource;
@@ -5525,6 +5548,8 @@ export default function Home() {
     setArtworkEditorFill('#0b1f44');
     setArtworkEditorStroke('#ffffff');
     setArtworkEditorStrokeWidth(0);
+    setArtworkEditorStrokeStyle('solid');
+    setArtworkEditorCornerRadius(0);
     setArtworkEditorOpacity(100);
     setArtworkEditorBackground('#ffffff');
     setArtworkEditorBorderInset(recommendedBorder.inset);
@@ -5535,11 +5560,17 @@ export default function Home() {
     setArtworkEditorMobileView('canvas');
     setArtworkEditorSnapToCenter(true);
     artworkEditorSnapToCenterRef.current = true;
+    setArtworkEditorSmartGuides({ x: null, y: null });
     setArtworkEditorShowGuides(true);
     setArtworkEditorPrintView(false);
     setArtworkEditorBrightness(0);
     setArtworkEditorContrast(0);
     setArtworkEditorSaturation(0);
+    setArtworkEditorRepeatCount(3);
+    setArtworkEditorRepeatGap(0.25);
+    setArtworkEditorRepeatDirection('horizontal');
+    setArtworkEditorPreflightIssues([]);
+    setShowArtworkEditorPreflight(false);
     setArtworkEditorVersions([]);
     setArtworkEditorReloadKey(0);
     setArtworkEditorStatus(status);
@@ -6024,6 +6055,95 @@ export default function Home() {
     commitArtworkEditorChange(clone);
   };
 
+  const repeatArtworkEditorSelected = async () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !source || !object || object.type === 'activeSelection' || (object as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') return;
+    const printSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
+    const gapPixels = artworkEditorRepeatDirection === 'horizontal'
+      ? (Math.max(0, artworkEditorRepeatGap) / Math.max(0.01, printSize.width)) * canvas.getWidth()
+      : (Math.max(0, artworkEditorRepeatGap) / Math.max(0.01, printSize.height)) * canvas.getHeight();
+    const step = artworkEditorRepeatDirection === 'horizontal' ? object.getScaledWidth() + gapPixels : object.getScaledHeight() + gapPixels;
+    const copies: FabricObject[] = [object];
+    const count = Math.max(2, Math.min(50, Math.round(artworkEditorRepeatCount)));
+    for (let index = 1; index < count; index += 1) {
+      const clone = await object.clone() as FabricObject & { data?: { layerId?: string; layerName?: string } };
+      clone.set({
+        left: (object.left || 0) + (artworkEditorRepeatDirection === 'horizontal' ? step * index : 0),
+        top: (object.top || 0) + (artworkEditorRepeatDirection === 'vertical' ? step * index : 0),
+        selectable: true,
+        evented: true
+      });
+      clone.data = { ...(clone.data || {}), layerId: `artwork-editor-repeat-${Date.now()}-${index}`, layerName: `${clone.data?.layerName || 'Object'} ${index + 1}` };
+      canvas.add(clone);
+      copies.push(clone);
+    }
+    canvas.setActiveObject(new ActiveSelection(copies, { canvas }));
+    canvas.requestRenderAll();
+    refreshArtworkEditorLayers(canvas);
+    captureArtworkEditorHistory(canvas);
+    setArtworkEditorStatus(`${count} copies placed ${artworkEditorRepeatGap}" apart. The repeated set is selected.`);
+  };
+
+  const alignArtworkEditorObjectToArtboard = (mode: 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const object = canvas?.getActiveObject();
+    if (!canvas || !object) return;
+    const bounds = object.getBoundingRect();
+    const center = object.getCenterPoint();
+    const targetX = mode === 'left' ? bounds.width / 2 : mode === 'right' ? canvas.getWidth() - bounds.width / 2 : canvas.getWidth() / 2;
+    const targetY = mode === 'top' ? bounds.height / 2 : mode === 'bottom' ? canvas.getHeight() - bounds.height / 2 : canvas.getHeight() / 2;
+    if (mode === 'left' || mode === 'center-x' || mode === 'right') object.set({ left: (object.left || 0) + targetX - center.x });
+    else object.set({ top: (object.top || 0) + targetY - center.y });
+    commitArtworkEditorChange(object);
+  };
+
+  const matchArtworkEditorSelectionSize = (mode: 'width' | 'height' | 'both') => {
+    const canvas = artworkEditorCanvasRef.current;
+    const objects = canvas?.getActiveObjects() || [];
+    if (!canvas || objects.length < 2) return;
+    const reference = objects[0];
+    const targetWidth = reference.getScaledWidth();
+    const targetHeight = reference.getScaledHeight();
+    objects.slice(1).forEach((object) => {
+      if (mode === 'width' || mode === 'both') object.set({ scaleX: (object.scaleX || 1) * targetWidth / Math.max(1, object.getScaledWidth()) });
+      if (mode === 'height' || mode === 'both') object.set({ scaleY: (object.scaleY || 1) * targetHeight / Math.max(1, object.getScaledHeight()) });
+      object.setCoords();
+    });
+    canvas.requestRenderAll();
+    captureArtworkEditorHistory(canvas);
+    setArtworkEditorStatus(`Selected objects now match the first selected object's ${mode === 'both' ? 'size' : mode}.`);
+  };
+
+  const applyArtworkEditorStrokeOptions = (style = artworkEditorStrokeStyle, cornerRadius = artworkEditorCornerRadius) => {
+    const object = artworkEditorCanvasRef.current?.getActiveObject();
+    if (!object || object.type === 'image') return;
+    const width = Math.max(0, artworkEditorStrokeWidth);
+    const dash = style === 'solid' ? undefined : style === 'dotted' ? [Math.max(1, width), Math.max(3, width * 2.5)] : [Math.max(6, width * 4), Math.max(4, width * 2.5)];
+    object.set({ stroke: width > 0 ? artworkEditorStroke : undefined, strokeWidth: width, strokeDashArray: dash });
+    if (object.type === 'rect') (object as Rect).set({ rx: Math.max(0, cornerRadius), ry: Math.max(0, cornerRadius) });
+    commitArtworkEditorChange(object);
+  };
+
+  const sampleArtworkEditorColor = async () => {
+    type EyeDropperWindow = Window & { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } };
+    const EyeDropperConstructor = (window as EyeDropperWindow).EyeDropper;
+    if (!EyeDropperConstructor) {
+      setArtworkEditorStatus('This browser does not provide an eyedropper. Use the color picker or try Chrome or Edge.');
+      return;
+    }
+    try {
+      const result = await new EyeDropperConstructor().open();
+      setArtworkEditorFill(result.sRGBHex);
+      rememberArtworkEditorColor(result.sRGBHex);
+      if (artworkEditorCanvasRef.current?.getActiveObject()) updateArtworkEditorSelected({ fill: result.sRGBHex });
+      setArtworkEditorStatus(`${result.sRGBHex} sampled and applied.`);
+    } catch {
+      // Closing the browser eyedropper is a normal cancellation, not an error.
+    }
+  };
+
   const moveArtworkEditorLayer = (direction: 'front' | 'back' | 'forward' | 'backward') => {
     const canvas = artworkEditorCanvasRef.current;
     const object = canvas?.getActiveObject();
@@ -6287,6 +6407,7 @@ export default function Home() {
     const next = Math.max(0.5, Math.min(2.5, Number(value.toFixed(1))));
     const canvas = artworkEditorCanvasRef.current;
     setArtworkEditorZoom(next);
+    artworkEditorZoomRef.current = next;
     if (!canvas) return;
     const center = new Point(canvas.getWidth() / 2, canvas.getHeight() / 2);
     canvas.zoomToPoint(center, next);
@@ -6296,6 +6417,7 @@ export default function Home() {
   const resetArtworkEditorCanvasZoom = () => {
     const canvas = artworkEditorCanvasRef.current;
     setArtworkEditorZoom(1);
+    artworkEditorZoomRef.current = 1;
     if (!canvas) return;
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
     canvas.requestRenderAll();
@@ -6673,6 +6795,45 @@ export default function Home() {
     setArtworkEditorStatus('Back side removed. This artwork will save as single-sided.');
   };
 
+  const runArtworkEditorPreflight = () => {
+    const canvas = artworkEditorCanvasRef.current;
+    const source = artworkEditorSource;
+    if (!canvas || !source) return;
+    const printSize = source.signWidth && source.signHeight ? { width: source.signWidth, height: source.signHeight } : getArtworkPrintSize(source.width, source.height);
+    const issues: ArtworkEditorPreflightIssue[] = [];
+    const tolerance = 1;
+    canvas.getObjects().forEach((object, index) => {
+      const data = (object as FabricObject & { data?: { editorRole?: string; layerName?: string } }).data;
+      const name = data?.layerName || (data?.editorRole === 'base' ? 'Original artwork' : `${object.type || 'Object'} ${index + 1}`);
+      const bounds = object.getBoundingRect();
+      if (bounds.left < -tolerance || bounds.top < -tolerance || bounds.left + bounds.width > canvas.getWidth() + tolerance || bounds.top + bounds.height > canvas.getHeight() + tolerance) {
+        issues.push({ id: `outside-${index}`, severity: 'warning', title: `${name} extends outside the artboard`, detail: 'Anything beyond the finished artboard will be trimmed from the saved design.' });
+      }
+      if ((object.opacity ?? 1) < 0.98) {
+        issues.push({ id: `opacity-${index}`, severity: 'warning', title: `${name} is partly transparent`, detail: `Opacity is ${Math.round((object.opacity ?? 1) * 100)}%. Confirm that the lighter appearance is intentional.` });
+      }
+      if (object.type === 'i-text') {
+        const textHeightInches = (object.getScaledHeight() / Math.max(1, canvas.getHeight())) * printSize.height;
+        if (textHeightInches < 0.15) issues.push({ id: `text-${index}`, severity: 'warning', title: `${name} may be too small`, detail: `The text is approximately ${textHeightInches.toFixed(2)}" tall and may be difficult to read or print cleanly.` });
+      }
+      if (Number(object.strokeWidth || 0) > 0) {
+        const strokeInches = (Number(object.strokeWidth || 0) * Math.abs(object.scaleX || 1) / Math.max(1, canvas.getWidth())) * printSize.width;
+        if (strokeInches < 0.02) issues.push({ id: `stroke-${index}`, severity: 'warning', title: `${name} has a very thin outline`, detail: `The outline is approximately ${strokeInches.toFixed(3)}" and may disappear in production.` });
+      }
+      if (object.type === 'image') {
+        const image = object as FabricImage;
+        const element = image.getElement() as HTMLImageElement | HTMLCanvasElement;
+        const sourcePixels = 'naturalWidth' in element ? element.naturalWidth : element.width;
+        const printedWidth = (object.getScaledWidth() / Math.max(1, canvas.getWidth())) * printSize.width;
+        const effectiveDpi = sourcePixels / Math.max(0.01, printedWidth);
+        if (effectiveDpi < 100) issues.push({ id: `dpi-${index}`, severity: effectiveDpi < 72 ? 'error' : 'warning', title: `${name} has low effective resolution`, detail: `Approximately ${Math.round(effectiveDpi)} DPI at its current size. Reduce its printed size or use a higher-resolution image.` });
+      }
+    });
+    setArtworkEditorPreflightIssues(issues);
+    setShowArtworkEditorPreflight(true);
+    setArtworkEditorStatus(issues.length ? `Print Check found ${issues.length} item${issues.length === 1 ? '' : 's'} to review.` : 'Print Check complete. No common production problems were found.');
+  };
+
   const saveArtworkEditorVersion = () => {
     const canvas = artworkEditorCanvasRef.current;
     if (canvas) captureArtworkEditorHistory(canvas);
@@ -6840,16 +7001,39 @@ export default function Home() {
     canvas.on('selection:updated', updateSelection);
     canvas.on('selection:cleared', () => { setArtworkEditorActiveObject(null); refreshArtworkEditorLayers(canvas); });
     canvas.on('object:added', captureChange);
-    canvas.on('object:modified', captureChange);
+    canvas.on('object:modified', (event) => {
+      setArtworkEditorSmartGuides({ x: null, y: null });
+      captureChange();
+    });
     canvas.on('object:removed', captureChange);
     canvas.on('object:moving', (event) => {
       const object = event.target;
       if (!artworkEditorSnapToCenterRef.current || !object) return;
-      const objectCenter = object.getCenterPoint();
-      const canvasCenterX = canvas.getWidth() / 2;
-      const canvasCenterY = canvas.getHeight() / 2;
-      if (Math.abs(objectCenter.x - canvasCenterX) <= 8) object.set({ left: (object.left || 0) + canvasCenterX - objectCenter.x });
-      if (Math.abs(objectCenter.y - canvasCenterY) <= 8) object.set({ top: (object.top || 0) + canvasCenterY - objectCenter.y });
+      const bounds = object.getBoundingRect();
+      const objectX = [bounds.left, bounds.left + bounds.width / 2, bounds.left + bounds.width];
+      const objectY = [bounds.top, bounds.top + bounds.height / 2, bounds.top + bounds.height];
+      const xTargets = [0, canvas.getWidth() / 2, canvas.getWidth(), ...artworkEditorVerticalGuidesRef.current.map((position) => canvas.getWidth() * position / 100)];
+      const yTargets = [0, canvas.getHeight() / 2, canvas.getHeight(), ...artworkEditorHorizontalGuidesRef.current.map((position) => canvas.getHeight() * position / 100)];
+      canvas.getObjects().forEach((candidate) => {
+        if (candidate === object || (candidate as FabricObject & { data?: { editorRole?: string } }).data?.editorRole === 'base') return;
+        const candidateBounds = candidate.getBoundingRect();
+        xTargets.push(candidateBounds.left, candidateBounds.left + candidateBounds.width / 2, candidateBounds.left + candidateBounds.width);
+        yTargets.push(candidateBounds.top, candidateBounds.top + candidateBounds.height / 2, candidateBounds.top + candidateBounds.height);
+      });
+      const threshold = 8 / Math.max(0.5, artworkEditorZoomRef.current);
+      let bestX: { target: number; delta: number } | null = null;
+      let bestY: { target: number; delta: number } | null = null;
+      for (const target of xTargets) for (const edge of objectX) {
+        const delta = target - edge;
+        if (Math.abs(delta) <= threshold && (!bestX || Math.abs(delta) < Math.abs(bestX.delta))) bestX = { target, delta };
+      }
+      for (const target of yTargets) for (const edge of objectY) {
+        const delta = target - edge;
+        if (Math.abs(delta) <= threshold && (!bestY || Math.abs(delta) < Math.abs(bestY.delta))) bestY = { target, delta };
+      }
+      if (bestX) object.set({ left: (object.left || 0) + bestX.delta });
+      if (bestY) object.set({ top: (object.top || 0) + bestY.delta });
+      setArtworkEditorSmartGuides({ x: bestX?.target ?? null, y: bestY?.target ?? null });
     });
     const onPanPointerMove = (pointerEvent: PointerEvent) => {
       if (!isPanning || !canvas.viewportTransform) return;
@@ -11079,6 +11263,7 @@ export default function Home() {
             <div className="mr-auto min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#67d8ff]">Hue Designer</p><h2 className="truncate text-xl font-black">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'Create New Artwork' : `Editing ${artworkEditorSource?.name || 'artwork'}`}</h2><p className="text-xs text-slate-400">{artworkEditorSource?.id.startsWith('new-artwork-') ? 'New blank design' : 'Original preserved'} · {artworkEditorSource ? formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight) : ''}</p></div>
             <div className="flex items-center gap-1 rounded-xl border border-[#38bdf8]/25 bg-black/25 p-1"><button type="button" onClick={() => switchArtworkEditorSide('front')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'front' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>Front</button><button type="button" onClick={() => switchArtworkEditorSide('back')} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${artworkEditorSide === 'back' ? 'bg-[#1686c9] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)]' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{artworkEditorHasBackSide ? 'Back' : '+ Add Back'}</button></div>
             <button type="button" disabled={isArtworkEditorSaving || isArtworkEditorResizing} onClick={() => { if (artworkEditorSource) { const size = artworkEditorSource.signWidth && artworkEditorSource.signHeight ? { width: artworkEditorSource.signWidth, height: artworkEditorSource.signHeight } : getArtworkPrintSize(artworkEditorSource.width, artworkEditorSource.height); setArtworkEditorArtboardWidth(size.width); setArtworkEditorArtboardHeight(size.height); } setArtworkEditorResizeError(''); setShowArtworkEditorResizeDialog(true); }} className="rounded-xl border border-[#38bdf8]/40 bg-[#0c2a40] px-4 py-2.5 text-xs font-black uppercase text-[#a9ecff] shadow-[0_0_24px_rgba(14,165,233,0.12)] hover:border-[#67d8ff] hover:bg-[#10364f] disabled:opacity-40">Artboard Size</button>
+            <button type="button" disabled={isArtworkEditorSaving} onClick={runArtworkEditorPreflight} className="rounded-xl border border-emerald-300/35 bg-emerald-500/10 px-4 py-2.5 text-xs font-black uppercase text-emerald-100 hover:border-emerald-300/65 hover:bg-emerald-500/20 disabled:opacity-40">Print Check</button>
             <button type="button" disabled={isArtworkEditorSaving || isAiEditing} onClick={() => { void openArtworkEditorAiTools(); }} className="rounded-xl border border-violet-300/35 bg-violet-500/10 px-4 py-2.5 text-xs font-black uppercase text-violet-100 shadow-[0_0_24px_rgba(139,92,246,0.12)] hover:border-violet-300/65 hover:bg-violet-500/20 disabled:opacity-40">✦ AI Tools</button>
             <div className="flex items-center gap-1"><button type="button" onClick={saveArtworkEditorVersion} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Save Version</button>{artworkEditorVersions.length ? <select value="" onChange={(event) => restoreArtworkEditorVersion(event.target.value)} className="h-9 rounded-lg border border-white/15 bg-[#0a1928] px-2 text-[10px] text-slate-200"><option value="" disabled>Restore…</option>{artworkEditorVersions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}</select> : null}</div>
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
@@ -11130,7 +11315,7 @@ export default function Home() {
               <button type="button" onClick={() => { void updateArtworkEditorQrCode(); }} className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[9px] font-bold uppercase text-slate-300 hover:border-[#38bdf8]/45">Update selected QR color</button>
               <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Colors & Gradient</p>
               <p className="mt-2 text-[8px] font-black uppercase tracking-wide text-slate-500">Hue + brand palette</p><div className="mt-1 flex flex-wrap gap-2">{['#111827', '#dc2626', '#facc15', '#16a34a', '#7c3aed', ...artworkEditorBrandColors].filter((color, index, colors) => colors.indexOf(color) === index).map((color) => <button key={color} type="button" title={color} onClick={() => { setArtworkEditorFill(color); rememberArtworkEditorColor(color); if (artworkEditorCanvasRef.current?.getActiveObject()) updateArtworkEditorSelected({ fill: color }); else setArtworkEditorCanvasBackground(color); }} className="h-7 w-7 rounded-full border-2 border-white/20 shadow" style={{ backgroundColor: color }} />)}</div>
-              <button type="button" onClick={addArtworkEditorBrandColor} className="mt-2 w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Save current color to brand palette</button>
+              <div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => { void sampleArtworkEditorColor(); }} className="rounded-lg border border-[#38bdf8]/25 bg-[#0c2a40] py-2 text-[9px] font-bold text-[#9be8ff]">Eyedropper</button><button type="button" onClick={addArtworkEditorBrandColor} className="rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Save brand color</button></div>
               {artworkEditorRecentColors.length ? <><p className="mt-3 text-[8px] font-black uppercase tracking-wide text-slate-500">Recent colors</p><div className="mt-1 flex flex-wrap gap-2">{artworkEditorRecentColors.map((color) => <button key={color} type="button" title={color} onClick={() => { setArtworkEditorFill(color); if (artworkEditorCanvasRef.current?.getActiveObject()) updateArtworkEditorSelected({ fill: color }); }} className="h-6 w-6 rounded-full border border-white/25" style={{ backgroundColor: color }} />)}</div></> : null}
               <div className="mt-2 grid grid-cols-[1fr_1fr_auto] items-center gap-1"><input type="color" value={artworkEditorGradientStart} onChange={(event) => setArtworkEditorGradientStart(event.target.value)} className="h-9 w-full rounded bg-transparent" /><input type="color" value={artworkEditorGradientEnd} onChange={(event) => setArtworkEditorGradientEnd(event.target.value)} className="h-9 w-full rounded bg-transparent" /><button type="button" onClick={applyArtworkEditorGradient} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[9px] font-bold text-slate-200">Apply</button></div>
               <div className="mt-6 min-w-0 rounded-2xl border border-[#38bdf8]/25 bg-[#0c2a40]/45 p-3 shadow-[0_0_24px_rgba(14,165,233,0.07)]">
@@ -11141,7 +11326,8 @@ export default function Home() {
               </div>
               <p className="mt-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Canvas</p>
               <label className="mt-2 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-slate-300">Background<input type="color" value={artworkEditorBackground} onChange={(event) => setArtworkEditorCanvasBackground(event.target.value)} className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent" /></label>
-              <button type="button" onClick={() => { const next = !artworkEditorSnapToCenter; setArtworkEditorSnapToCenter(next); artworkEditorSnapToCenterRef.current = next; }} className={`mt-2 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-bold ${artworkEditorSnapToCenter ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}><span>Snap to center</span><span>{artworkEditorSnapToCenter ? 'ON' : 'OFF'}</span></button>
+              <button type="button" onClick={() => { const next = !artworkEditorSnapToCenter; setArtworkEditorSnapToCenter(next); artworkEditorSnapToCenterRef.current = next; setArtworkEditorSmartGuides({ x: null, y: null }); }} className={`mt-2 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-bold ${artworkEditorSnapToCenter ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}><span>Smart snapping</span><span>{artworkEditorSnapToCenter ? 'ON' : 'OFF'}</span></button>
+              <p className="mt-1 text-[8px] leading-4 text-slate-500">Snaps to the artboard, draggable guides, and nearby object edges and centers.</p>
               <button type="button" onClick={() => setArtworkEditorShowGuides((value) => !value)} className={`mt-2 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-bold ${artworkEditorShowGuides ? 'border-[#38bdf8]/25 bg-[#38bdf8]/10 text-[#9be8ff]' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}><span>Bleed & safe guides</span><span>{artworkEditorShowGuides ? 'ON' : 'OFF'}</span></button>
               <div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => setArtworkEditorVerticalGuides((current) => [...current, 50])} className="rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Vertical guide</button><button type="button" onClick={() => setArtworkEditorHorizontalGuides((current) => [...current, 50])} className="rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] font-bold text-slate-300">+ Horizontal guide</button><button type="button" onClick={() => { setArtworkEditorVerticalGuides([]); setArtworkEditorHorizontalGuides([]); }} className="col-span-2 rounded-lg border border-white/10 bg-white/[0.04] py-2 text-[9px] text-slate-400">Clear draggable guides</button></div>
               <div className="mt-2 grid grid-cols-2 gap-2">
@@ -11168,7 +11354,7 @@ export default function Home() {
                   <div className="pointer-events-none absolute bottom-0 left-0 top-5 z-20 w-4 rounded-l border border-r-0 border-sky-400/35 bg-[repeating-linear-gradient(0deg,rgba(14,165,233,.65)_0_1px,transparent_1px_10px)] bg-slate-950/75" />
                   <span className="pointer-events-none absolute left-1/2 top-0 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#38bdf8]/40 bg-[#061524]/95 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-[#9be8ff] shadow-[0_0_24px_rgba(14,165,233,0.22)]">Artboard {formatArtworkInches(artworkEditorSource.width, artworkEditorSource.height, artworkEditorSource.signWidth, artworkEditorSource.signHeight)}</span>
                 </> : null}
-                <div data-artwork-artboard ref={artworkEditorViewportRef} className={`relative max-h-full max-w-full overflow-auto rounded-lg bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)] ${artworkEditorPrintView ? 'border border-white/20' : 'border border-[#67d8ff]/35'}`}><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && !artworkEditorPrintView && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}</div>
+                <div data-artwork-artboard ref={artworkEditorViewportRef} className={`relative max-h-full max-w-full overflow-auto rounded-lg bg-white shadow-[0_22px_70px_rgba(0,0,0,0.55),0_0_35px_rgba(14,165,233,0.14)] ${artworkEditorPrintView ? 'border border-white/20' : 'border border-[#67d8ff]/35'}`}><canvas ref={artworkEditorCanvasElRef} />{artworkEditorShowGuides && !artworkEditorPrintView && artworkEditorSource ? <div className="pointer-events-none absolute inset-0"><div className="absolute border border-dashed border-red-500/70" style={{ inset: `${Math.min(8, (0.125 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute border border-dashed border-emerald-500/70" style={{ inset: `${Math.min(12, (0.5 / Math.max(1, Math.min(artworkEditorSource.signWidth || 24, artworkEditorSource.signHeight || 18))) * 100)}%` }} /><div className="absolute left-1/2 top-0 h-full border-l border-dashed border-[#38bdf8]/35" /><div className="absolute left-0 top-1/2 w-full border-t border-dashed border-[#38bdf8]/35" />{artworkEditorVerticalGuides.map((position, index) => <button key={`v-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('vertical', index, event)} onDoubleClick={() => setArtworkEditorVerticalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute top-0 z-30 h-full w-3 -translate-x-1/2 cursor-ew-resize border-0 bg-transparent p-0" style={{ left: `${position}%` }}><span className="absolute left-1/2 top-0 h-full border-l border-dashed border-fuchsia-400/90" /></button>)}{artworkEditorHorizontalGuides.map((position, index) => <button key={`h-${index}`} type="button" title="Drag guide; double-click to remove" onPointerDown={(event) => beginArtworkEditorGuideDrag('horizontal', index, event)} onDoubleClick={() => setArtworkEditorHorizontalGuides((current) => current.filter((_, guideIndex) => guideIndex !== index))} className="pointer-events-auto absolute left-0 z-30 h-3 w-full -translate-y-1/2 cursor-ns-resize border-0 bg-transparent p-0" style={{ top: `${position}%` }}><span className="absolute left-0 top-1/2 w-full border-t border-dashed border-fuchsia-400/90" /></button>)}<span className="absolute left-5 top-5 rounded bg-red-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Bleed</span><span className="absolute bottom-2 right-2 rounded bg-emerald-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">Safe Area</span></div> : null}{!artworkEditorPrintView && (artworkEditorSmartGuides.x !== null || artworkEditorSmartGuides.y !== null) ? <div className="pointer-events-none absolute inset-0 z-40">{artworkEditorSmartGuides.x !== null ? <div className="absolute top-0 h-full border-l border-dashed border-fuchsia-400" style={{ left: `${(artworkEditorSmartGuides.x / Math.max(1, artworkEditorCanvasRef.current?.getWidth() || 1)) * 100}%` }} /> : null}{artworkEditorSmartGuides.y !== null ? <div className="absolute left-0 w-full border-t border-dashed border-fuchsia-400" style={{ top: `${(artworkEditorSmartGuides.y / Math.max(1, artworkEditorCanvasRef.current?.getHeight() || 1)) * 100}%` }} /> : null}</div> : null}</div>
               </div>
               {!artworkEditorPrintView ? <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#02070d]/75 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{artworkEditorSide} side · Drag handles to resize · Double-click text to edit</span> : null}
             </main>
@@ -11176,7 +11362,8 @@ export default function Home() {
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#67d8ff]">Properties</p>
               {artworkEditorActiveObject ? <div className="mt-3 space-y-3">
                 <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Exact position & size (inches)</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] font-bold uppercase text-slate-500">Center X<input type="number" step="0.01" value={artworkEditorExactX} onChange={(event) => setArtworkEditorExactX(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('x', artworkEditorExactX)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Center Y<input type="number" step="0.01" value={artworkEditorExactY} onChange={(event) => setArtworkEditorExactY(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('y', artworkEditorExactY)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Width<input type="number" min="0.01" step="0.01" value={artworkEditorExactWidth} onChange={(event) => setArtworkEditorExactWidth(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('width', artworkEditorExactWidth)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Height<input type="number" min="0.01" step="0.01" value={artworkEditorExactHeight} onChange={(event) => setArtworkEditorExactHeight(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('height', artworkEditorExactHeight)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label><label className="col-span-2 text-[8px] font-bold uppercase text-slate-500">Rotation<input type="number" step="1" value={artworkEditorExactRotation} onChange={(event) => setArtworkEditorExactRotation(Number(event.target.value))} onBlur={() => updateArtworkEditorExactTransform('rotation', artworkEditorExactRotation)} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/25 px-2 text-xs text-white" /></label></div></div>
-                {artworkEditorActiveObject.type === 'activeSelection' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><div className="grid grid-cols-3 gap-1">{(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((mode) => <button key={mode} type="button" onClick={() => alignArtworkEditorSelection(mode)} className="rounded-lg border border-white/10 bg-white/[0.05] px-1 py-2 text-[9px] font-bold capitalize text-slate-200">{mode}</button>)}</div><div className="mt-1 grid grid-cols-2 gap-1"><button type="button" onClick={() => alignArtworkEditorSelection('distribute-x')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Space X</button><button type="button" onClick={() => alignArtworkEditorSelection('distribute-y')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Space Y</button></div><button type="button" onClick={groupArtworkEditorSelection} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[10px] font-black uppercase text-white">Group selection</button></div> : artworkEditorActiveObject.type === 'group' ? <button type="button" onClick={groupArtworkEditorSelection} className="w-full rounded-lg border border-[#38bdf8]/30 bg-[#0c2a40] py-2 text-[10px] font-black uppercase text-[#9be8ff]">Ungroup elements</button> : null}
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Align to artboard</p><div className="mt-2 grid grid-cols-3 gap-1">{([['left', 'Left'], ['center-x', 'Center X'], ['right', 'Right'], ['top', 'Top'], ['center-y', 'Center Y'], ['bottom', 'Bottom']] as const).map(([mode, label]) => <button key={mode} type="button" onClick={() => alignArtworkEditorObjectToArtboard(mode)} className="rounded-lg border border-white/10 bg-white/[0.05] px-1 py-2 text-[8px] font-bold text-slate-200">{label}</button>)}</div></div>
+                {artworkEditorActiveObject.type === 'activeSelection' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><div className="grid grid-cols-3 gap-1">{(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((mode) => <button key={mode} type="button" onClick={() => alignArtworkEditorSelection(mode)} className="rounded-lg border border-white/10 bg-white/[0.05] px-1 py-2 text-[9px] font-bold capitalize text-slate-200">{mode}</button>)}</div><div className="mt-1 grid grid-cols-2 gap-1"><button type="button" onClick={() => alignArtworkEditorSelection('distribute-x')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Space X</button><button type="button" onClick={() => alignArtworkEditorSelection('distribute-y')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Space Y</button></div><p className="mt-3 text-[8px] font-black uppercase tracking-wide text-slate-500">Match first selected object</p><div className="mt-1 grid grid-cols-3 gap-1"><button type="button" onClick={() => matchArtworkEditorSelectionSize('width')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[8px] text-slate-200">Width</button><button type="button" onClick={() => matchArtworkEditorSelectionSize('height')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[8px] text-slate-200">Height</button><button type="button" onClick={() => matchArtworkEditorSelectionSize('both')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[8px] text-slate-200">Both</button></div><button type="button" onClick={groupArtworkEditorSelection} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[10px] font-black uppercase text-white">Group selection</button></div> : artworkEditorActiveObject.type === 'group' ? <button type="button" onClick={groupArtworkEditorSelection} className="w-full rounded-lg border border-[#38bdf8]/30 bg-[#0c2a40] py-2 text-[10px] font-black uppercase text-[#9be8ff]">Ungroup elements</button> : null}
                 {artworkEditorActiveObject.type === 'i-text' ? <>
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Font<select value={artworkEditorFont} onChange={(event) => { setArtworkEditorFont(event.target.value); updateArtworkEditorSelected({ fontFamily: event.target.value } as Partial<FabricObject>); }} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-[#0a1928] px-3 text-sm normal-case text-white outline-none">{FONT_OPTIONS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Font size<input type="number" min="8" max="400" value={artworkEditorFontSize} onChange={(event) => { const value = Math.max(8, Number(event.target.value) || 8); setArtworkEditorFontSize(value); updateArtworkEditorSelected({ fontSize: value } as Partial<FabricObject>); }} className="mt-1 h-10 w-full rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white outline-none" /></label>
@@ -11189,10 +11376,12 @@ export default function Home() {
                 {artworkEditorActiveObject.type === 'image' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/45 p-3"><p className="text-[10px] font-black uppercase tracking-[0.15em] text-[#8be3ff]">Hue AI quick tools</p><div className="mt-2 grid grid-cols-2 gap-2"><button type="button" disabled={Boolean(artworkEditorAiAction)} onClick={() => { void runArtworkEditorQuickAi('remove-background'); }} className="rounded-lg border border-[#38bdf8]/35 bg-[#1686c9] px-2 py-2 text-[9px] font-black uppercase text-white hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{artworkEditorAiAction === 'remove-background' ? 'Working...' : 'Remove BG'}</button><button type="button" disabled={Boolean(artworkEditorAiAction)} onClick={() => { void runArtworkEditorQuickAi('restore'); }} className="rounded-lg border border-white/10 bg-white/[0.06] px-2 py-2 text-[9px] font-black uppercase text-slate-100 hover:border-[#38bdf8]/45 disabled:cursor-wait disabled:opacity-50">{artworkEditorAiAction === 'restore' ? 'Working...' : 'Enhance'}</button></div><p className="mt-2 text-[8px] leading-4 text-slate-400">Applies to the selected image layer and keeps it on this artboard.</p><p className="mt-4 text-[10px] font-black uppercase tracking-[0.15em] text-[#8be3ff]">Image placement</p><div className="mt-2 grid grid-cols-3 gap-1"><button type="button" onClick={() => fitArtworkEditorSelectedImage('fit')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/50">Fit</button><button type="button" onClick={() => fitArtworkEditorSelectedImage('fill')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/50">Background</button><button type="button" onClick={() => fitArtworkEditorSelectedImage('stretch')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-[#38bdf8]/50">Stretch</button></div><p className="mt-3 text-[9px] font-black uppercase tracking-wide text-slate-500">Crop frame</p><div className="mt-1 grid grid-cols-3 gap-1"><button type="button" onClick={() => applyArtworkEditorImageMask('none')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">None</button><button type="button" onClick={() => applyArtworkEditorImageMask('circle')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Circle</button><button type="button" onClick={() => applyArtworkEditorImageMask('rounded')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[9px] text-slate-200">Rounded</button></div><p className="mt-3 text-[9px] font-black uppercase tracking-wide text-slate-500">Image adjustments</p><label className="mt-1 block text-[8px] text-slate-400">Brightness<input type="range" min="-1" max="1" step="0.05" value={artworkEditorBrightness} onChange={(event) => setArtworkEditorBrightness(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><label className="block text-[8px] text-slate-400">Contrast<input type="range" min="-1" max="1" step="0.05" value={artworkEditorContrast} onChange={(event) => setArtworkEditorContrast(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><label className="block text-[8px] text-slate-400">Saturation<input type="range" min="-1" max="1" step="0.05" value={artworkEditorSaturation} onChange={(event) => setArtworkEditorSaturation(Number(event.target.value))} className="w-full accent-[#38bdf8]" /></label><button type="button" onClick={applyArtworkEditorImageFilters} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase text-white">Apply adjustments</button></div> : <>
                   <div className="grid grid-cols-2 gap-2"><label className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-[10px] font-bold uppercase text-slate-500">Fill<input type="color" value={artworkEditorFill} onChange={(event) => { setArtworkEditorFill(event.target.value); updateArtworkEditorSelected({ fill: event.target.value }); }} className="mt-1 h-8 w-full cursor-pointer rounded bg-transparent" /></label><label className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-[10px] font-bold uppercase text-slate-500">Outline<input type="color" value={artworkEditorStroke} onChange={(event) => { setArtworkEditorStroke(event.target.value); updateArtworkEditorSelected({ stroke: event.target.value }); }} className="mt-1 h-8 w-full cursor-pointer rounded bg-transparent" /></label></div>
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Outline width <span className="float-right text-slate-300">{artworkEditorStrokeWidth}px</span><input type="range" min="0" max="20" value={artworkEditorStrokeWidth} onChange={(event) => { const value = Number(event.target.value); setArtworkEditorStrokeWidth(value); updateArtworkEditorSelected({ strokeWidth: value, stroke: value > 0 ? artworkEditorStroke : undefined }); }} className="mt-2 w-full accent-[#38bdf8]" /></label>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><div className="grid grid-cols-2 gap-1"><button type="button" onClick={() => updateArtworkEditorSelected({ fill: 'transparent' })} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[8px] font-bold text-slate-200">No fill</button><button type="button" onClick={() => { setArtworkEditorStrokeWidth(0); updateArtworkEditorSelected({ stroke: undefined, strokeWidth: 0 }); }} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-[8px] font-bold text-slate-200">No outline</button></div><label className="mt-2 block text-[8px] font-bold uppercase text-slate-500">Line style<select value={artworkEditorStrokeStyle} onChange={(event) => { const value = event.target.value as ArtworkEditorStrokeStyle; setArtworkEditorStrokeStyle(value); applyArtworkEditorStrokeOptions(value); }} className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-[#0a1928] px-2 text-xs normal-case text-white"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label>{artworkEditorActiveObject.type === 'rect' ? <label className="mt-2 block text-[8px] font-bold uppercase text-slate-500">Rounded corners <span className="float-right">{artworkEditorCornerRadius}px</span><input type="range" min="0" max="100" value={artworkEditorCornerRadius} onChange={(event) => { const value = Number(event.target.value); setArtworkEditorCornerRadius(value); applyArtworkEditorStrokeOptions(artworkEditorStrokeStyle, value); }} className="mt-1 w-full accent-[#38bdf8]" /></label> : null}</div>
                 </>}
                 {artworkEditorActiveObject.type === 'image' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-[#8be3ff]">Advanced freeform crop (%)</p><p className="mt-1 text-[8px] leading-4 text-slate-500">Trim each edge independently without deleting the original pixels.</p><div className="mt-2 grid grid-cols-2 gap-1">{(['left', 'right', 'top', 'bottom'] as const).map((edge) => <label key={edge} className="text-[8px] capitalize text-slate-400">{edge}<input type="number" min="0" max="90" value={artworkEditorCrop[edge]} onChange={(event) => setArtworkEditorCrop((current) => ({ ...current, [edge]: Number(event.target.value) }))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label>)}</div><button type="button" onClick={applyArtworkEditorFreeCrop} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase text-white">Apply custom crop</button></div> : null}
                 <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3"><p className="text-[9px] font-black uppercase tracking-wide text-slate-500">Adjustable shadow</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] uppercase text-slate-500">Color<input type="color" value={artworkEditorShadowColor} onChange={(event) => setArtworkEditorShadowColor(event.target.value)} className="mt-1 h-8 w-full bg-transparent" /></label><label className="text-[8px] uppercase text-slate-500">Opacity<input type="number" min="0" max="100" value={artworkEditorShadowOpacity} onChange={(event) => setArtworkEditorShadowOpacity(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] uppercase text-slate-500">Blur<input type="number" min="0" max="100" value={artworkEditorShadowBlur} onChange={(event) => setArtworkEditorShadowBlur(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] uppercase text-slate-500">Offset X<input type="number" min="-100" max="100" value={artworkEditorShadowOffsetX} onChange={(event) => setArtworkEditorShadowOffsetX(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] uppercase text-slate-500">Offset Y<input type="number" min="-100" max="100" value={artworkEditorShadowOffsetY} onChange={(event) => setArtworkEditorShadowOffsetY(Number(event.target.value))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label></div><div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => applyArtworkEditorShadow()} className="rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase">Apply</button><button type="button" onClick={() => applyArtworkEditorShadow(true)} className="rounded-lg border border-white/10 py-2 text-[9px]">Remove</button></div></div>
                 <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Opacity <span className="float-right text-slate-300">{artworkEditorOpacity}%</span><input type="range" min="10" max="100" value={artworkEditorOpacity} onChange={(event) => { const value = Number(event.target.value); setArtworkEditorOpacity(value); updateArtworkEditorSelected({ opacity: value / 100 }); }} className="mt-2 w-full accent-[#38bdf8]" /></label>
+                {artworkEditorActiveObject.type !== 'activeSelection' ? <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-[#8be3ff]">Step and repeat</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[8px] font-bold uppercase text-slate-500">Total copies<input type="number" min="2" max="50" value={artworkEditorRepeatCount} onChange={(event) => setArtworkEditorRepeatCount(Math.max(2, Math.min(50, Number(event.target.value) || 2)))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label><label className="text-[8px] font-bold uppercase text-slate-500">Gap (inches)<input type="number" min="0" max="240" step="0.125" value={artworkEditorRepeatGap} onChange={(event) => setArtworkEditorRepeatGap(Math.max(0, Number(event.target.value) || 0))} className="mt-1 h-8 w-full rounded border border-white/10 bg-black/25 px-2 text-white" /></label></div><div className="mt-2 grid grid-cols-2 gap-1"><button type="button" onClick={() => setArtworkEditorRepeatDirection('horizontal')} className={`rounded-lg border py-2 text-[8px] font-bold ${artworkEditorRepeatDirection === 'horizontal' ? 'border-[#38bdf8]/50 bg-[#1686c9] text-white' : 'border-white/10 bg-white/[0.05] text-slate-300'}`}>Horizontal</button><button type="button" onClick={() => setArtworkEditorRepeatDirection('vertical')} className={`rounded-lg border py-2 text-[8px] font-bold ${artworkEditorRepeatDirection === 'vertical' ? 'border-[#38bdf8]/50 bg-[#1686c9] text-white' : 'border-white/10 bg-white/[0.05] text-slate-300'}`}>Vertical</button></div><button type="button" onClick={() => { void repeatArtworkEditorSelected(); }} className="mt-2 w-full rounded-lg bg-[#1686c9] py-2 text-[9px] font-black uppercase text-white">Create repeated set</button></div> : null}
                 <div><p className="mb-2 text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Quick effects</p><div className="grid grid-cols-4 gap-1"><button type="button" title="Rotate 90 degrees" onClick={() => transformArtworkEditorSelected('rotate')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">↻ 90°</button><button type="button" title="Flip horizontally" onClick={() => transformArtworkEditorSelected('flip-horizontal')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">⇆</button><button type="button" title="Flip vertically" onClick={() => transformArtworkEditorSelected('flip-vertical')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">⇅</button><button type="button" title="Toggle drop shadow" onClick={() => transformArtworkEditorSelected('shadow')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs text-slate-200 hover:border-[#38bdf8]/40">Shadow</button></div></div>
                 <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => centerArtworkEditorSelected('horizontal')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs">Center X</button><button type="button" onClick={() => centerArtworkEditorSelected('vertical')} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs">Center Y</button><button type="button" onClick={() => { void duplicateArtworkEditorSelected(); }} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-2 text-xs">Duplicate</button><button type="button" onClick={deleteArtworkEditorSelected} className="rounded-lg border border-red-400/20 bg-red-500/10 px-2 py-2 text-xs text-red-200">Delete</button><button type="button" onClick={() => { const layerId = (artworkEditorCanvasRef.current?.getActiveObject() as FabricObject & { data?: { layerId?: string } } | undefined)?.data?.layerId; if (layerId) toggleArtworkEditorLayerLock(layerId); }} className="col-span-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-2 py-2 text-xs font-bold text-amber-100">🔒 Lock selected layer</button></div>
                 <div className="grid grid-cols-4 gap-1"><button type="button" title="Send to back" onClick={() => moveArtworkEditorLayer('back')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">⇊</button><button type="button" title="Move backward" onClick={() => moveArtworkEditorLayer('backward')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">↓</button><button type="button" title="Move forward" onClick={() => moveArtworkEditorLayer('forward')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">↑</button><button type="button" title="Bring to front" onClick={() => moveArtworkEditorLayer('front')} className="rounded-lg border border-white/10 bg-white/[0.05] py-2 text-xs">⇈</button></div>
@@ -11206,6 +11395,14 @@ export default function Home() {
             <button type="button" disabled={isArtworkEditorSaving} onClick={closeArtworkEditor} className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.1] disabled:opacity-40">Cancel</button>
             <button type="button" disabled={isArtworkEditorSaving} onClick={() => { void saveArtworkEditorCopy(); }} className="rounded-xl bg-[#1686c9] px-6 py-3 text-sm font-black uppercase text-white shadow-[0_12px_30px_rgba(14,165,233,0.25)] hover:bg-[#0f6da8] disabled:cursor-wait disabled:opacity-50">{isArtworkEditorSaving ? 'Bottling the print magic...' : artworkEditorOrderReturn ? 'Save & Return to Order Builder' : 'Save to Image Zone'}</button>
           </footer>
+        </section>
+      </div> : null}
+
+      {showArtworkEditor && showArtworkEditorPreflight ? <div className="fixed inset-0 z-[118] flex items-center justify-center bg-[#02070d]/85 p-4 backdrop-blur-md">
+        <section role="dialog" aria-modal="true" aria-labelledby="print-check-title" className="flex max-h-[88dvh] w-[min(620px,95vw)] flex-col overflow-hidden rounded-2xl border border-emerald-300/35 bg-[#071522] text-white shadow-[0_30px_100px_rgba(0,0,0,0.78),0_0_54px_rgba(16,185,129,0.14)]">
+          <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.18),transparent_48%),#071522] px-6 py-5"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-300">Hue production preflight</p><h3 id="print-check-title" className="mt-1 text-2xl font-black">Print Check</h3><p className="mt-2 text-sm leading-6 text-slate-300">A quick review of common print problems. Warnings do not prevent you from saving.</p></div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">{artworkEditorPreflightIssues.length === 0 ? <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5"><p className="text-lg font-black text-emerald-100">Looks ready to print</p><p className="mt-2 text-sm leading-6 text-emerald-50/75">No objects outside the artboard, low-resolution images, tiny text, thin outlines, or unexpected transparency were detected.</p></div> : <div className="space-y-3">{artworkEditorPreflightIssues.map((issue) => <div key={issue.id} className={`rounded-xl border p-4 ${issue.severity === 'error' ? 'border-red-300/30 bg-red-500/10' : 'border-amber-300/25 bg-amber-300/[0.07]'}`}><div className="flex items-start gap-3"><span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${issue.severity === 'error' ? 'bg-red-400/20 text-red-200' : 'bg-amber-300/15 text-amber-200'}`}>{issue.severity === 'error' ? '!' : 'i'}</span><div><p className="text-sm font-black text-white">{issue.title}</p><p className="mt-1 text-xs leading-5 text-slate-300">{issue.detail}</p></div></div></div>)}</div>}</div>
+          <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 bg-[#050d16] px-5 py-4"><p className="text-xs text-slate-500">Final production review is still recommended.</p><button type="button" onClick={() => setShowArtworkEditorPreflight(false)} className="rounded-xl bg-emerald-600 px-6 py-3 text-xs font-black uppercase text-white hover:bg-emerald-500">Return to Designer</button></footer>
         </section>
       </div> : null}
 
