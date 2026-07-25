@@ -350,19 +350,29 @@ const makeArtworkEditorDraftSnapshotPortable = async (snapshot: string | null) =
   return JSON.stringify(projectData);
 };
 
+const isDurableOrderArtworkUrl = (value?: string) => {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value, 'https://hue-studio.local');
+    return parsed.pathname === '/api/orders/artwork' && Boolean(parsed.searchParams.get('token'));
+  } catch {
+    return false;
+  }
+};
+
 const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
   artworkFiles: item.artworkFiles.map((file) => ({
     ...file,
     // Signed preview URLs are intentionally disposable. Persist only the
-    // secure path so an overnight or cross-device cart cannot revive an
-    // expired URL.
-    previewUrl: (file.storagePath || file.previewUrl?.startsWith('data:')) ? undefined : file.previewUrl
+    // secure path or Hue's renewable order-artwork URL so an overnight or
+    // cross-device cart cannot revive an expired storage-provider URL.
+    previewUrl: (file.previewUrl?.startsWith('data:') || (file.storagePath && !isDurableOrderArtworkUrl(file.previewUrl))) ? undefined : file.previewUrl
   })),
   productionBreakdown: (item.productionBreakdown || []).map((artwork) => ({
     ...artwork,
-    frontPreviewUrl: (artwork.frontStoragePath || artwork.frontPreviewUrl?.startsWith('data:')) ? undefined : artwork.frontPreviewUrl,
-    backPreviewUrl: (artwork.backStoragePath || artwork.backPreviewUrl?.startsWith('data:')) ? undefined : artwork.backPreviewUrl
+    frontPreviewUrl: (artwork.frontPreviewUrl?.startsWith('data:') || (artwork.frontStoragePath && !isDurableOrderArtworkUrl(artwork.frontPreviewUrl))) ? undefined : artwork.frontPreviewUrl,
+    backPreviewUrl: (artwork.backPreviewUrl?.startsWith('data:') || (artwork.backStoragePath && !isDurableOrderArtworkUrl(artwork.backPreviewUrl))) ? undefined : artwork.backPreviewUrl
   }))
 }));
 

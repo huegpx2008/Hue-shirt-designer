@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createArtworkAccessUrl } from '@/lib/server/artwork-access';
 import {
   hasSupabaseAdminConfig,
   supabaseAdminFetch,
@@ -20,8 +21,15 @@ type StoredOrderRow = {
 };
 
 const normalizeEmail = (value?: string | null) => value?.trim().toLowerCase() || '';
+const createFreshArtworkUrl = (origin: string, storagePath: string) => {
+  try {
+    return createArtworkAccessUrl(origin, storagePath);
+  } catch {
+    return '';
+  }
+};
 
-const hydrateOrder = (row: StoredOrderRow, user: { id: string; email?: string }) => {
+const hydrateOrder = (row: StoredOrderRow, user: { id: string; email?: string }, origin: string) => {
   const orderData = row.order_data && typeof row.order_data === 'object' ? row.order_data : {};
   const storedCustomer = orderData.customer && typeof orderData.customer === 'object'
     ? orderData.customer as Record<string, unknown>
@@ -29,10 +37,29 @@ const hydrateOrder = (row: StoredOrderRow, user: { id: string; email?: string })
   const items = Array.isArray(orderData.items)
     ? orderData.items.map((item) => {
       const storedItem = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      const artworkFiles = Array.isArray(storedItem.artworkFiles) ? storedItem.artworkFiles.map((file) => {
+        const storedFile = file && typeof file === 'object' ? file as Record<string, unknown> : {};
+        const storagePath = String(storedFile.storagePath || '');
+        if (!storagePath) return storedFile;
+        const previewUrl = createFreshArtworkUrl(origin, storagePath);
+        return previewUrl ? { ...storedFile, previewUrl, storageUrl: previewUrl } : storedFile;
+      }) : [];
+      const productionBreakdown = Array.isArray(storedItem.productionBreakdown) ? storedItem.productionBreakdown.map((artwork) => {
+        const storedArtwork = artwork && typeof artwork === 'object' ? artwork as Record<string, unknown> : {};
+        const frontStoragePath = String(storedArtwork.frontStoragePath || '');
+        const backStoragePath = String(storedArtwork.backStoragePath || '');
+        const frontPreviewUrl = frontStoragePath ? createFreshArtworkUrl(origin, frontStoragePath) : '';
+        const backPreviewUrl = backStoragePath ? createFreshArtworkUrl(origin, backStoragePath) : '';
+        return {
+          ...storedArtwork,
+          ...(frontPreviewUrl ? { frontPreviewUrl } : {}),
+          ...(backPreviewUrl ? { backPreviewUrl } : {}),
+        };
+      }) : [];
       return {
         ...storedItem,
-        artworkFiles: Array.isArray(storedItem.artworkFiles) ? storedItem.artworkFiles : [],
-        productionBreakdown: Array.isArray(storedItem.productionBreakdown) ? storedItem.productionBreakdown : [],
+        artworkFiles,
+        productionBreakdown,
         productionRecipes: Array.isArray(storedItem.productionRecipes) ? storedItem.productionRecipes : []
       };
     })
@@ -92,8 +119,9 @@ export async function GET(request: Request) {
       if (key && !uniqueRows.has(key)) uniqueRows.set(key, row);
     });
 
+    const origin = new URL(request.url).origin;
     const orders = Array.from(uniqueRows.values())
-      .map((row) => hydrateOrder(row, user))
+      .map((row) => hydrateOrder(row, user, origin))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
     return NextResponse.json(
