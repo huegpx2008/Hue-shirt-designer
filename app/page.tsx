@@ -1276,7 +1276,7 @@ const getGuidedTourProductPreset = (product: StoreProductCard): Partial<GuidedTo
   if (product.signProductId === 'vinyl') return { width: '24', height: '18', quantity: '1', material: 'standard', finishing: [] };
   if (product.signProductId === 'vehicle-magnet') return { width: '24', height: '18', quantity: '1', material: 'standard', finishing: ['roundedCorners'] };
   if (product.signProductId === 'poster') return { width: '18', height: '24', quantity: '1', material: '8mil', finishing: [] };
-  if (product.signProductId === 'handheld-paper') return { width: '4', height: '6', quantity: '100', material: 'standard', orientation: 'Portrait', coating: 'No Coating', finishing: [] };
+  if (product.signProductId === 'handheld-paper') return { width: '3.5', height: '2.5', quantity: '100', material: 'standard', orientation: 'Landscape', coating: 'Gloss Laminate', finishing: [] };
   return {};
 };
 const CORO_SHEET = { width: 48, height: 96 };
@@ -1742,17 +1742,23 @@ const MAGNET_SIZE_OPTIONS = [
   { label: '72" x 24"', value: '72x24' }
 ];
 const HANDHELD_SIZE_OPTIONS = [
-  { label: '4" x 6" Postcard (8 per sheet)', value: '4x6', width: 4, height: 6, yield: 8 },
-  { label: '5" x 7" Handout (4 per sheet)', value: '5x7', width: 5, height: 7, yield: 4 },
-  { label: '5.5" x 8.5" Half Sheet (2 per sheet)', value: '5.5x8.5', width: 5.5, height: 8.5, yield: 2 },
-  { label: '8.5" x 11" Full Sheet (1 per sheet)', value: '8.5x11', width: 8.5, height: 11, yield: 1 },
-  { label: '11" x 17" Tabloid (1 per sheet)', value: '11x17', width: 11, height: 17, yield: 1 }
+  { label: '3.5" x 2.5" Trading Card (56 per sheet)', value: '3.5x2.5', width: 3.5, height: 2.5, yield: 56 },
+  { label: '5" x 3" (30 per sheet)', value: '5x3', width: 5, height: 3, yield: 30 },
+  { label: '6" x 4" (21 per sheet)', value: '6x4', width: 6, height: 4, yield: 21 },
+  { label: '7" x 5" (12 per sheet)', value: '7x5', width: 7, height: 5, yield: 12 },
+  { label: '9" x 4" (14 per sheet)', value: '9x4', width: 9, height: 4, yield: 14 },
+  { label: '9" x 6" (9 per sheet)', value: '9x6', width: 9, height: 6, yield: 9 },
+  { label: '11" x 8.5" (5 per sheet)', value: '11x8.5', width: 11, height: 8.5, yield: 5 },
+  { label: '14" x 11" (2 per sheet)', value: '14x11', width: 14, height: 11, yield: 2 },
+  { label: '16" x 12" (2 per sheet)', value: '16x12', width: 16, height: 12, yield: 2 },
+  { label: '17" x 11" (2 per sheet)', value: '17x11', width: 17, height: 11, yield: 2 },
+  { label: '12" x 18" (2 per sheet)', value: '12x18', width: 12, height: 18, yield: 2 },
+  { label: '20" x 16" (1 per sheet)', value: '20x16', width: 20, height: 16, yield: 1 },
+  { label: '18" x 28" (1 per sheet)', value: '18x28', width: 18, height: 28, yield: 1 }
 ];
 const HANDHELD_COATING_OPTIONS = [
-  { label: 'No Coating', value: 'No Coating' },
-  { label: 'Gloss', value: 'Gloss' },
-  { label: 'Matte', value: 'Matte' },
-  { label: 'Gloss Laminate', value: 'Gloss Laminate' }
+  { label: 'Gloss Laminate', value: 'Gloss Laminate' },
+  { label: 'No Coating', value: 'No Coating' }
 ];
 const ROUNDED_CORNER_OPTIONS = [
   { label: 'None', value: 'none', note: 'Square finished corners' },
@@ -1937,21 +1943,21 @@ const SIGN_PRODUCT_CONFIGS: SignProductConfig[] = [
         ]
       : id === 'handheld-paper'
         ? [
-            { name: 'size', label: 'Size', type: 'select' as const, defaultValue: '4x6', options: HANDHELD_SIZE_OPTIONS },
-            { name: 'width', label: 'Width (inches)', type: 'number' as const, defaultValue: '4', step: '0.25' },
-            { name: 'height', label: 'Height (inches)', type: 'number' as const, defaultValue: '6', step: '0.25' },
+            { name: 'size', label: 'Size', type: 'select' as const, defaultValue: '3.5x2.5', options: HANDHELD_SIZE_OPTIONS },
+            { name: 'width', label: 'Width (inches)', type: 'number' as const, defaultValue: '3.5', step: '0.25' },
+            { name: 'height', label: 'Height (inches)', type: 'number' as const, defaultValue: '2.5', step: '0.25' },
             { name: 'quantity', label: 'Quantity', type: 'number' as const, defaultValue: '100', step: '1' },
             {
               name: 'orientation',
               label: 'Orientation',
               type: 'select' as const,
-              defaultValue: 'Portrait',
+              defaultValue: 'Landscape',
               options: [
                 { label: 'Portrait', value: 'Portrait' },
                 { label: 'Landscape', value: 'Landscape' }
               ]
             },
-            { name: 'coating', label: 'Coating', type: 'select' as const, defaultValue: 'No Coating', options: HANDHELD_COATING_OPTIONS },
+            { name: 'coating', label: 'Coating', type: 'select' as const, defaultValue: 'Gloss Laminate', options: HANDHELD_COATING_OPTIONS },
             { name: 'material', label: 'Stock', type: 'select' as const, defaultValue: materialOptions[0]?.value || 'standard', options: materialOptions },
             {
               name: 'sides',
@@ -2166,9 +2172,10 @@ const toSignPricingPayload = (product: SignProductConfig, values: Record<string,
         orientation: String(values.orientation || 'Landscape')
       } : {}),
       ...(product.id === 'handheld-paper' ? {
-        size: String(values.size || handheldSize?.value || '4x6'),
-        coating: String(values.coating || 'No Coating'),
-        orientation: String(values.orientation || 'Portrait')
+        size: String(values.size || handheldSize?.value || '3.5x2.5'),
+        coating: String(values.coating || 'Gloss Laminate'),
+        orientation: String(values.orientation || 'Landscape'),
+        rush: false
       } : {}),
       roundedCorners: product.id === 'acrylic' || ['acm', 'aluminum'].includes(product.id) ? String(values.roundedCorners || 'none') !== 'none' : values.roundedCorners || 'none',
       ...(['acm', 'aluminum', 'vehicle-magnet'].includes(product.id) ? { roundedCornerRadius: String(values.roundedCorners || 'none') } : {}),
