@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminRequest } from '@/lib/server/admin-auth';
-import { getStorageBucket, getStorageSignedUrl, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
+import { getStorageBucket, hasSupabaseAdminConfig, supabaseAdminFetch } from '@/lib/server/supabase-admin';
 import { DEFAULT_SHEET_PRICING, STUDIO_PRICING_PRODUCTS } from '@/lib/server/studio-pricing';
 import { enforceRateLimit } from '@/lib/server/request-security';
 
@@ -24,7 +24,9 @@ type ArtworkAssetEntry = {
   updated_at?: string;
 };
 
-const canPreviewImage = (entry: StorageEntry) => String(entry.metadata?.mimetype || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(entry.name || '');
+const canPreviewImage = (entry: StorageEntry) => /\.(png|jpe?g|webp|gif)$/i.test(entry.name || '')
+  || ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(String(entry.metadata?.mimetype || '').toLowerCase());
+const adminPreviewUrl = (path: string) => `/api/admin/artwork/preview?path=${encodeURIComponent(path)}`;
 const isInternalDerivative = (path?: string) => Boolean(path && (
   path.startsWith('archive-previews/')
   || /\/(?:previews|thumbnails)\//i.test(path)
@@ -114,22 +116,17 @@ export async function GET(request: NextRequest) {
         .filter((file) => !isInternalDerivative(file.path))
         .map((file) => ({ ...file, artifact_kind: storageArtifactKind(file.path) }))
       : [];
-    const legacyFiles = await Promise.all(rawFiles.map(async (file) => {
-      if (!file.path || !canPreviewImage(file)) return file;
-      try {
-        return { ...file, preview_url: await getStorageSignedUrl(file.path) };
-      } catch {
-        return file;
-      }
-    }));
-    const registeredFiles = await Promise.all(artworkAssets.map(async (asset) => ({
+    const legacyFiles = rawFiles.map((file) => file.path && canPreviewImage(file)
+      ? { ...file, preview_url: adminPreviewUrl(file.path) }
+      : file);
+    const registeredFiles = artworkAssets.map((asset) => ({
       id: asset.id,
       name: asset.original_name,
       path: asset.preview_storage_path,
       created_at: asset.created_at,
       updated_at: asset.updated_at,
       metadata: { size: Number(asset.file_size || 0), mimetype: asset.mime_type },
-      preview_url: await getStorageSignedUrl(asset.preview_storage_path).catch(() => undefined),
+      preview_url: adminPreviewUrl(asset.preview_storage_path),
       asset_id: asset.id,
       owner_user_id: asset.owner_user_id,
       production_reference: asset.production_reference,
@@ -138,7 +135,7 @@ export async function GET(request: NextRequest) {
       derivative_count: 2,
       drive_recovery_ready: Boolean(asset.drive_file_id && asset.drive_verified_at),
       artifact_kind: registeredArtifactKind(asset.original_name),
-    })));
+    }));
     const files = [...registeredFiles, ...legacyFiles];
     const promos = results[3].status === 'fulfilled' ? results[3].value : [];
     const savedPricing = results[4].status === 'fulfilled' ? results[4].value as Array<Record<string, unknown>> : [];

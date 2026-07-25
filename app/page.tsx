@@ -353,12 +353,15 @@ const getPersistableCartItems = (items: CartItem[]) => items.map((item) => ({
   ...item,
   artworkFiles: item.artworkFiles.map((file) => ({
     ...file,
-    previewUrl: file.previewUrl?.startsWith('data:') ? undefined : file.previewUrl
+    // Signed preview URLs are intentionally disposable. Persist only the
+    // secure path so an overnight or cross-device cart cannot revive an
+    // expired URL.
+    previewUrl: (file.storagePath || file.previewUrl?.startsWith('data:')) ? undefined : file.previewUrl
   })),
   productionBreakdown: (item.productionBreakdown || []).map((artwork) => ({
     ...artwork,
-    frontPreviewUrl: artwork.frontPreviewUrl?.startsWith('data:') ? undefined : artwork.frontPreviewUrl,
-    backPreviewUrl: artwork.backPreviewUrl?.startsWith('data:') ? undefined : artwork.backPreviewUrl
+    frontPreviewUrl: (artwork.frontStoragePath || artwork.frontPreviewUrl?.startsWith('data:')) ? undefined : artwork.frontPreviewUrl,
+    backPreviewUrl: (artwork.backStoragePath || artwork.backPreviewUrl?.startsWith('data:')) ? undefined : artwork.backPreviewUrl
   }))
 }));
 
@@ -3165,7 +3168,7 @@ export default function Home() {
     const storagePaths = cartStoragePathKey.split('|');
     void Promise.all(storagePaths.map(async (storagePath) => [
       storagePath,
-      await getSupabaseSignedUrl(storagePath, customerSession).catch(() => ''),
+      await loadPrivateArtworkFile(storagePath, customerSession.access_token).catch(() => ''),
     ] as const)).then((entries) => {
       if (canceled) return;
       const refreshedUrls = new Map(entries.filter((entry) => entry[1]));
@@ -3184,7 +3187,7 @@ export default function Home() {
       })));
     });
     return () => { canceled = true; };
-  }, [cartStoragePathKey, customerSession]);
+  }, [cartStoragePathKey, cloudCartHydratedUserId, customerSession]);
 
   useEffect(() => {
     try {

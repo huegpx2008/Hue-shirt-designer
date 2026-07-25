@@ -564,7 +564,7 @@ function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrd
   }, [order.printavo_status, order.printavo_order_number]);
   const items = order.order_data?.items || [];
   const artworkCount = items.reduce((total, item) => total + (item.productionBreakdown?.length || 0), 0);
-  const previewFor = (storagePath?: string, fallback?: string) => files.find((file) => storagePath && file.path === storagePath)?.preview_url || fallback;
+  const previewFor = (storagePath?: string) => files.find((file) => storagePath && file.path === storagePath)?.preview_url;
   const customer = order.order_data?.customer;
   const fulfillment = order.order_data?.fulfillment;
   const address = fulfillment?.address;
@@ -624,8 +624,8 @@ function OrderRow({ order, files, onPreview, onOrderUpdated }: { order: AdminOrd
         <div className="mt-3 grid gap-3 lg:grid-cols-2"><OrderDetailList title="Selected options" items={item.optionSummary} empty="No option details were recorded for this older item." /><OrderDetailList title="Production notes" items={item.productionSummary} empty="No production notes were recorded." /></div>
         {item.price ? <div className="mt-3 flex flex-wrap gap-2 text-[11px]"><span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Item total: <strong className="text-white">{money(item.price.total, item.price.currency || currency)}</strong></span><span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Each: <strong className="text-white">{money(item.price.each, item.price.currency || currency)}</strong></span>{item.price.sheetCount ? <span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Sheets: <strong className="text-white">{item.price.sheetCount}</strong></span> : null}{item.price.pricePerSheet ? <span className="rounded-lg bg-white/[0.05] px-3 py-2 text-slate-300">Per sheet: <strong className="text-white">{money(item.price.pricePerSheet, item.price.currency || currency)}</strong></span> : null}</div> : null}
         {(item.productionBreakdown || []).length ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{item.productionBreakdown?.map((artwork, artworkIndex) => {
-          const frontPreview = previewFor(artwork.frontStoragePath, artwork.frontPreviewUrl);
-          const backPreview = previewFor(artwork.backStoragePath, artwork.backPreviewUrl);
+          const frontPreview = previewFor(artwork.frontStoragePath);
+          const backPreview = previewFor(artwork.backStoragePath);
           const frontFile = files.find((file) => file.path === artwork.frontStoragePath);
           const backFile = files.find((file) => file.path === artwork.backStoragePath);
           return <div key={artwork.id || `${itemIndex}-${artworkIndex}`} className="flex gap-3 rounded-lg border border-[#38bdf8]/25 bg-[#071827] p-2.5">
