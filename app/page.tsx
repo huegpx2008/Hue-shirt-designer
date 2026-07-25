@@ -5558,22 +5558,38 @@ export default function Home() {
     if (returnToImageZone) setShowImageZone(true);
   };
 
-  const resizeArtworkEditorSnapshot = async (snapshot: string | null, oldWidth: number, oldHeight: number, newWidth: number, newHeight: number) => {
+  const resizeArtworkEditorSnapshot = async (
+    snapshot: string | null,
+    oldWidth: number,
+    oldHeight: number,
+    newWidth: number,
+    newHeight: number,
+    oldPrintSize: { width: number; height: number },
+    newPrintSize: { width: number; height: number }
+  ) => {
     if (!snapshot) return null;
     const element = document.createElement('canvas');
     const snapshotCanvas = new Canvas(element, { width: oldWidth, height: oldHeight, backgroundColor: artworkEditorBackground, preserveObjectStacking: true });
     try {
       await snapshotCanvas.loadFromJSON(snapshot);
-      const scale = Math.min(newWidth / Math.max(1, oldWidth), newHeight / Math.max(1, oldHeight));
-      const offsetX = (newWidth - oldWidth * scale) / 2;
-      const offsetY = (newHeight - oldHeight * scale) / 2;
+      const oldPixelsPerInchX = oldWidth / Math.max(0.01, oldPrintSize.width);
+      const oldPixelsPerInchY = oldHeight / Math.max(0.01, oldPrintSize.height);
+      const newPixelsPerInchX = newWidth / Math.max(0.01, newPrintSize.width);
+      const newPixelsPerInchY = newHeight / Math.max(0.01, newPrintSize.height);
+      const scaleX = newPixelsPerInchX / Math.max(0.01, oldPixelsPerInchX);
+      const scaleY = newPixelsPerInchY / Math.max(0.01, oldPixelsPerInchY);
       snapshotCanvas.getObjects().forEach((object) => {
+        const oldCenter = object.getCenterPoint();
+        const centerOffsetInchesX = (oldCenter.x - oldWidth / 2) / oldPixelsPerInchX;
+        const centerOffsetInchesY = (oldCenter.y - oldHeight / 2) / oldPixelsPerInchY;
         object.set({
-          left: (object.left || 0) * scale + offsetX,
-          top: (object.top || 0) * scale + offsetY,
-          scaleX: (object.scaleX || 1) * scale,
-          scaleY: (object.scaleY || 1) * scale
+          scaleX: (object.scaleX || 1) * scaleX,
+          scaleY: (object.scaleY || 1) * scaleY
         });
+        object.setPositionByOrigin(new Point(
+          newWidth / 2 + centerOffsetInchesX * newPixelsPerInchX,
+          newHeight / 2 + centerOffsetInchesY * newPixelsPerInchY
+        ), 'center', 'center');
         object.setCoords();
       });
       snapshotCanvas.setDimensions({ width: newWidth, height: newHeight });
@@ -5617,8 +5633,8 @@ export default function Home() {
       const safePixelSize = getPrintSafePixelSize(requestedPixelWidth, requestedPixelHeight, { width, height });
       const newWorkspace = getArtworkEditorWorkspaceSize(safePixelSize.width, safePixelSize.height);
       const [front, back] = await Promise.all([
-        resizeArtworkEditorSnapshot(artworkEditorSideSnapshotsRef.current.front, oldWorkspaceWidth, oldWorkspaceHeight, newWorkspace.width, newWorkspace.height),
-        resizeArtworkEditorSnapshot(artworkEditorSideSnapshotsRef.current.back, oldWorkspaceWidth, oldWorkspaceHeight, newWorkspace.width, newWorkspace.height)
+        resizeArtworkEditorSnapshot(artworkEditorSideSnapshotsRef.current.front, oldWorkspaceWidth, oldWorkspaceHeight, newWorkspace.width, newWorkspace.height, currentPrintSize, { width, height }),
+        resizeArtworkEditorSnapshot(artworkEditorSideSnapshotsRef.current.back, oldWorkspaceWidth, oldWorkspaceHeight, newWorkspace.width, newWorkspace.height, currentPrintSize, { width, height })
       ]);
       artworkEditorSideSnapshotsRef.current = { front, back };
       const nextSource: ImageZoneItem = {
@@ -5648,7 +5664,7 @@ export default function Home() {
       setArtworkEditorActiveObject(null);
       setArtworkEditorResizeError('');
       setShowArtworkEditorResizeDialog(false);
-      setArtworkEditorStatus(`Artboard resized to ${width}\" × ${height}\". Existing artwork stayed proportional and centered.`);
+      setArtworkEditorStatus(`Artboard resized to ${width}\" × ${height}\". Existing artwork kept its original size and was centered on the new artboard.`);
     } catch (error) {
       setArtworkEditorResizeError(error instanceof Error ? `The artboard could not be resized: ${error.message}` : 'The artboard could not be resized.');
     } finally {
@@ -11152,7 +11168,7 @@ export default function Home() {
           <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(14,165,233,0.20),transparent_48%),#071522] px-6 py-5">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#67d8ff]">Hue Designer</p>
             <h3 id="artboard-size-title" className="mt-2 text-2xl font-black">Change artboard size</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-300">Enter the finished print size. Existing artwork stays proportional and centered on the new artboard.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Enter the finished print size. Existing artwork keeps its current physical size while the artboard grows or shrinks around it, similar to Illustrator.</p>
           </div>
           <div className="space-y-4 px-6 py-6">
             <div className="grid grid-cols-2 gap-3">
