@@ -120,7 +120,7 @@ const usePrintShopQuip = (active: boolean) => {
 };
 type ArtworkEditorProject = { version: 1; front: string | null; back: string | null; width: number; height: number; signWidth?: number; signHeight?: number; dpi: number; updatedAt: string };
 type ArtworkEditorOrderReturn = { side: 'front' | 'back'; width: number; height: number; fitState: ArtworkFitState };
-type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backDpi?: number; backSourceSignWidth?: number; backSourceSignHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
+type ImageZoneItem = { id: string; name: string; dataUrl: string; width: number; height: number; dpi: number; uploadedAt: string; storagePath?: string; storageUrl?: string; previewStoragePath?: string; thumbnailStoragePath?: string; thumbnailUrl?: string; assetId?: string; productionReference?: string; originalProvider?: 'b2' | 'supabase' | 'drive'; source?: 'local' | 'supabase' | 'archive'; archiveId?: string; archived?: boolean; mimeType?: string; frontFitState?: ArtworkFitState; backDataUrl?: string; backName?: string; backStoragePath?: string; backPreviewStoragePath?: string; backWidth?: number; backHeight?: number; backDpi?: number; backSourceSignWidth?: number; backSourceSignHeight?: number; backCopiedFromFront?: boolean; backFitState?: ArtworkFitState; signWidth?: number; signHeight?: number; sourceSignWidth?: number; sourceSignHeight?: number; fluteDirection?: string; editorProject?: ArtworkEditorProject; projectStoragePath?: string };
 type CanvaImportStatus = { configured: boolean; connected?: boolean; authUrl?: string; missing?: string[]; message?: string; expectedRedirectUri?: string };
 type CanvaDesign = { id: string; title: string; thumbnailUrl?: string; updatedAt?: string };
 type CanvaImportPayload = { name: string; dataUrl: string; mimeType: string };
@@ -1235,6 +1235,19 @@ const loadPrivateArtworkFile = async (storagePath: string, accessToken: string) 
   });
   if (!response.ok) throw new Error(await getErrorMessage(response));
   return blobToDataUrl(await response.blob());
+};
+
+const loadFirstAvailablePrivateArtworkFile = async (storagePaths: Array<string | null | undefined>, accessToken: string) => {
+  const uniquePaths = Array.from(new Set(storagePaths.filter(Boolean) as string[]));
+  let lastError: unknown = new Error('No private artwork preview path was available.');
+  for (const storagePath of uniquePaths) {
+    try {
+      return await loadPrivateArtworkFile(storagePath, accessToken);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 };
 
 const loadImageElement = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
@@ -2891,12 +2904,10 @@ export default function Home() {
             // original remains a secure fallback when a preview was not created or
             // was not discovered in storage. This avoids relying on public bucket
             // URLs or browser handling of expiring cross-origin signed URLs.
-            const privatePreviewPath = usesRasterCloudPreview && file.thumbnailStoragePath
-              ? file.thumbnailStoragePath
-              : (isImageFile || usesRasterCloudPreview) && file.previewStoragePath
-                ? file.previewStoragePath
-              : storagePath;
-            const previewUrl = file.previewDataUrl || await loadPrivateArtworkFile(privatePreviewPath, customerSession.access_token)
+            const privatePreviewPaths = usesRasterCloudPreview
+              ? [file.thumbnailStoragePath, file.previewStoragePath, storagePath]
+              : [(isImageFile || usesRasterCloudPreview) ? file.previewStoragePath : storagePath, storagePath];
+            const previewUrl = file.previewDataUrl || await loadFirstAvailablePrivateArtworkFile(privatePreviewPaths, customerSession.access_token)
               .catch(() => file.thumbnailUrl || file.previewUrl || originalUrl);
             const pdfPreview = isPdfFile && !usesRasterCloudPreview ? await renderPdfFirstPage(previewUrl).catch(() => null) : null;
             const renderedPreviewUrl = pdfPreview?.dataUrl || previewUrl;
@@ -2935,6 +2946,8 @@ export default function Home() {
               storagePath,
               storageUrl: originalUrl,
               previewStoragePath: file.previewStoragePath || undefined,
+              thumbnailStoragePath: file.thumbnailStoragePath || undefined,
+              thumbnailUrl: file.thumbnailUrl || undefined,
               assetId: file.assetId,
               productionReference: file.productionReference,
               originalProvider: file.originalProvider,
@@ -4657,6 +4670,26 @@ export default function Home() {
   const hasImageZoneThumbnail = (item: ImageZoneItem) => Boolean(item.dataUrl && canPlaceImageZoneItem(item) && !failedImageZoneThumbnailIds.has(item.id));
 
   const refreshArchiveThumbnail = async (item: ImageZoneItem) => {
+    if (item.source === 'supabase' && customerSession?.access_token) {
+      try {
+        const refreshedUrl = await loadFirstAvailablePrivateArtworkFile([
+          item.thumbnailStoragePath,
+          item.previewStoragePath,
+          item.storagePath,
+        ], customerSession.access_token);
+        setImageZoneItems((previous) => previous.map((entry) => entry.id === item.id ? { ...entry, dataUrl: refreshedUrl } : entry));
+        setFailedImageZoneThumbnailIds((previous) => {
+          const next = new Set(previous);
+          next.delete(item.id);
+          return next;
+        });
+        return;
+      } catch {
+        setFailedImageZoneThumbnailIds((previous) => new Set(previous).add(item.id));
+        setImageLibraryStatus(`${item.name} is safely stored, but its preview could not load. Refresh Image Zone to try again.`);
+        return;
+      }
+    }
     if (item.source !== 'archive' || !item.archiveId || !customerSession?.access_token) {
       setFailedImageZoneThumbnailIds((previous) => new Set(previous).add(item.id));
       return;
@@ -4716,7 +4749,7 @@ export default function Home() {
         }
         const storageFolder = item.storagePath.includes('/') ? item.storagePath.slice(0, item.storagePath.lastIndexOf('/')) : '';
         const derivedBackPath = item.backName && storageFolder ? `${storageFolder}/${item.backName}` : undefined;
-        const storagePaths = Array.from(new Set([item.storagePath, item.previewStoragePath, item.backStoragePath || derivedBackPath, item.backPreviewStoragePath, item.projectStoragePath].filter(Boolean) as string[]));
+        const storagePaths = Array.from(new Set([item.storagePath, item.previewStoragePath, item.thumbnailStoragePath, item.backStoragePath || derivedBackPath, item.backPreviewStoragePath, item.projectStoragePath].filter(Boolean) as string[]));
         for (const storagePath of storagePaths) {
           let response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_STORAGE_BUCKET)}/${encodeStoragePath(storagePath)}`, {
             method: 'DELETE',
@@ -6369,7 +6402,7 @@ export default function Home() {
       let savedItem = item;
       if (isSupabaseStorageConfigured && customerSession?.access_token) {
         const [storageInfo, backStorageInfo, projectStorageInfo] = await Promise.all([uploadArtworkFileToSupabase(file, customerSession), backFile ? uploadArtworkFileToSupabase(backFile, customerSession) : Promise.resolve(null), uploadArtworkFileToSupabase(projectFile, customerSession)]);
-        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.previewUrl || item.dataUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, previewStoragePath: storageInfo.previewStoragePath, assetId: storageInfo.assetId, productionReference: storageInfo.productionReference, originalProvider: storageInfo.originalProvider, source: 'supabase', backDataUrl: backStorageInfo?.previewUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, backPreviewStoragePath: backStorageInfo?.previewStoragePath, projectStoragePath: projectStorageInfo.storagePath };
+        savedItem = { ...item, id: storageInfo.storagePath, dataUrl: storageInfo.previewUrl || item.dataUrl, storagePath: storageInfo.storagePath, storageUrl: storageInfo.storageUrl, previewStoragePath: storageInfo.previewStoragePath, thumbnailStoragePath: storageInfo.thumbnailStoragePath, thumbnailUrl: storageInfo.thumbnailUrl, assetId: storageInfo.assetId, productionReference: storageInfo.productionReference, originalProvider: storageInfo.originalProvider, source: 'supabase', backDataUrl: backStorageInfo?.previewUrl || item.backDataUrl, backName: backFileName || item.backName, backStoragePath: backStorageInfo?.storagePath, backPreviewStoragePath: backStorageInfo?.previewStoragePath, projectStoragePath: projectStorageInfo.storagePath };
         setImageZoneItems((previous) => [savedItem, ...previous]);
         setSelectedImageZoneId(storageInfo.storagePath);
         setImageLibraryStatus(`${isNewArtwork ? 'New artwork' : 'Edited copy'}${isDoubleSided ? ' with front and back sides' : ''} saved${customerSession?.user?.email ? ` to ${customerSession.user.email}'s Image Zone` : ' to the artwork library'}.${isNewArtwork ? '' : ' Original preserved.'}`);
@@ -6691,6 +6724,8 @@ export default function Home() {
           storagePath: storageInfo.storagePath,
           storageUrl: storageInfo.storageUrl,
           previewStoragePath: storageInfo.previewStoragePath,
+          thumbnailStoragePath: storageInfo.thumbnailStoragePath,
+          thumbnailUrl: storageInfo.thumbnailUrl,
           assetId: storageInfo.assetId,
           productionReference: storageInfo.productionReference,
           originalProvider: storageInfo.originalProvider,
@@ -9762,7 +9797,7 @@ export default function Home() {
                     {imageZoneItems.length === 0 ? <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.035] p-3 text-xs leading-5 text-slate-400">Artwork saved during this session will appear here.</p> : imageZoneItems.map((item) => {
                       const selected = selectedImageZoneId === item.id;
                       return <button key={item.id} type="button" onClick={async () => { await applyImageZoneItem(item); }} className={`flex w-full items-center gap-3 rounded border bg-white p-2 text-left text-xs transition ${selected ? 'border-[#1678b8] ring-2 ring-[#1678b8]/20' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
-                        {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}
+                        {hasImageZoneThumbnail(item) ? <img src={item.dataUrl} alt="" onError={() => { void refreshArchiveThumbnail(item); }} className="h-12 w-16 shrink-0 rounded border border-slate-200 object-contain" /> : <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 px-1 text-center text-[9px] font-black text-slate-500">{getImageZoneFallbackLabel(item, 'RESTORE')}</span>}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-bold text-slate-800">{item.name}</span>
 <span className="mt-1 block text-slate-500">{formatArtworkInches(item.width, item.height, item.signWidth, item.signHeight)}</span>
