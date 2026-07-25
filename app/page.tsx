@@ -5329,7 +5329,7 @@ export default function Home() {
       return;
     }
     try {
-      const librarySource = imageZoneItems.find((item) => item.dataUrl === signArtworkPreviewUrl || item.storageUrl === signArtworkPreviewUrl);
+      const librarySource = imageZoneItems.find((item) => item.name === bannerArtworkName || item.dataUrl === signArtworkPreviewUrl || item.storageUrl === signArtworkPreviewUrl || item.thumbnailUrl === signArtworkPreviewUrl);
       const naturalSize = librarySource?.width && librarySource?.height
         ? { width: librarySource.width, height: librarySource.height }
         : await getImageNaturalSize(signArtworkPreviewUrl);
@@ -8539,7 +8539,7 @@ export default function Home() {
       return;
     }
 
-    const findArtworkSource = (name: string | undefined, dataUrl: string | null | undefined) => imageZoneItems.find((item) => (name && item.name === name) || (dataUrl && item.dataUrl === dataUrl));
+    const findArtworkSource = (name: string | undefined, dataUrl: string | null | undefined) => imageZoneItems.find((item) => (name && (item.name === name || item.backName === name)) || (dataUrl && (item.dataUrl === dataUrl || item.storageUrl === dataUrl || item.thumbnailUrl === dataUrl || item.backDataUrl === dataUrl)));
     const artworkFiles: CartArtworkFile[] = [];
     const productionRecipes: ProductionArtworkRecipe[] = [];
     setIsPreparingCartArtwork(true);
@@ -8596,14 +8596,16 @@ export default function Home() {
           }
         }
       } else if (isBannerBuilder) {
+        const activeFrontSource = signArtworkPreviewUrl ? findArtworkSource(bannerArtworkName, signArtworkPreviewUrl) : undefined;
         for (let index = 0; index < bannerOrderItems.length; index += 1) {
           const item = bannerOrderItems[index];
           const setNumber = item.setNumber || index + 1;
-          if (item.dataUrl) await attachApprovedProof({ role: `Artwork set ${setNumber} front`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState, source: findArtworkSource(item.name, item.dataUrl) });
-          if (item.backArtwork) await attachApprovedProof({ role: `Artwork set ${setNumber} back`, name: item.backArtwork.name, dataUrl: item.backArtwork.dataUrl, width: item.width, height: item.height, fitState: item.backArtwork.backFitState || item.fitState, source: item.backArtwork });
+          const itemFrontSource = item.dataUrl ? findArtworkSource(item.name, item.dataUrl) : undefined;
+          if (item.dataUrl) await attachApprovedProof({ role: `Artwork set ${setNumber} front`, name: item.name, dataUrl: item.dataUrl, width: item.width, height: item.height, fitState: item.fitState, source: itemFrontSource });
+          if (item.backArtwork) await attachApprovedProof({ role: `Artwork set ${setNumber} back`, name: item.backArtwork.name, dataUrl: item.backArtwork.dataUrl, width: item.width, height: item.height, fitState: item.backArtwork.backFitState || item.fitState, source: item.backArtwork.backCopiedFromFront ? itemFrontSource : item.backArtwork });
         }
-        if (signArtworkPreviewUrl) await attachApprovedProof({ role: `Artwork set ${activeBannerSetNumber} front`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState, source: findArtworkSource(bannerArtworkName, signArtworkPreviewUrl) });
-        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachApprovedProof({ role: `Artwork set ${activeBannerSetNumber} back`, name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: rigidBackArtwork.backFitState || bannerArtworkFitState, source: rigidBackArtwork });
+        if (signArtworkPreviewUrl) await attachApprovedProof({ role: `Artwork set ${activeBannerSetNumber} front`, name: bannerArtworkName || 'artwork', dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState, source: activeFrontSource });
+        if (isAutoSidedRigidBuilder && rigidBackArtwork) await attachApprovedProof({ role: `Artwork set ${activeBannerSetNumber} back`, name: rigidBackArtwork.name, dataUrl: rigidBackArtwork.dataUrl, width: signWidth, height: signHeight, fitState: rigidBackArtwork.backFitState || bannerArtworkFitState, source: rigidBackArtwork.backCopiedFromFront ? activeFrontSource : rigidBackArtwork });
       } else if (signArtworkPreviewUrl) {
         await attachApprovedProof({ role: 'Artwork', name: bannerArtworkName || `${selectedSignProduct.name}-artwork`, dataUrl: signArtworkDisplayUrl || signArtworkPreviewUrl, width: signWidth, height: signHeight, fitState: bannerArtworkFitState, source: findArtworkSource(bannerArtworkName, signArtworkPreviewUrl) });
       }
@@ -8640,9 +8642,11 @@ export default function Home() {
         }
       });
     } else if (isBannerBuilder) {
+      const activeFrontSource = signArtworkPreviewUrl ? findArtworkSource(bannerArtworkName, signArtworkPreviewUrl) : undefined;
       bannerOrderItems.forEach((item, index) => {
         const setNumber = item.setNumber || index + 1;
         const source = findArtworkSource(item.name, item.dataUrl);
+        const backSource = item.backArtwork?.backCopiedFromFront ? source : item.backArtwork;
         artworkFiles.push({
           role: `Artwork set ${setNumber} original front`,
           name: item.name,
@@ -8655,11 +8659,11 @@ export default function Home() {
         if (item.backArtwork) artworkFiles.push({
           role: `Artwork set ${setNumber} original back`,
           name: item.backArtwork.name,
-          storagePath: item.backArtwork.storagePath,
-          storageUrl: item.backArtwork.storageUrl,
-          source: item.backArtwork.source,
+          storagePath: backSource?.storagePath,
+          storageUrl: backSource?.storageUrl,
+          source: backSource?.source,
           previewUrl: item.backArtwork.dataUrl,
-          productionReference: item.backArtwork.productionReference
+          productionReference: backSource?.productionReference
         });
       });
       if (signArtworkPreviewUrl) {
@@ -8678,11 +8682,11 @@ export default function Home() {
       if (isAutoSidedRigidBuilder && rigidBackArtwork) artworkFiles.push({
         role: `Artwork set ${activeBannerSetNumber} original back`,
         name: rigidBackArtwork.name,
-        storagePath: rigidBackArtwork.storagePath,
-        storageUrl: rigidBackArtwork.storageUrl,
-        source: rigidBackArtwork.source,
+        storagePath: rigidBackArtwork.backCopiedFromFront ? activeFrontSource?.storagePath : rigidBackArtwork.storagePath,
+        storageUrl: rigidBackArtwork.backCopiedFromFront ? activeFrontSource?.storageUrl : rigidBackArtwork.storageUrl,
+        source: rigidBackArtwork.backCopiedFromFront ? activeFrontSource?.source : rigidBackArtwork.source,
         previewUrl: rigidBackArtwork.dataUrl,
-        productionReference: rigidBackArtwork.productionReference
+        productionReference: rigidBackArtwork.backCopiedFromFront ? activeFrontSource?.productionReference : rigidBackArtwork.productionReference
       });
     } else if (signArtworkPreviewUrl) {
       const source = findArtworkSource(bannerArtworkName, signArtworkPreviewUrl);
