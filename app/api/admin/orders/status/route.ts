@@ -125,7 +125,8 @@ export async function POST(request: NextRequest) {
   const status = body.status;
   const notifyCustomer = body.notifyCustomer !== false;
   if (!orderId || !isOrderWorkflowStatus(status)) return NextResponse.json({ error: 'Choose an order and a valid production status.' }, { status: 400 });
-  const carrier = safeText(body.carrier, 80);
+  const requestedCarrier = safeText(body.carrier, 80);
+  const carrier = status === 'shipped' ? requestedCarrier || 'FedEx' : requestedCarrier;
   const trackingNumber = safeText(body.trackingNumber, 160);
   const trackingUrl = safeTrackingUrl(body.trackingUrl);
   if (status === 'shipped' && !trackingNumber) return NextResponse.json({ error: 'Enter a tracking number before marking an order shipped.' }, { status: 400 });
