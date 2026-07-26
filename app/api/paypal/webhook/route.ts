@@ -7,7 +7,7 @@ type WebhookEvent = {
   resource?: {
     id?: string;
     status?: string;
-    supplementary_data?: { related_ids?: { order_id?: string } };
+    supplementary_data?: { related_ids?: { order_id?: string; capture_id?: string } };
   };
 };
 
@@ -16,22 +16,27 @@ export async function POST(request: Request) {
     const event = await request.json() as WebhookEvent;
     if (!await verifyPayPalWebhook(request, event)) return NextResponse.json({ error: 'Invalid PayPal webhook signature.' }, { status: 401 });
 
-    const paypalOrderId = event.resource?.supplementary_data?.related_ids?.order_id;
-    const captureId = event.resource?.id;
+    const eventType = event.event_type || '';
+    const relatedIds = event.resource?.supplementary_data?.related_ids;
+    const paypalOrderId = relatedIds?.order_id;
+    // Refund resources have their own PayPal ID. Match the Hue order with the
+    // original capture ID from related_ids instead of mistaking the refund ID
+    // for the capture that Studio saved at checkout.
+    const captureId = relatedIds?.capture_id || event.resource?.id;
     const statusByEvent: Record<string, string> = {
       'PAYMENT.CAPTURE.COMPLETED': 'completed',
       'PAYMENT.CAPTURE.DENIED': 'denied',
       'PAYMENT.CAPTURE.REFUNDED': 'refunded',
       'PAYMENT.CAPTURE.REVERSED': 'reversed',
     };
-    const status = statusByEvent[event.event_type || ''];
+    const status = statusByEvent[eventType];
     if (status && (paypalOrderId || captureId)) {
       const filter = paypalOrderId ? `paypal_order_id=eq.${encodeURIComponent(paypalOrderId)}` : `paypal_capture_id=eq.${encodeURIComponent(String(captureId))}`;
       const update = {
         status,
         webhook_data: event,
         updated_at: new Date().toISOString(),
-        ...(captureId ? { paypal_capture_id: captureId } : {}),
+        ...(captureId && (status === 'completed' || status === 'denied') ? { paypal_capture_id: captureId } : {}),
       };
       await supabaseAdminFetch(`/rest/v1/hue_payment_attempts?${filter}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(update) });
       await supabaseAdminFetch(`/rest/v1/hue_orders?${filter}`, {
