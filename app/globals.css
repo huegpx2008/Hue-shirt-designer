@@ -466,33 +466,56 @@ body {
   scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
 }
 
-/* Keep the full Studio navigation readable at every desktop and tablet
-   width. Product categories use their own centered row so the action bar
-   can never squeeze or clip the final category. */
+/* Give the desktop Studio header a deliberate two-column layout: the
+   larger brand anchors both rows while product categories stay tucked
+   directly beneath the action menu. */
 @media (min-width: 768px) {
   .hue-site-header-inner {
-    justify-content: space-between !important;
+    display: grid !important;
+    grid-template-columns: clamp(280px, 25vw, 430px) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 24px !important;
+    row-gap: 8px !important;
   }
 
   .hue-site-header .hue-mobile-brand {
-    flex: 0 0 auto;
+    grid-column: 1;
+    grid-row: 1 / 3;
+    width: 100%;
+    min-width: 0;
+    align-self: center;
+    flex: none;
   }
 
   .hue-site-header .hue-mobile-logo {
-    width: clamp(230px, 22vw, 310px) !important;
+    width: 100% !important;
+    height: clamp(76px, 6vw, 100px) !important;
   }
 
   .hue-site-header .hue-mobile-header-actions {
-    max-width: calc(100% - clamp(250px, 24vw, 330px));
+    grid-column: 2;
+    grid-row: 1;
+    width: 100% !important;
+    max-width: 100%;
+    justify-content: flex-end;
     overflow-x: auto !important;
   }
 
   .hue-site-header nav.hue-mobile-category-strip {
-    order: 3 !important;
-    flex: 0 0 100% !important;
+    grid-column: 2;
+    grid-row: 2;
+    order: initial !important;
+    flex: none !important;
     width: 100% !important;
     justify-content: center !important;
-    padding-top: 5px !important;
+    padding-top: 0 !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .hue-site-header .hue-mobile-header-actions {
+    justify-content: flex-start;
   }
 }
 
