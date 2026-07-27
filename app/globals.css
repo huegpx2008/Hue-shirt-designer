@@ -466,10 +466,10 @@ body {
   scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
 }
 
-/* Keep the full Studio navigation readable on ordinary desktop and tablet
-   widths. Very wide screens retain the single-row header; narrower screens
-   give product categories a centered row instead of clipping the last item. */
-@media (min-width: 768px) and (max-width: 1699px) {
+/* Keep the full Studio navigation readable at every desktop and tablet
+   width. Product categories use their own centered row so the action bar
+   can never squeeze or clip the final category. */
+@media (min-width: 768px) {
   .hue-site-header-inner {
     justify-content: space-between !important;
   }
