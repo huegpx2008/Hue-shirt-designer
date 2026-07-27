@@ -466,6 +466,36 @@ body {
   scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
 }
 
+/* Keep the full Studio navigation readable on ordinary desktop and tablet
+   widths. Very wide screens retain the single-row header; narrower screens
+   give product categories a centered row instead of clipping the last item. */
+@media (min-width: 768px) and (max-width: 1699px) {
+  .hue-site-header-inner {
+    justify-content: space-between !important;
+  }
+
+  .hue-site-header .hue-mobile-brand {
+    flex: 0 0 auto;
+  }
+
+  .hue-site-header .hue-mobile-logo {
+    width: clamp(230px, 22vw, 310px) !important;
+  }
+
+  .hue-site-header .hue-mobile-header-actions {
+    max-width: calc(100% - clamp(250px, 24vw, 330px));
+    overflow-x: auto !important;
+  }
+
+  .hue-site-header nav.hue-mobile-category-strip {
+    order: 3 !important;
+    flex: 0 0 100% !important;
+    width: 100% !important;
+    justify-content: center !important;
+    padding-top: 5px !important;
+  }
+}
+
 @media (max-width: 767px) {
   html,
   body {
