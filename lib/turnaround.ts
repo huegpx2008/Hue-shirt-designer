@@ -116,7 +116,7 @@ export const estimateTurnaround = (
     windowStart: isoCalendarDate(windowStart),
     windowEnd: isoCalendarDate(windowEnd),
     windowLabel: formatWindow(windowStart, windowEnd),
-    fulfillmentLabel: fulfillment === 'direct_ship' ? 'Estimated to ship' : 'Estimated ready for pickup',
+    fulfillmentLabel: fulfillment === 'direct_ship' ? 'Estimated delivery' : 'Estimated ready for pickup',
     explanation: tier === 'standard'
       ? 'Based on print-ready artwork. This is an estimate, not a guaranteed completion date.'
       : `${tierLabel}: additional production time is already included in this estimate. Artwork changes may extend the window.`,
