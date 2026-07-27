@@ -66,10 +66,12 @@ const addBusinessDays = (date: Date, days: number) => {
 const isoCalendarDate = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 
 const formatWindow = (start: Date, end: Date) => {
-  const sameMonth = start.getUTCFullYear() === end.getUTCFullYear() && start.getUTCMonth() === end.getUTCMonth();
-  const startLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', ...(sameMonth ? {} : { year: 'numeric' }) }).format(start);
-  const endLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: sameMonth ? undefined : 'short', day: 'numeric', year: 'numeric' }).format(end);
-  return `${startLabel}–${endLabel}`;
+  const sameYear = start.getUTCFullYear() === end.getUTCFullYear();
+  const sameMonth = sameYear && start.getUTCMonth() === end.getUTCMonth();
+  const monthDay = (date: Date) => new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(date);
+  if (sameMonth) return `${monthDay(start)}–${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+  if (sameYear) return `${monthDay(start)}–${monthDay(end)}, ${end.getUTCFullYear()}`;
+  return `${monthDay(start)}, ${start.getUTCFullYear()}–${monthDay(end)}, ${end.getUTCFullYear()}`;
 };
 
 const finite = (value: unknown) => {

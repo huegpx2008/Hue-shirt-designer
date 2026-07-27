@@ -11468,7 +11468,7 @@ export default function Home() {
             {checkoutStep === 'fulfillment' ? <div className="space-y-4">
               <div>
                 <h3 className="text-lg font-black text-white">Fulfillment</h3>
-                <p className="mt-1 text-sm text-slate-400">Choose how this order should be handled in the test run.</p>
+                <p className="mt-1 text-sm text-slate-400">Choose pickup or direct delivery for this order.</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <button type="button" onClick={() => setCheckoutFulfillment('pickup')} className={`rounded-xl border px-4 py-4 text-left ${checkoutFulfillment === 'pickup' ? 'border-[#62d4ff] bg-[#0ea5e9]/20' : 'border-white/12 bg-white/[0.04] hover:border-[#0ea5e9]/45'}`}>
@@ -11656,7 +11656,7 @@ export default function Home() {
             </div> : null}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#050b12] p-4">
-            <p className="text-xs leading-5 text-slate-400">{paypalCheckoutAvailable === true ? 'PayPal payments are captured before Hue stores and emails the final order.' : 'Team testing mode is still available while PayPal is disabled.'}</p>
+            {paypalCheckoutAvailable === true ? <p className="text-xs leading-5 text-slate-400">PayPal payment is securely completed before Hue stores and emails the final order.</p> : null}
             <div className="flex gap-2">
               {checkoutStep !== 'contact' && checkoutStep !== 'complete' ? <button type="button" onClick={() => setCheckoutStep(checkoutStep === 'review' ? 'fulfillment' : 'contact')} className="rounded border border-white/15 bg-[#0b1018] px-4 py-3 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Back</button> : null}
               {checkoutStep === 'contact' ? <button type="button" onClick={() => { setCheckoutStatus(''); setCheckoutStep('fulfillment'); }} className="rounded bg-[#1678b8] px-4 py-3 text-xs font-black uppercase text-white hover:bg-[#0f5f94]">Continue</button> : null}
