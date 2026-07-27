@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect, useMemo, useState } from 'react';
+import type { TurnaroundEstimate } from '@/lib/turnaround';
 
 type ConfirmationArtwork = { id?: string; label?: string; quantity?: number; sizeLabel?: string; sheetLabel?: string; frontName?: string; frontPreviewUrl?: string; backName?: string; backPreviewUrl?: string };
 type ConfirmationItem = { id?: string; productName?: string; quantity?: number; sizeLabel?: string; price?: { total?: number | null; currency?: string }; productionBreakdown?: ConfirmationArtwork[] };
@@ -16,6 +17,7 @@ type ConfirmationOrder = {
   tax: { amount?: number; label?: string };
   total: number;
   currency: string;
+  estimatedFulfillment?: TurnaroundEstimate;
 };
 
 const CONFIRMATION_KEY = 'hue-order-confirmation';
@@ -95,6 +97,7 @@ export default function OrderConfirmationPage() {
             <InfoCard title="Fulfillment">
               <p className="font-black text-white print:text-black">{order.fulfillment.method === 'direct_ship' ? 'US shipping' : 'Local pickup'}</p>
               {order.fulfillment.method === 'direct_ship' ? <><p>{address?.line1}{address?.line2 ? `, ${address.line2}` : ''}</p><p>{address?.city}, {address?.state} {address?.postalCode}</p></> : <p>Hue Graphics will notify you when the order is ready.</p>}
+              {order.estimatedFulfillment ? <div className="mt-3 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.07] p-3"><p className="font-black text-cyan-100 print:text-sky-800">{order.estimatedFulfillment.fulfillmentLabel}: {order.estimatedFulfillment.windowLabel}</p><p className="mt-1 text-xs leading-5 text-slate-400 print:text-slate-600">{order.estimatedFulfillment.explanation}</p></div> : null}
             </InfoCard>
           </div>
 
