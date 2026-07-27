@@ -25,7 +25,7 @@ export type TurnaroundEstimate = {
 };
 
 const TIMEZONE = 'America/New_York';
-const CUTOFF_HOUR = 15;
+const CUTOFF_HOUR = 14;
 
 const easternParts = (date: Date) => Object.fromEntries(new Intl.DateTimeFormat('en-US', {
   timeZone: TIMEZONE,
@@ -109,7 +109,7 @@ export const estimateTurnaround = (
   return {
     tier,
     tierLabel,
-    cutoffTime: '3:00 PM ET',
+    cutoffTime: '2:00 PM ET',
     timezone: TIMEZONE,
     minBusinessDays,
     maxBusinessDays,
@@ -124,4 +124,3 @@ export const estimateTurnaround = (
     calculatedAt: placedAt.toISOString(),
   };
 };
-
