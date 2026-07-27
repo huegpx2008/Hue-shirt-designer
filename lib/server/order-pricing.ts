@@ -1,4 +1,4 @@
-import { calculatePromoDiscount, getPromoCode } from '@/lib/server/supabase-admin';
+import { calculatePromoDiscount, getPromoCode, supabaseAdminFetch } from '@/lib/server/supabase-admin';
 import { applyStudioPricingAdjustment } from '@/lib/server/studio-pricing';
 
 type PricingPayload = Record<string, string | number | boolean>;
@@ -30,6 +30,17 @@ const ALLOWED_PRICING_SLUGS = new Set([
   'business-card', 'handheld-paper', 'carbonless', 'door-hanger',
 ]);
 
+type ShopProductPricingRow = {
+  id: string;
+  title: string;
+  base_price: number;
+  active: boolean;
+  product_type: 'featured' | 'group';
+  store_id?: string | null;
+};
+
+type ShopStorePricingRow = { id: string; active: boolean; opens_at?: string | null; closes_at?: string | null };
+
 const expectedPricingSlug = (productId: string) => productId === 'yard-sign' ? 'custom-cut-coroplast' : productId;
 
 const finiteMoney = (value: unknown) => {
@@ -49,6 +60,33 @@ const localOptionTotal = (productId: string, payload: PricingPayload) => {
   return total;
 };
 
+const priceShopItem = async (item: ServerPricedOrderItem, quantity: number, payload: PricingPayload) => {
+  const shopProductId = String(payload.shopProductId || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(shopProductId)) throw new Error(`${item.productName || 'Shop item'} must be removed and re-added from the current Hue Shop.`);
+  const rows = await supabaseAdminFetch(`/rest/v1/hue_shop_products?id=eq.${encodeURIComponent(shopProductId)}&active=eq.true&select=id,title,base_price,active,product_type,store_id&limit=1`) as ShopProductPricingRow[];
+  const product = rows[0];
+  if (!product || !product.active) throw new Error(`${item.productName || 'This Shop item'} is no longer available.`);
+  if (product.product_type === 'group') {
+    if (!product.store_id) throw new Error(`${product.title} is not connected to an active Group Store.`);
+    const storeRows = await supabaseAdminFetch(`/rest/v1/hue_group_stores?id=eq.${encodeURIComponent(product.store_id)}&select=id,active,opens_at,closes_at&limit=1`) as ShopStorePricingRow[];
+    const store = storeRows[0];
+    const now = Date.now();
+    const opensAt = store?.opens_at ? new Date(store.opens_at).getTime() : null;
+    const closesAt = store?.closes_at ? new Date(store.closes_at).getTime() : null;
+    if (!store?.active || (opensAt && now < opensAt) || (closesAt && now > closesAt)) throw new Error(`The Group Store for ${product.title} is currently closed.`);
+  }
+  const each = finiteMoney(product.base_price);
+  if (each === null || each <= 0) throw new Error(`${product.title} does not have a valid Shop price.`);
+  const total = Number((each * quantity).toFixed(2));
+  return {
+    ...item,
+    productId: `shop-${product.id}`,
+    productName: product.title,
+    pricingRequest: { apiSlug: 'shop-catalog', payload: { ...payload, shopProductId: product.id, quantity } },
+    price: { total, each, currency: 'USD' },
+  };
+};
+
 const priceOneItem = async (item: ServerPricedOrderItem) => {
   const productId = String(item.productId || '').trim();
   const apiSlug = String(item.pricingRequest?.apiSlug || '').trim();
@@ -60,6 +98,10 @@ const priceOneItem = async (item: ServerPricedOrderItem) => {
   }
   if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 100000) {
     throw new Error(`${item.productName || 'An item'} has an invalid quantity.`);
+  }
+  if (apiSlug === 'shop-catalog') {
+    if (productId !== `shop-${String(originalPayload.shopProductId || '').trim()}`) throw new Error(`${item.productName || 'Shop item'} has an invalid product reference.`);
+    return priceShopItem(item, quantity, originalPayload);
   }
   if (!ALLOWED_PRICING_SLUGS.has(apiSlug) || apiSlug !== expectedPricingSlug(productId)) {
     throw new Error(`${item.productName || 'An item'} has an invalid pricing product.`);

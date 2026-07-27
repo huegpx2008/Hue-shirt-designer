@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { getOrderWorkflowLabel } from '@/lib/order-workflow';
+import type { TurnaroundEstimate } from '@/lib/turnaround';
 
 type CustomerSession = {
   access_token: string;
@@ -23,6 +24,7 @@ type AccountOrder = {
   total: number;
   currency: string;
   items: AccountOrderItem[];
+  estimatedFulfillment?: TurnaroundEstimate;
 };
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://zcugxtcbvkrquxeuonop.supabase.co').replace(/\/$/, '');
@@ -334,6 +336,7 @@ export default function AccountPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2"><span className="font-black text-white">{order.orderNumber}</span><span className="rounded-full border border-[#38bdf8]/25 bg-[#0ea5e9]/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#9be6ff]">{getOrderWorkflowLabel(order.status)}</span></div>
                     <p className="mt-2 text-xs text-slate-400">{formatDate(order.createdAt)} · {order.items.length} item{order.items.length === 1 ? '' : 's'} · {orderArtworkCount(order)} artwork file{orderArtworkCount(order) === 1 ? '' : 's'}</p>
+                    {order.estimatedFulfillment ? <p className="mt-2 text-xs font-bold text-cyan-200">{order.estimatedFulfillment.fulfillmentLabel}: {order.estimatedFulfillment.windowLabel}</p> : null}
                   </div>
                   <div className="sm:text-right"><p className="font-black text-green-300">{formatMoney(order.total, order.currency)}</p><p className="mt-1 text-xs font-bold text-[#8be3ff]">View details →</p></div>
                 </button>)}

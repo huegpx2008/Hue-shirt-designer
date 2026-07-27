@@ -9,6 +9,7 @@ import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/
 import { getArtworkAssetByPreviewPath, updateArtworkAsset } from '@/lib/server/artwork-assets';
 import { archiveOrderToDriveBestEffort } from '@/lib/server/order-drive-archive';
 import type { ProductionArtworkRecipe } from '@/lib/production-artwork';
+import { estimateTurnaround, type TurnaroundEstimate } from '@/lib/turnaround';
 
 export const maxDuration = 60;
 
@@ -43,7 +44,7 @@ type OrderItem = {
   sizeLabel?: string;
   optionSummary?: string[];
   productionSummary?: string[];
-  price?: { total?: number | null; each?: number | null; currency?: string };
+  price?: { total?: number | null; each?: number | null; currency?: string; sheetCount?: number };
   pricingRequest?: { apiSlug?: string; payload?: Record<string, string | number | boolean> };
   artworkFiles?: OrderArtworkFile[];
   productionBreakdown?: OrderProductionArtwork[];
@@ -73,6 +74,7 @@ type TestOrderEmailPayload = {
       method?: "pickup" | "direct_ship";
       address?: { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string };
     };
+    estimatedFulfillment?: TurnaroundEstimate;
     items?: OrderItem[];
     subtotal?: number;
     promotion?: { code?: string; description?: string; discountAmount?: number };
@@ -313,6 +315,7 @@ const buildCustomerReceiptText = (
   `Email: ${order.customer?.email || 'Not provided'}`,
   `Phone: ${order.customer?.phone || 'Not provided'}`,
   `Fulfillment: ${context.fulfillmentLabel}`,
+  order.estimatedFulfillment ? `${order.estimatedFulfillment.fulfillmentLabel}: ${order.estimatedFulfillment.windowLabel}` : '',
   context.shippingAddress ? `Ship To:\n${context.shippingAddress}` : '',
   '',
   'Items:',
@@ -331,7 +334,7 @@ const buildCustomerReceiptText = (
   'Important details:',
   '- Please review this receipt and contact Hue right away if the size, quantity, spelling, artwork, pickup/shipping info, or options look wrong.',
   '- Hue Studio is a self-service print-ready ordering tool. Hue may contact you if a major production issue is found.',
-  '- Most standard orders are ready in 3-4 business days unless otherwise noted.',
+  order.estimatedFulfillment ? `- ${order.estimatedFulfillment.explanation}` : '- Standard print-ready orders are generally ready in 2-3 business days.',
   '',
   `Website: ${context.contact.websiteUrl}`,
   `Contact: ${context.contact.contactUrl}`,
@@ -384,6 +387,7 @@ const buildCustomerReceiptHtml = (
                 ${renderField('Email', order.customer?.email)}
                 ${renderField('Phone', order.customer?.phone)}
                 ${renderField('Fulfillment', context.fulfillmentLabel)}
+                ${order.estimatedFulfillment ? renderField(order.estimatedFulfillment.fulfillmentLabel, order.estimatedFulfillment.windowLabel) : ''}
                 ${context.shippingAddress ? renderField('Ship To', context.shippingAddress) : ''}
                 ${renderField('Tax exempt', order.customer?.taxExempt ? 'Yes' : 'No')}
               </table>
@@ -410,7 +414,7 @@ const buildCustomerReceiptHtml = (
               <ul style="margin:10px 0 0;padding-left:18px;color:#713f12;font-size:13px;line-height:1.65;">
                 <li>Please review this receipt and contact Hue right away if the size, quantity, spelling, artwork, pickup/shipping info, or options look wrong.</li>
                 <li>Hue Studio is a self-service print-ready ordering tool. Hue may contact you if a major production issue is found.</li>
-                <li>Most standard orders are ready in 3-4 business days unless otherwise noted.</li>
+                <li>${escapeHtml(order.estimatedFulfillment ? `${order.estimatedFulfillment.fulfillmentLabel}: ${order.estimatedFulfillment.windowLabel}. ${order.estimatedFulfillment.explanation}` : 'Standard print-ready orders are generally ready in 2-3 business days.')}</li>
               </ul>
             </div>
           </div>
@@ -701,6 +705,7 @@ export async function POST(request: Request) {
       order = applyVerifiedPaymentSnapshot(order, verifiedPayment);
       order.orderNumber = verifiedPayment ? createStudioOrderNumber(submissionKey) : createServerOrderNumber();
       order.createdAt = new Date().toISOString();
+      order.estimatedFulfillment = estimateTurnaround(order.items || [], order.fulfillment?.method === 'direct_ship' ? 'direct_ship' : 'pickup', new Date(order.createdAt));
       const organizationWarnings = await organizeOrderProductionFiles(order);
       if (organizationWarnings.length) throw new Error(organizationWarnings.join(' '));
       attachDurableArtworkLinks(order, configuredOrigin);

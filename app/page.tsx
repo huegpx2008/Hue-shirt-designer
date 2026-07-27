@@ -4,11 +4,14 @@ import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, use
 import { ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, IText, Line, Object as FabricObject, Path, Point, Rect, Shadow, Triangle, filters } from 'fabric';
 import QRCode from 'qrcode';
 import PayPalCheckoutButton from '@/components/paypal-checkout-button';
+import StudioShopView from '@/components/studio-shop-view';
 import TshirtShape from '@/components/tshirt-shape';
 import { PRINT_AREA_CONFIG, ProductCatalogItem, PrintLocation, SAMPLE_PRODUCT_CATALOG } from '@/components/product-catalog';
 import { CUSTOM_ORDER_ACKNOWLEDGMENT_STATEMENT, createCheckoutAcknowledgment, type CheckoutAcknowledgment } from '@/lib/checkout-acknowledgment';
 import { getOrderWorkflowLabel } from '@/lib/order-workflow';
 import type { ProductionArtworkRecipe, ProductionPlacement } from '@/lib/production-artwork';
+import type { ShopCartSelection } from '@/lib/shop-catalog';
+import { estimateTurnaround, type TurnaroundEstimate } from '@/lib/turnaround';
 import { calculateDtfPricing } from '@/lib/pricing/dtf-pricing';
 import { recommendPrintMethodByCost } from '@/lib/pricing/recommend-print-method';
 import { calculateScreenPrintPricing } from '@/lib/pricing/screen-print-pricing';
@@ -150,7 +153,7 @@ type CoroPlacementTarget = { itemId: string | null; side: CoroArtworkSide };
 type ImageType = 'flat' | 'model';
 type ProductMode = 'apparel' | 'signage';
 type SignProductId = 'banner' | 'mesh-banner' | 'yard-sign' | 'acm' | 'poster' | 'acrylic' | 'foamcore' | 'pvc' | 'polystyrene' | 'aluminum' | 'vinyl' | 'custom-cut-coroplast' | 'vehicle-magnet' | 'business-card' | 'handheld-paper' | 'carbonless' | 'door-hanger';
-type StoreView = 'store' | 'builder' | 'dtg';
+type StoreView = 'store' | 'shop' | 'builder' | 'dtg';
 type StoreCategoryId = 'banners' | 'coro' | 'rigid' | 'decals' | 'magnets' | 'apparel' | 'misc';
 type CoroOptionPanel = 'images' | 'size' | 'material' | 'sides' | 'grommets' | 'stakes' | 'gloss' | 'rope' | 'polePocket' | 'windSlits' | 'webbing' | 'standoffs' | 'roundedCorners' | 'orientation' | 'coating' | null;
 type SignFieldType = 'number' | 'select' | 'checkbox';
@@ -207,6 +210,7 @@ type TestOrder = {
     address?: { line1: string; line2: string; city: string; state: string; postalCode: string };
   };
   checkoutAcknowledgment: CheckoutAcknowledgment;
+  estimatedFulfillment?: TurnaroundEstimate;
   items: CartItem[];
   subtotal: number;
   promotion?: { code: string; description: string; discountAmount: number };
@@ -2562,6 +2566,7 @@ export default function Home() {
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvasRef = useRef<Canvas | null>(null);
   const [storeView, setStoreView] = useState<StoreView>('store');
+  const [shopStoreSlug, setShopStoreSlug] = useState('');
   const [storeCategory, setStoreCategory] = useState<StoreCategoryId>('coro');
   const [coroSizeSearch, setCoroSizeSearch] = useState('');
   const [productMode, setProductMode] = useState<ProductMode>('signage');
@@ -2896,6 +2901,14 @@ export default function Home() {
     || isCategoryCatalogLoading
   );
   const printShopQuip = usePrintShopQuip(isPrintShopBusy);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('view') === 'shop' || params.get('store')) {
+      setStoreView('shop');
+      setShopStoreSlug(String(params.get('store') || '').trim().toLowerCase());
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -3894,6 +3907,7 @@ export default function Home() {
   const coroPieceLabel = selectedSignProduct.id === 'yard-sign' ? 'signs' : 'pieces';
   const coroReadyTotalLabel = `${coroSheetLayout.sheetCount} sheet${coroSheetLayout.sheetCount === 1 ? '' : 's'} / ${effectiveCoroQuantity} total ${coroPieceLabel}`;
   const cartSubtotal = cartItems.reduce((total, item) => total + (item.price.total || 0), 0);
+  const cartTurnaroundEstimate = useMemo(() => estimateTurnaround(cartItems, checkoutFulfillment), [cartItems, checkoutFulfillment]);
   const getCartCheckoutIssue = () => {
     const sessionUserId = customerSession?.user?.id;
     const sessionEmail = customerSession?.user?.email?.trim().toLowerCase();
@@ -4057,6 +4071,7 @@ export default function Home() {
         } : undefined
       },
       checkoutAcknowledgment: createCheckoutAcknowledgment(),
+      estimatedFulfillment: estimateTurnaround(cartItems, checkoutFulfillment, new Date(timestamp)),
       items: cartItems,
       subtotal: cartSubtotal,
       promotion: checkoutPromo ? { code: checkoutPromo.code, description: checkoutPromo.description, discountAmount: checkoutDiscountAmount } : undefined,
@@ -9156,6 +9171,52 @@ export default function Home() {
     }
   };
 
+  const handleAddShopSelection = (selection: ShopCartSelection) => {
+    const optionSummary = selection.product.options.map((option) => {
+      const value = String(selection.selections[option.id] || '').trim();
+      return value ? `${option.label}: ${value}` : '';
+    }).filter(Boolean);
+    if (selection.store) optionSummary.unshift(`Group Store: ${selection.store.name}`);
+    const each = Number(selection.product.basePrice.toFixed(2));
+    const total = Number((each * selection.quantity).toFixed(2));
+    const shopItem: CartItem = {
+      id: `shop-${selection.product.id}-${Date.now()}`,
+      addedAt: new Date().toISOString(),
+      mode: 'signage',
+      productId: `shop-${selection.product.id}`,
+      productName: selection.product.title,
+      quantity: selection.quantity,
+      sizeLabel: selection.selections.size || selection.selections['shirt-size'] || 'Shop item',
+      optionSummary,
+      price: { total, each, currency: 'USD' },
+      pricingRequest: {
+        apiSlug: 'shop-catalog',
+        payload: {
+          shopProductId: selection.product.id,
+          shopStoreId: selection.store?.id || '',
+          shopStoreSlug: selection.store?.slug || '',
+          selections: JSON.stringify(selection.selections),
+          quantity: selection.quantity,
+        },
+      },
+      artworkFiles: [],
+      productionBreakdown: [],
+      productionSummary: [
+        selection.store ? `Group Store: ${selection.store.name}` : 'Featured & Seasonal Shop item',
+        ...optionSummary,
+        'Hue will review personalization and contact the customer if a proof or additional artwork is required.',
+      ],
+      customer: {
+        userId: customerSession?.user?.id,
+        email: customerSession?.user?.email,
+        checkoutMode: customerSession?.user?.id ? 'account' : 'quick',
+      },
+    };
+    setCartItems((current) => [...current, shopItem]);
+    setCartStatus(`${selection.product.title} was added to your Studio cart.`);
+    setShowCart(true);
+  };
+
   const visibleStoreProducts = STORE_PRODUCTS.filter((product) => product.category === storeCategory);
   const guidedTourProducts = GUIDED_TOUR_FEATURED_PRODUCT_IDS
     .map((id) => STORE_PRODUCTS.find((product) => product.id === id && !product.disabled))
@@ -9709,7 +9770,7 @@ export default function Home() {
               <p className={`mt-1 text-[10px] font-bold uppercase tracking-[0.18em] ${isProductionBuilder ? 'text-slate-400' : 'text-slate-500'}`}>Design · Upload · Order</p>
             </div>
           </div>
-          {isProductionBuilder ? <nav className="hue-mobile-category-strip order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
+          {isProductionBuilder && storeView !== 'shop' ? <nav className="hue-mobile-category-strip order-3 flex w-full items-center justify-center gap-3 overflow-x-auto px-1 pt-2 text-[10px] font-semibold text-slate-400 md:order-none md:w-auto md:flex-1 md:pt-0">
             {STORE_CATEGORIES.map((category) => {
               const active = storeCategory === category.id;
               const icon = category.id === 'banners' ? 'BN' : category.id === 'rigid' ? 'RG' : category.id === 'decals' ? 'AD' : category.id === 'magnets' ? 'MG' : category.id === 'apparel' ? 'AP' : category.id === 'misc' ? 'MS' : 'CO';
@@ -9720,10 +9781,11 @@ export default function Home() {
             })}
           </nav> : null}
           <div className="hue-mobile-header-actions order-2 flex w-full items-center gap-2 overflow-x-auto pb-1 text-sm md:order-none md:w-auto md:overflow-visible md:pb-0">
-            <button onClick={() => setStoreView('store')} className={`${isProductionBuilder ? `rounded border px-4 py-2 font-semibold transition ${storeView === 'store' ? 'border-[#0ea5e9] bg-[#071827] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]' : 'border-white/15 bg-[#0b1018] text-slate-400 hover:border-slate-500 hover:text-slate-100'}` : 'rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50'}`}>Products</button>
+            <button onClick={() => { setStoreView('store'); setShopStoreSlug(''); }} className={`${isProductionBuilder ? `rounded border px-4 py-2 font-semibold transition ${storeView === 'store' ? 'border-[#0ea5e9] bg-[#071827] text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]' : 'border-white/15 bg-[#0b1018] text-slate-400 hover:border-slate-500 hover:text-slate-100'}` : 'rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50'}`}>Products</button>
+            {isProductionBuilder ? <button type="button" disabled aria-disabled="true" title="Shop products and Group Stores are coming soon" className="cursor-not-allowed rounded border border-violet-300/20 bg-[#120d21]/70 px-4 py-2 font-black text-violet-200/65">Shop · Coming Soon</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={saveDraftToLocal} className="rounded-md border border-slate-300 bg-white px-3 py-2 font-medium hover:bg-slate-50">Save</button> : null}
             {storeView === 'builder' && !isProductionBuilder ? <button onClick={exportDesign} className="rounded-md bg-[#1678b8] px-3 py-2 font-bold text-white hover:bg-[#0f5f94]">Download PNG</button> : null}
-            {isProductionBuilder ? <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
+            {isProductionBuilder ? <button type="button" onClick={() => { if (storeView !== 'builder') openStandaloneImageZone(); else openArtworkLibrary(); }} className="rounded border border-[#0ea5e9] bg-[#071827] px-4 py-2 font-black text-white shadow-[0_0_18px_rgba(14,165,233,0.22)] hover:bg-[#0b263d]">Image Zone</button> : null}
             {isProductionBuilder ? <button type="button" onClick={openCanvaImport} className="rounded border border-[#8be3ff]/60 bg-[linear-gradient(135deg,#1686c9,#7c3aed)] px-4 py-2 font-black text-white shadow-[0_0_24px_rgba(14,165,233,0.34),0_0_34px_rgba(124,58,237,0.22)] hover:border-white hover:brightness-110">Import Canva</button> : null}
             <a href="/account" className={`${isProductionBuilder ? 'max-w-36 truncate rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-[#0ea5e9]/70' : 'max-w-36 truncate rounded-md border border-[#1f73be]/25 bg-white px-3 py-2 font-bold text-[#125b99] hover:bg-[#eef6ff]'}`}>{customerAccountButtonLabel}</a>
             <button type="button" onClick={() => setShowCart(true)} className={`${isProductionBuilder ? 'rounded border border-white/20 bg-[#0b1018] px-4 py-2 font-bold text-white hover:border-slate-500' : 'rounded-md border border-[#1f73be]/25 bg-[#eef6ff] px-3 py-2 font-bold text-[#125b99] hover:bg-[#dff0ff]'}`}>Cart &amp; Checkout{cartItems.length ? ` (${cartItems.length})` : ''}</button>
@@ -9741,6 +9803,7 @@ export default function Home() {
             <button type="button" onClick={openGuidedTour} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Guided Tour<span className="mt-0.5 block text-xs font-normal text-slate-500">Answer a few questions and let Hue Studio point you in the right direction</span></button>
             {storeView === 'builder' ? <button type="button" onClick={() => { setShowBuilderWalkthrough(true); setBuilderWalkthroughStep(0); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Show Builder Tips<span className="mt-0.5 block text-xs font-normal text-slate-500">Walk through artwork, pricing, warnings, and checkout controls</span></button> : null}
             <a href="/products" onClick={() => setShowMainMenu(false)} className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Product Catalog<span className="mt-0.5 block text-xs font-normal text-slate-500">Browse banners, signs, apparel, and more</span></a>
+            <button type="button" disabled aria-disabled="true" className="block w-full cursor-not-allowed rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-500">Shop · Coming Soon<span className="mt-0.5 block text-xs font-normal text-slate-600">Featured products and temporary Group Stores are being prepared</span></button>
             <button type="button" onClick={() => { if (storeView === 'store') openStandaloneImageZone(); else openArtworkLibrary(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Image Zone<span className="mt-0.5 block text-xs font-normal text-slate-500">Open saved artwork and uploads</span></button>
             <button type="button" onClick={() => { openCanvaImport(); setShowMainMenu(false); }} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">Import Canva<span className="mt-0.5 block text-xs font-normal text-slate-500">Bring a Canva design into Image Zone</span></button>
             <a href="/account" onClick={() => setShowMainMenu(false)} className="block w-full rounded-xl px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-white/[0.07]">My Account<span className="mt-0.5 block text-xs font-normal text-slate-500">Sign in, create an account, or view saved artwork</span></a>
@@ -10068,6 +10131,8 @@ export default function Home() {
             </div>
           </div>
         </section>
+      ) : storeView === 'shop' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart && !showNewArtworkDialog && !showArtworkEditor ? (
+        <StudioShopView initialStoreSlug={shopStoreSlug} onAddToCart={handleAddShopSelection} onOpenCart={() => setShowCart(true)} />
       ) : storeView === 'store' && !showImageZone && !showCanvaImport && !showCustomerLogin && !showCart && !showNewArtworkDialog && !showArtworkEditor ? (
         <>
         <section className="hue-store-shell mx-auto w-full min-w-0 max-w-[1800px] px-4 py-3 md:px-6">
@@ -10106,8 +10171,9 @@ export default function Home() {
                   <div className="rounded-xl border border-white/15 bg-[#0a1119]/90 p-4 shadow-[0_24px_70px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur">
                     <p className="text-sm font-black text-white">Choose your starting point</p>
                     <div className="mt-3 grid gap-2 text-xs text-slate-300">
-                      {['Upload finished, print-ready artwork', 'Make quick changes in Hue Designer', 'Create a simple design from a blank canvas', 'Import saved projects from Canva', 'Choose a product, size, and options', 'Get pricing and complete checkout online', 'Most orders are ready in 3–4 business days'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
+                      {['Upload finished, print-ready artwork', 'Make quick changes in Hue Designer', 'Create a simple design from a blank canvas', 'Import saved projects from Canva', 'Choose a product, size, and options', 'Get pricing and complete checkout online'].map((item) => <span key={item} className="flex items-center gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-400/15 text-[9px] font-black text-emerald-400 ring-1 ring-emerald-400/25">✓</span>{item}</span>)}
                     </div>
+                    <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-5"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-green-300">Production timing</p><p className="mt-2 text-xl font-black text-white">Most standard orders are ready in 2–3 business days</p><p className="mt-2 text-xs leading-5 text-slate-400">Orders placed by 2:00 PM ET begin processing that business day. Larger quantities may need additional production time; your estimated ready or ship window appears at checkout.</p></div>
                     <div className="mt-4 rounded-xl border border-amber-300/25 bg-amber-300/[0.08] p-3 text-[11px] leading-5 text-amber-100/80">
                       <strong className="block text-sm text-amber-200">What you submit is what we print.</strong>
                       <p className="mt-2">Hue Studio is a self-service ordering tool. We perform a basic production check and may contact you if we notice a major issue, but we make minimal—if any—changes to submitted artwork.</p>
@@ -11253,6 +11319,7 @@ export default function Home() {
               <button type="button" onClick={() => { setShowCart(false); setStoreView('store'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded border border-white/15 bg-[#0b1018] px-3 py-2 text-xs font-black uppercase text-slate-100 hover:border-[#0ea5e9]/70">Close</button>
             </div>
             {cartStatus ? <p className="mt-3 rounded border border-[#0ea5e9]/20 bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-300">{cartStatus}</p> : null}
+            {cartItems.length ? <div className="mt-3 rounded-xl border border-green-400/25 bg-green-400/[0.08] px-3 py-3"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-green-300">{cartTurnaroundEstimate.fulfillmentLabel}</p><p className="mt-1 text-lg font-black text-white">{cartTurnaroundEstimate.windowLabel}</p><p className="mt-1 text-xs leading-5 text-slate-300">{cartTurnaroundEstimate.explanation}</p></div> : null}
             {cartCheckoutIssue ? <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-3 text-xs leading-5 text-amber-100">
               <p className="font-black uppercase tracking-[0.14em] text-amber-200">{cartNeedsAccountSignIn ? 'Sign in to continue' : 'Cart needs attention'}</p>
               <p className="mt-1">{cartCheckoutIssue}</p>
@@ -11413,6 +11480,7 @@ export default function Home() {
                   <span className="mt-1 block text-xs leading-5 text-slate-300">Ship the finished order directly to the customer.</span>
                 </button>
               </div>
+              <div className="rounded-xl border border-green-400/25 bg-green-400/[0.07] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-green-300">{cartTurnaroundEstimate.fulfillmentLabel}</p><p className="mt-1 text-2xl font-black text-white">{cartTurnaroundEstimate.windowLabel}</p><p className="mt-2 text-xs leading-5 text-slate-300">{cartTurnaroundEstimate.tierLabel}. Orders placed by 2:00 PM ET count the current business day. Weekends are excluded.</p></div>
               {checkoutFulfillment === 'direct_ship' ? <div className="grid gap-4 rounded-xl border border-white/10 bg-white/[0.04] p-4 sm:grid-cols-2">
                 <label className="text-sm font-bold text-slate-200 sm:col-span-2">Street address
                   <input value={checkoutAddress.line1} onChange={(event) => setCheckoutAddress((current) => ({ ...current, line1: event.target.value }))} className="mt-1 w-full rounded border border-white/15 bg-[#02070d] px-3 py-3 text-white outline-none ring-[#0ea5e9]/40 focus:ring-2" />
@@ -11451,6 +11519,7 @@ export default function Home() {
                   <p className="text-sm text-slate-300">{checkoutFulfillment === 'pickup' ? 'No shipping address needed.' : `${checkoutAddress.line1}, ${checkoutAddress.city}, ${checkoutAddress.state} ${checkoutAddress.postalCode}`}</p>
                 </div>
               </div>
+              <div className="rounded-xl border border-green-400/25 bg-green-400/[0.07] p-4"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-green-300">{cartTurnaroundEstimate.fulfillmentLabel}</p><p className="mt-1 text-2xl font-black text-white">{cartTurnaroundEstimate.windowLabel}</p><p className="mt-2 text-xs leading-5 text-slate-300">{cartTurnaroundEstimate.explanation}</p></div>
               <div className="rounded-xl border border-[#38bdf8]/20 bg-[#0c2a40]/35 p-4">
                 <div className="flex flex-wrap items-end gap-3"><label className="min-w-52 flex-1 text-xs font-black uppercase tracking-wide text-[#8be3ff]">Promo code<input value={checkoutPromoInput} onChange={(event) => { setCheckoutPromoInput(event.target.value.toUpperCase()); if (checkoutPromo && event.target.value.toUpperCase() !== checkoutPromo.code) setCheckoutPromo(null); }} placeholder="Enter code" className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-[#02070d] px-4 text-sm font-bold uppercase text-white outline-none focus:border-[#38bdf8]" /></label><button type="button" disabled={isCheckoutPromoLoading} onClick={() => void applyCheckoutPromo()} className="h-11 rounded-xl bg-[#1686c9] px-5 text-xs font-black uppercase text-white hover:bg-[#0f75b5] disabled:opacity-50">{isCheckoutPromoLoading ? 'Checking under the press...' : checkoutPromo ? 'Reapply' : 'Apply code'}</button>{checkoutPromo ? <button type="button" onClick={() => { setCheckoutPromo(null); setCheckoutPromoInput(''); setCheckoutStatus('Promo code removed.'); }} className="h-11 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300">Remove</button> : null}</div>
                 {checkoutPromo ? <p className="mt-3 text-sm font-bold text-emerald-300">✓ {checkoutPromo.code}: {checkoutPromo.description} — {formatSignPrice(checkoutDiscountAmount, 'USD')} savings</p> : <p className="mt-3 text-xs text-slate-400">Have a special Hue discount? Apply it before submitting.</p>}
