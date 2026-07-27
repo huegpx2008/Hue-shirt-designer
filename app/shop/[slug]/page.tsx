@@ -8,7 +8,6 @@ export const metadata: Metadata = {
 };
 
 export default async function GroupStorePage({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  redirect(`/?view=shop&store=${encodeURIComponent(slug)}`);
+  await params;
+  redirect('/');
 }
-
