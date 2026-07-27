@@ -91,9 +91,8 @@ export default function StudioShopView({ initialStoreSlug, onAddToCart, onOpenCa
 
   return <section className="mx-auto w-full max-w-[1800px] px-4 py-5 md:px-6">
     <div className="overflow-hidden rounded-[30px] border border-[#38bdf8]/25 bg-[radial-gradient(circle_at_84%_0%,rgba(14,165,233,0.24),transparent_35%),linear-gradient(135deg,#071827,#050b12)] shadow-[0_30px_100px_rgba(0,0,0,0.48)]">
-      <div className="grid gap-8 px-6 py-8 md:px-9 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-center">
+      <div className="px-6 py-8 md:px-9">
         <div><p className="text-[11px] font-black uppercase tracking-[0.3em] text-[#67d8ff]">Shop Hue inside Studio</p><h1 className="mt-3 max-w-4xl text-4xl font-black tracking-tight text-white md:text-6xl">Featured products and temporary Group Stores.</h1><p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300 md:text-base">Order graduation banners, limited designs, and other ready-to-personalize products—or open a private store created for your business, school, team, or organization.</p></div>
-        <div className="rounded-3xl border border-white/10 bg-black/20 p-5"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-green-300">Production timing</p><p className="mt-2 text-xl font-black text-white">Standard orders: 2–3 business days</p><p className="mt-2 text-xs leading-5 text-slate-400">Order by 3:00 PM ET to count the current business day. Larger orders automatically receive a longer estimated window at checkout.</p></div>
       </div>
       <div className="flex flex-wrap gap-2 border-t border-white/10 bg-black/15 px-6 py-4 md:px-9">
         <button type="button" onClick={() => { setSection('featured'); setSelectedStoreSlug(''); }} className={`rounded-xl px-5 py-3 text-xs font-black uppercase ${section === 'featured' ? 'bg-[#1686c9] text-white' : 'border border-white/12 bg-white/[0.04] text-slate-300'}`}>Featured &amp; Seasonal</button>
@@ -133,4 +132,3 @@ export default function StudioShopView({ initialStoreSlug, onAddToCart, onOpenCa
     </div> : null}
   </section>;
 }
-
