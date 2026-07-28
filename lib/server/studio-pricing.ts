@@ -10,6 +10,7 @@ export type StudioPricingAdjustment = {
   sheet_extra_percent?: number | null;
   sheet_max_surcharge_percent?: number | null;
   active?: boolean;
+  configured?: boolean;
   notes?: string | null;
   created_at?: string;
   updated_at?: string;
@@ -28,6 +29,7 @@ export const STUDIO_PRICING_PRODUCTS = [
   { key: 'banner', name: 'Vinyl Banner', category: 'Banners' },
   { key: 'mesh-banner', name: 'Mesh Banner', category: 'Banners' },
   { key: 'yard-sign', name: 'CORO', category: 'CORO', sourceLabel: 'Custom CORO pricing API' },
+  { key: 'yard-sign-24x18', name: 'Standard 24 x 18 Yard Signs', category: 'CORO', sourceLabel: '24 x 18 only · uses CORO full-sheet math' },
   { key: 'acrylic', name: 'Acrylic Signs', category: 'Rigid Signs' },
   { key: 'acm', name: 'ACM / Aluminum Composite', category: 'Rigid Signs' },
   { key: 'pvc', name: 'PVC Signs', category: 'Rigid Signs' },
@@ -68,24 +70,35 @@ export const getStudioPricingAdjustment = async (productKey: string): Promise<St
   try {
     const rows = await supabaseAdminFetch(`/rest/v1/hue_pricing_adjustments?product_key=eq.${encodeURIComponent(canonicalProductKey)}&select=*&limit=1`) as StudioPricingAdjustment[];
     const row = rows[0];
-    if (!row || row.active === false) return { product_key: canonicalProductKey, percentage: 100, active: true };
+    if (!row) return { product_key: canonicalProductKey, percentage: 100, active: true, configured: false };
+    if (row.active === false) return { product_key: canonicalProductKey, percentage: 100, active: false, configured: true };
     return {
       ...row,
       percentage: safePercentage(row.percentage),
       sheet_included_pieces: safeSheetSetting(row.sheet_included_pieces, DEFAULT_SHEET_PRICING.includedPieces, 1, 10000),
       sheet_extra_percent: safeSheetSetting(row.sheet_extra_percent, DEFAULT_SHEET_PRICING.extraPercentPerPiece, 0, 100),
       sheet_max_surcharge_percent: safeSheetSetting(row.sheet_max_surcharge_percent, DEFAULT_SHEET_PRICING.maxSurchargePercent, 0, 500),
+      configured: true,
     };
   } catch {
     // Pricing must remain available if the adjustment table has not been installed
     // or Supabase is temporarily unavailable. Master API pricing is the fallback.
-    return { product_key: canonicalProductKey, percentage: 100, active: true };
+    return { product_key: canonicalProductKey, percentage: 100, active: true, configured: false };
   }
 };
 
 const numericValue = (value: unknown) => {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[^0-9.-]/g, '')) : NaN;
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isStandardYardSignSize = (payload?: PricingPayload) => {
+  if (!payload) return false;
+  const width = numericValue(payload.width);
+  const height = numericValue(payload.height);
+  if (width === null || height === null) return false;
+  const same = (first: number, second: number) => Math.abs(first - second) < 0.001;
+  return (same(width, 24) && same(height, 18)) || (same(width, 18) && same(height, 24));
 };
 
 const sheetLayout = (payload: PricingPayload) => {
@@ -165,10 +178,19 @@ const adjustedNumber = (value: unknown, multiplier: number, precision: number) =
 export const applyStudioPricingAdjustment = async (data: unknown, productKey: string, payload?: PricingPayload) => {
   if (!data || typeof data !== 'object' || (data as { ok?: boolean }).ok === false) return data;
   const canonicalProductKey = studioPricingKey(productKey);
-  const adjustment = await getStudioPricingAdjustment(canonicalProductKey);
-  const percentage = safePercentage(adjustment.percentage);
+  const baseAdjustment = await getStudioPricingAdjustment(canonicalProductKey);
+  const standardYardSignAdjustment = canonicalProductKey === 'yard-sign' && isStandardYardSignSize(payload)
+    ? await getStudioPricingAdjustment('yard-sign-24x18')
+    : null;
+  const usesStandardYardSignOverride = Boolean(
+    standardYardSignAdjustment?.configured
+    && standardYardSignAdjustment.active !== false,
+  );
+  const percentage = safePercentage(usesStandardYardSignOverride ? standardYardSignAdjustment?.percentage : baseAdjustment.percentage);
   const multiplier = percentage / 100;
-  const densityResult = await applySheetDensityPricing(data as Record<string, unknown>, canonicalProductKey, payload, adjustment);
+  // The 24 x 18 override changes only the final Studio percentage. Sheet yield,
+  // included pieces, and density handling always come from the main CORO row.
+  const densityResult = await applySheetDensityPricing(data as Record<string, unknown>, canonicalProductKey, payload, baseAdjustment);
   const source = densityResult.source;
   const sourcePrice = source.price && typeof source.price === 'object' ? source.price as Record<string, unknown> : null;
   const price = sourcePrice ? {
@@ -186,6 +208,7 @@ export const applyStudioPricingAdjustment = async (data: unknown, productKey: st
     ...(sourcePrice ? { price } : {}),
     studioPricing: {
       productKey: canonicalProductKey,
+      adjustmentKey: usesStandardYardSignOverride ? 'yard-sign-24x18' : canonicalProductKey,
       percentage,
       multiplier,
       masterPricingPercentage: 100,

@@ -149,13 +149,16 @@ export async function GET(request: NextRequest) {
     const savedPricing = results[4].status === 'fulfilled' ? results[4].value as Array<Record<string, unknown>> : [];
     const pricing = STUDIO_PRICING_PRODUCTS.map((product) => {
       const saved = savedPricing.find((entry) => entry.product_key === product.key);
+      const inherited = product.key === 'yard-sign-24x18'
+        ? savedPricing.find((entry) => entry.product_key === 'yard-sign')
+        : undefined;
       const isSheetPriced = ['yard-sign', 'pvc', 'foamcore', 'polystyrene'].includes(product.key);
       return {
         productKey: product.key,
         sourceLabel: 'sourceLabel' in product ? product.sourceLabel : product.key,
         displayName: String(saved?.display_name || product.name),
         category: String(saved?.category || product.category),
-        percentage: Number(saved?.percentage ?? 100),
+        percentage: Number(saved?.percentage ?? inherited?.percentage ?? 100),
         active: saved?.active !== false,
         notes: saved?.notes ? String(saved.notes) : '',
         updatedAt: saved?.updated_at ? String(saved.updated_at) : null,
