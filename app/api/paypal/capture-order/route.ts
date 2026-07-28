@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { capturePayPalOrder, createPayPalToken, validateCompletedCapture, verifyPayPalToken, type PayPalCheckoutToken } from '@/lib/server/paypal';
+import { capturePayPalOrder, createPayPalToken, getPayPalConfig, validateCompletedCapture, verifyPayPalToken, type PayPalCheckoutToken } from '@/lib/server/paypal';
 import { contentLengthExceeds, enforceRateLimit, isSameOriginMutation } from '@/lib/server/request-security';
 import { supabaseAdminFetch } from '@/lib/server/supabase-admin';
 
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         paypal_capture_id: completed.captureId,
         status: 'completed',
-        paypal_data: paypalOrder,
+        paypal_data: { ...paypalOrder, hue_environment: getPayPalConfig().environment },
         paid_at: paidAt,
         updated_at: new Date().toISOString(),
       }),

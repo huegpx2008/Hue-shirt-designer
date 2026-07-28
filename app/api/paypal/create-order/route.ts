@@ -35,7 +35,8 @@ export async function POST(request: Request) {
     if (contentLengthExceeds(request, 2_000_000)) return NextResponse.json({ error: 'Checkout request is too large.' }, { status: 413 });
     const retryAfter = enforceRateLimit(request, 'paypal-create', 10, 60 * 60 * 1000);
     if (retryAfter) return NextResponse.json({ error: 'Too many payment attempts. Please try again later.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
-    if (!getPayPalConfig().enabled) return NextResponse.json({ error: 'PayPal Checkout is not available yet.' }, { status: 503 });
+    const paypalConfig = getPayPalConfig();
+    if (!paypalConfig.enabled) return NextResponse.json({ error: 'PayPal Checkout is not available yet.' }, { status: 503 });
     if (!hasSupabaseAdminConfig()) throw new Error('Secure order storage is not configured.');
 
     const body = await request.json() as { order?: CheckoutOrder; guestSessionId?: string };
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
         amount,
         currency: 'USD',
         priced_order: pricedOrder,
-        paypal_data: paypalOrder,
+        paypal_data: { ...paypalOrder, hue_environment: paypalConfig.environment },
         updated_at: new Date().toISOString(),
       }),
     });

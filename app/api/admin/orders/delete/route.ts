@@ -11,17 +11,23 @@ type StoredOrder = {
   payment_status?: string | null;
   paypal_order_id?: string | null;
   paypal_capture_id?: string | null;
+  payment_data?: Record<string, unknown> | null;
   promo_code?: string | null;
   drive_folder_id?: string | null;
   order_data?: {
     paymentMode?: string;
-    payment?: { status?: string };
+    payment?: { status?: string; environment?: string };
     items?: Array<{
       artworkFiles?: Array<{ role?: string; storagePath?: string }>;
       productionBreakdown?: Array<{ frontStoragePath?: string; backStoragePath?: string }>;
       productionRecipes?: Array<{ proofStoragePath?: string }>;
     }>;
   } | null;
+};
+
+type PaymentAttempt = {
+  id: string;
+  paypal_data?: unknown;
 };
 
 type ArchiveRow = {
@@ -42,7 +48,28 @@ const isOrderArtifactPath = (path?: string | null) => Boolean(path && (
   path.startsWith('orders/')
   || /\/order-proofs\//i.test(path)
 ));
-const canDeleteOrder = (order: StoredOrder) => {
+const containsSandboxPayPalMarker = (value: unknown, depth = 0): boolean => {
+  if (depth > 8 || value == null) return false;
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    return normalized === 'sandbox'
+      || normalized.includes('sandbox.paypal.com')
+      || normalized.includes('api-m.sandbox.paypal.com');
+  }
+  if (Array.isArray(value)) return value.some((entry) => containsSandboxPayPalMarker(entry, depth + 1));
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).some(([key, entry]) => (
+      (/environment/i.test(key) && String(entry).toLowerCase() === 'sandbox')
+      || containsSandboxPayPalMarker(entry, depth + 1)
+    ));
+  }
+  return false;
+};
+const canDeleteOrder = (order: StoredOrder, paymentAttempt?: PaymentAttempt | null) => {
+  const sandboxPayment = order.order_data?.payment?.environment === 'sandbox'
+    || containsSandboxPayPalMarker(order.payment_data)
+    || containsSandboxPayPalMarker(paymentAttempt?.paypal_data);
+  if (sandboxPayment) return true;
   const paymentStatus = String(order.payment_status || order.order_data?.payment?.status || '').toLowerCase();
   const protectedPayment = Boolean(order.paypal_capture_id)
     || ['completed', 'captured', 'paid', 'approved'].includes(paymentStatus);
@@ -90,7 +117,23 @@ export async function DELETE(request: NextRequest) {
     if (confirmation !== order.order_number) {
       return NextResponse.json({ error: `Type ${order.order_number} exactly to delete this order.` }, { status: 400 });
     }
-    if (!canDeleteOrder(order)) {
+    let paymentAttempt: PaymentAttempt | null = null;
+    if (order.submission_key) {
+      const { data: attempt, error: attemptError } = await client.from('hue_payment_attempts')
+        .select('id,paypal_data')
+        .eq('submission_key', order.submission_key)
+        .maybeSingle();
+      if (attemptError && !/PGRST205|does not exist|schema cache/i.test(attemptError.message)) throw attemptError;
+      paymentAttempt = attempt as PaymentAttempt | null;
+    } else if (order.paypal_order_id) {
+      const { data: attempt, error: attemptError } = await client.from('hue_payment_attempts')
+        .select('id,paypal_data')
+        .eq('paypal_order_id', order.paypal_order_id)
+        .maybeSingle();
+      if (attemptError && !/PGRST205|does not exist|schema cache/i.test(attemptError.message)) throw attemptError;
+      paymentAttempt = attempt as PaymentAttempt | null;
+    }
+    if (!canDeleteOrder(order, paymentAttempt)) {
       return NextResponse.json({ error: 'This order has an active captured payment and is protected. Refund or reverse the payment before removing its Studio test record.' }, { status: 409 });
     }
 
@@ -123,7 +166,10 @@ export async function DELETE(request: NextRequest) {
       if (detachError) throw detachError;
     }
 
-    if (order.submission_key) {
+    if (paymentAttempt?.id) {
+      const { error: paymentError } = await client.from('hue_payment_attempts').delete().eq('id', paymentAttempt.id);
+      if (paymentError && !/PGRST205|does not exist|schema cache/i.test(paymentError.message)) throw paymentError;
+    } else if (order.submission_key) {
       const { error: paymentError } = await client.from('hue_payment_attempts').delete().eq('submission_key', order.submission_key);
       if (paymentError && !/PGRST205|does not exist|schema cache/i.test(paymentError.message)) throw paymentError;
     } else if (order.paypal_order_id) {
