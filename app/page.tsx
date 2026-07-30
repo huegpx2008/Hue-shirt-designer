@@ -496,6 +496,49 @@ const getImageNaturalSize = (dataUrl: string): Promise<{ width: number; height: 
   image.src = dataUrl;
 });
 
+const imageHasTransparentPixels = (source: string): Promise<boolean> => new Promise((resolve) => {
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.onload = () => {
+    try {
+      const naturalWidth = image.naturalWidth || image.width;
+      const naturalHeight = image.naturalHeight || image.height;
+      const maxSampleDimension = 320;
+      const scale = Math.min(1, maxSampleDimension / Math.max(1, naturalWidth, naturalHeight));
+      const width = Math.max(1, Math.round(naturalWidth * scale));
+      const height = Math.max(1, Math.round(naturalHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) {
+        resolve(false);
+        return;
+      }
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let transparentPixels = 0;
+      const pixelCount = Math.max(1, width * height);
+      const minimumTransparentPixels = Math.max(4, Math.ceil(pixelCount * 0.005));
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] < 250) {
+          transparentPixels += 1;
+          if (transparentPixels >= minimumTransparentPixels) {
+            resolve(true);
+            return;
+          }
+        }
+      }
+      resolve(false);
+    } catch {
+      resolve(false);
+    }
+  };
+  image.onerror = () => resolve(false);
+  image.src = source;
+});
+
 const renderPdfFirstPage = async (source: string | ArrayBuffer) => {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   if (!pdfjs.GlobalWorkerOptions.workerSrc) {
@@ -2666,7 +2709,8 @@ export default function Home() {
   const [showImageZone, setShowImageZone] = useState(false);
   const [showAcrylicTransparencyNotice, setShowAcrylicTransparencyNotice] = useState(false);
   const [acrylicTransparencyAcknowledged, setAcrylicTransparencyAcknowledged] = useState(false);
-  const [acrylicNoticeAction, setAcrylicNoticeAction] = useState<'library' | 'upload'>('library');
+  const [acrylicNoticeAction, setAcrylicNoticeAction] = useState<'info' | 'library' | 'upload'>('info');
+  const [acrylicArtworkHasTransparency, setAcrylicArtworkHasTransparency] = useState(false);
   const [imageZoneItems, setImageZoneItems] = useState<ImageZoneItem[]>([]);
   const [selectedImageZoneId, setSelectedImageZoneId] = useState<string | null>(null);
   const [imageLibraryStatus, setImageLibraryStatus] = useState('');
@@ -3760,6 +3804,7 @@ export default function Home() {
   const isAutoSidedRigidBuilder = productMode === 'signage' && SEPARATE_BACK_ARTWORK_PRODUCT_IDS.includes(selectedSignProduct.id);
   const showSeparateBackArtworkControl = isAutoSidedRigidBuilder && (!['banner', 'business-card'].includes(selectedSignProduct.id) || String(signValues.sides || 'single') === 'double');
   const isProductionBuilder = productMode === 'signage';
+  const isAcrylicBuilder = productMode === 'signage' && selectedSignProduct.id === 'acrylic';
   const signSurfacePreviewUrl = isAutoSidedRigidBuilder && rigidPreviewSide === 'back' ? rigidBackArtwork?.dataUrl || null : signArtworkDisplayUrl || signArtworkPreviewUrl;
   const hasPlacedSignArtwork = Boolean(signArtworkPreviewUrl) || Boolean(signSurfacePreviewUrl) || layers.length > 0;
   const bannerArtworkActualSize = signArtworkSourceSize || signArtworkSize || (signArtworkPreviewUrl ? { width: signWidth, height: signHeight } : null);
@@ -3828,6 +3873,25 @@ export default function Home() {
   const hueQualityStatus = signArtworkStatusOk ? 'Hue check ready' : 'Needs artwork check';
   const hueOrderPathLabel = customerSession?.user?.email ? 'Saved customer library' : 'Guest checkout path';
   const customerAccountButtonLabel = customerSession?.user?.email || (isGuestCheckout ? 'Quick checkout' : 'Account');
+  useEffect(() => {
+    if (storeView !== 'builder' || !isAcrylicBuilder || acrylicTransparencyAcknowledged) return;
+    setAcrylicNoticeAction('info');
+    setShowAcrylicTransparencyNotice(true);
+  }, [storeView, isAcrylicBuilder, acrylicTransparencyAcknowledged]);
+  useEffect(() => {
+    let canceled = false;
+    if (!isAcrylicBuilder || !signSurfacePreviewUrl) {
+      setAcrylicArtworkHasTransparency(false);
+      return;
+    }
+    setAcrylicArtworkHasTransparency(false);
+    void imageHasTransparentPixels(signSurfacePreviewUrl).then((hasTransparency) => {
+      if (!canceled) setAcrylicArtworkHasTransparency(hasTransparency);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [isAcrylicBuilder, signSurfacePreviewUrl]);
   useEffect(() => {
     if (productMode !== 'signage') return;
     const material = String(signValues.material || '');
@@ -4896,7 +4960,8 @@ export default function Home() {
     setShowImageZone(false);
     setShowAcrylicTransparencyNotice(false);
     setAcrylicTransparencyAcknowledged(false);
-    setAcrylicNoticeAction('library');
+    setAcrylicNoticeAction('info');
+    setAcrylicArtworkHasTransparency(false);
     setImageLibraryStatus('');
   };
 
@@ -5086,7 +5151,7 @@ export default function Home() {
       requestArtworkUpload('Choose a transparent PNG artwork file for Acrylic spot white.');
       return;
     }
-    setShowImageZone(true);
+    if (nextAction === 'library') setShowImageZone(true);
   };
 
   const requestArtworkUpload = (status = 'Choose an image or PDF artwork file.') => {
@@ -10563,6 +10628,7 @@ export default function Home() {
                     <div className="hue-dimension hue-dimension--height hue-dimension--left" aria-hidden="true"><span className="hue-dimension__label"><span>Height</span><strong>{signHeight || 0}&quot;</strong></span></div>
                     <div className="hue-dimension hue-dimension--height hue-dimension--right" aria-hidden="true"><span className="hue-dimension__label"><span>Height</span><strong>{signHeight || 0}&quot;</strong></span></div>
                     <div className={`absolute inset-0 ${isRigidSignBuilder ? 'rigid-sign-preview overflow-hidden border border-slate-300 transition-[border-radius] duration-300' : `overflow-hidden rounded-sm border bg-white ${signSurfacePreviewUrl ? 'border-[#38bdf8]/60' : 'border-slate-300'} shadow-[0_24px_58px_rgba(0,0,0,0.45),0_0_44px_rgba(96,165,250,0.18)]`}`} style={supportsSizedRoundedCorners ? { borderRadius: roundedCornerPreviewRadius || '3px' } : undefined}>
+                      {isAcrylicBuilder && acrylicArtworkHasTransparency ? <div className="acrylic-transparency-grid absolute inset-0" aria-hidden="true" /> : null}
                       {!isRigidSignBuilder ? <div className="absolute inset-3 border border-dashed border-slate-300 transition-[border-radius] duration-300" style={supportsSizedRoundedCorners ? { borderRadius: roundedSafeZonePreviewRadius } : undefined} /> : null}
                       {isRigidSignBuilder && !hasPlacedSignArtwork ? <div className="absolute inset-0 flex items-end justify-center pb-5"><span className="rounded-full border border-slate-300/80 bg-white/75 px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 shadow-sm backdrop-blur">Rigid panel</span></div> : null}
                       {signSurfacePreviewUrl ? <img src={signSurfacePreviewUrl} alt="" className={`absolute inset-0 h-full w-full ${bannerArtworkFitState === 'stretch' ? 'object-fill' : !rawBannerAspectMismatch || signArtworkMatchesSize ? 'object-cover' : 'object-contain'}`} /> : null}
@@ -10651,7 +10717,7 @@ export default function Home() {
                   <div className={`mt-3 ${showSeparateBackArtworkControl && String(signValues.sides || 'single') === 'double' ? 'grid grid-cols-2 items-stretch gap-2' : ''}`}>
                   <button type="button" onClick={() => { if (isAutoSidedRigidBuilder) setRigidArtworkTarget('front'); openArtworkLibrary(); }} className="hue-artwork-dropzone flex min-h-36 w-full items-center justify-center rounded-xl border border-dashed border-[#38bdf8]/55 bg-white p-3 text-center text-[10px] uppercase text-slate-400 hover:border-[#1678b8] hover:text-[#1678b8]">
                     {signArtworkPreviewUrl ? <span className="w-full">
-                      <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" />
+                      {isAcrylicBuilder && acrylicArtworkHasTransparency ? <span className="acrylic-transparency-grid relative mx-auto flex h-24 max-w-full items-center justify-center overflow-hidden" style={{ aspectRatio: signPreviewAspect }}><img src={signArtworkPreviewUrl} alt="" className="relative h-full w-full object-contain" /></span> : <img src={signArtworkPreviewUrl} alt="" className="mx-auto max-h-24 max-w-full object-contain" />}
                       <span className="mt-2 block font-bold text-slate-600">Front image</span>
                       <span className="mt-1 block text-slate-500">{bannerArtworkDisplaySize ? `Actual: ${bannerArtworkDisplaySize.width.toFixed(2)}" x ${bannerArtworkDisplaySize.height.toFixed(2)}"` : 'Artwork uploaded'}</span>
                     </span> : <span>Click here to upload or select image</span>}
@@ -11676,15 +11742,15 @@ export default function Home() {
               <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/30 shadow-[0_0_28px_rgba(14,165,233,0.24)]"><img src="/brand/hue-graphics-mark.webp" alt="" width={512} height={512} className="h-full w-full object-cover" /></span>
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#67d8ff]">Hue Graphics / Artwork check</p>
-                <h2 id="acrylic-artwork-notice-title" className="mt-1 text-xl font-black tracking-tight">Transparent PNG required</h2>
+                <h2 id="acrylic-artwork-notice-title" className="mt-1 text-xl font-black tracking-tight">Transparent-background PNG needed</h2>
               </div>
             </div>
             <span className="absolute bottom-0 left-6 h-[3px] w-28 rounded-t-full bg-[#38bdf8] shadow-[0_0_18px_rgba(56,189,248,0.85)]" />
           </div>
           <div className="px-6 py-7 text-center sm:px-10">
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#38bdf8]/25 bg-[linear-gradient(45deg,rgba(255,255,255,0.08)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.08)_75%),linear-gradient(45deg,rgba(255,255,255,0.08)_25%,transparent_25%,transparent_75%,rgba(255,255,255,0.08)_75%)] bg-[length:16px_16px] bg-[position:0_0,8px_8px] text-2xl font-black text-[#67d8ff] shadow-[inset_0_0_24px_rgba(14,165,233,0.10)]">PNG</span>
-            <p className="mx-auto mt-5 max-w-lg text-lg font-bold leading-7 text-white">Please use PNG files with a transparent background for spot white.</p>
-            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-400">Transparent areas tell our production team where the spot-white layer should be prepared on your Acrylic sign.</p>
+            <p className="mx-auto mt-5 max-w-lg text-lg font-bold leading-7 text-white">Please use a PNG file that actually has a transparent background when spot white is needed.</p>
+            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-400">A PNG with a solid white background is still opaque. Hue Studio shows a checkerboard only when transparent pixels are detected.</p>
           </div>
           <div className="flex justify-end border-t border-white/10 bg-[#050d16] px-6 py-4">
             <button type="button" onClick={acknowledgeAcrylicTransparencyNotice} autoFocus className="rounded-xl bg-[#1686c9] px-6 py-3 text-xs font-black uppercase tracking-[0.08em] text-white shadow-[0_12px_28px_rgba(14,165,233,0.24)] hover:bg-[#0f75b5] focus:outline-none focus:ring-2 focus:ring-[#67d8ff] focus:ring-offset-2 focus:ring-offset-[#050d16]">Got it &mdash; continue</button>
